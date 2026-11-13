@@ -37,7 +37,7 @@ DEFAULT_CONFIG = {
     # The laptop that runs the backend. On a phone hotspot, use the laptop IP.
     "backend_url": "http://192.168.1.10:8000",
     "temperature_limit_c": 6.0,
-    "frame_interval_s": 2.0,
+    "frame_interval_s": 1.0,  # how often the shelf is checked; the live preview runs faster, see PREVIEW_FPS
     "manual_slot": 3,
     # Slots as fractions of the frame: x, y, width, height.
     "slots": [
@@ -313,9 +313,13 @@ def sensors():
     }
 
 
+PREVIEW_FPS = 8
+PREVIEW_SIZE = (480, 360)
+
+
 def send_frame(img: Image.Image):
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=70)
+    img.resize(PREVIEW_SIZE).save(buf, format="JPEG", quality=60)
     ui.send_message("frame", {"image": base64.b64encode(buf.getvalue()).decode(), "time": now_iso()})
 
 
@@ -365,15 +369,111 @@ ui.on_message("get_state", lambda sid, _d: ui.send_message("sensors", sensors(),
 ui.expose_api("GET", "/state", sensors)
 
 
-# Main loop -----------------------------------------------------------------
+def diagnostics():
+    """What the app container can see: video devices and USB devices. For setup checks over Wi-Fi."""
+    import glob
+    import os
 
-camera = None  # opened in loop(), so the app also runs while no camera is plugged in
+    usb = []
+    for d in glob.glob("/sys/bus/usb/devices/*/product"):
+        try:
+            usb.append(open(d).read().strip())
+        except OSError:
+            pass
+    return {"video": sorted(glob.glob("/dev/video*")), "v4l_by_id": sorted(glob.glob("/dev/v4l/by-id/*")),
+            "usb_products": sorted(usb), "dev_visible": os.path.isdir("/dev/v4l")}
+
+
+ui.expose_api("GET", "/diag", diagnostics)
+
+
+APP_DIR = HERE.parent
+
+
+def on_update(_sid, _data):
+    """Copy changed app files from the laptop. The page shows at once; Python and sketch changes need a power cycle."""
+    import hashlib
+
+    base = config["backend_url"].rstrip("/")
+    try:
+        files = requests.get(base + "/device/files", timeout=5).json()
+        changed = []
+        for f in files:
+            local = APP_DIR / f["path"]
+            if local.exists() and hashlib.sha256(local.read_bytes()).hexdigest() == f["sha256"]:
+                continue
+            body = requests.get(f"{base}/device/files/{f['path']}", timeout=10).content
+            if hashlib.sha256(body).hexdigest() != f["sha256"]:
+                return {"ok": False, "error": f"{f['path']} changed during the download, try again"}
+            tmp = local.with_suffix(local.suffix + ".new")
+            tmp.write_bytes(body)
+            tmp.replace(local)
+            changed.append(f["path"])
+        restart = [c for c in changed if not c.startswith("assets/")]
+        logger.info(f"update: {changed}")
+        return {"ok": True, "changed": changed,
+                "restart": bool(restart), "message": (
+                    "Nothing to update." if not changed else
+                    "Updated. Pull the power supply for a few seconds to start the new version." if restart else
+                    "Updated. Reload the page.")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+ui.on_message("update", on_update)
+
+
+# Main loop -----------------------------------------------------------------
+#
+# Three loops run side by side so a slow one never holds up another:
+#   camera_worker  reads frames as fast as the camera gives them and keeps the newest
+#   preview_worker sends the newest frame to the page PREVIEW_FPS times a second
+#   loop           checks the shelf once every frame_interval_s and talks to the agent
+
 last_status = 0.0
-last_camera_try = 0.0
+
+
+def camera_worker():
+    camera = None
+    while True:
+        try:
+            if camera is None:
+                camera = USBCamera(resolution=(640, 480), fps=15)
+                camera.start()
+                logger.info("camera started")
+            img = camera.capture()
+            if img is None:
+                state["camera_ok"], state["camera_error"] = False, "camera gave no picture"
+                time.sleep(0.2)
+                continue
+            state["last_frame"] = img.convert("RGB")
+            state["camera_ok"], state["camera_error"] = True, ""
+        except Exception as e:
+            state["camera_ok"], state["camera_error"] = False, str(e)[:160]
+            logger.warning(f"camera: {e}")
+            try:
+                camera.stop()
+            except Exception:
+                pass
+            camera = None
+            time.sleep(10)  # the app only sees cameras plugged in at start, so retrying fast does not help
+
+
+def preview_worker():
+    last_sent = None
+    while True:
+        img = state["last_frame"]
+        if img is not None and img is not last_sent:
+            try:
+                send_frame(img)
+                last_sent = img
+            except Exception as e:
+                logger.warning(f"preview: {e}")
+        time.sleep(1 / PREVIEW_FPS)
 
 
 def loop():
-    global camera, last_status, last_camera_try
+    global last_status
     if state["modulinos"] is None:
         try:
             bits = int(Bridge.call("modulino_status"))
@@ -381,31 +481,9 @@ def loop():
             logger.info(f"modulinos: {state['modulinos']}")
         except Exception as e:
             logger.warning(f"modulino_status failed: {e}")
-    try:
-        if camera is None:
-            if time.time() - last_camera_try < 10:
-                raise RuntimeError("no camera yet")
-            last_camera_try = time.time()
-            camera = USBCamera(resolution=(640, 480), fps=5)
-            camera.start()
-            logger.info("camera started")
-        img = camera.capture()
-        state["camera_ok"], state["camera_error"] = img is not None, "" if img is not None else "camera gave no picture"
-        if img is not None:
-            img = img.convert("RGB")
-            state["last_frame"] = img
-            process_frame(img)
-            send_frame(img)
-    except Exception as e:
-        state["camera_ok"] = False
-        if str(e) != "no camera yet":
-            state["camera_error"] = str(e)[:160]
-            logger.warning(f"camera: {e}")
-            try:
-                camera.stop()
-            except Exception:
-                pass
-            camera = None
+    img = state["last_frame"]
+    if img is not None and state["camera_ok"]:
+        process_frame(img)
     ui.send_message("sensors", sensors())
     if time.time() - last_status > 10:
         last_status = time.time()
@@ -415,4 +493,6 @@ def loop():
 
 threading.Thread(target=poll_commands, daemon=True).start()
 threading.Thread(target=buzzer_worker, daemon=True).start()
+threading.Thread(target=camera_worker, daemon=True).start()
+threading.Thread(target=preview_worker, daemon=True).start()
 App.run(user_loop=loop)

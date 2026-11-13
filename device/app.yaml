@@ -6,3 +6,6 @@ description: >
   limit, Modulino Thermo watches the cold room, Modulino Buzzer beeps for approvals.
 bricks:
   - arduino:web_ui
+  # Declares that the app needs the camera. App Lab gives the container only the cameras
+  # plugged in when the app starts, so plug the camera in before the board powers on.
+  - arduino:camera_code_detection

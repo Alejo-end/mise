@@ -188,6 +188,25 @@ def device_commands():
     return {"buzzer": "approval" if agent.open_approvals() else "off"}
 
 
+DEVICE_DIR = ROOT / "device"
+DEVICE_FILES = ["python/main.py", "assets/index.html", "sketch/sketch.ino", "sketch/sketch.yaml", "app.yaml"]
+
+
+@app.get("/device/files")
+def device_files():
+    """The box app files on this laptop, with hashes, so the box can update itself over Wi-Fi."""
+    import hashlib
+
+    return [{"path": f, "sha256": hashlib.sha256((DEVICE_DIR / f).read_bytes()).hexdigest()} for f in DEVICE_FILES]
+
+
+@app.get("/device/files/{path:path}")
+def device_file(path: str):
+    if path not in DEVICE_FILES:
+        raise HTTPException(404, "not a box app file")
+    return FileResponse(DEVICE_DIR / path)
+
+
 @app.get("/device")
 def device_state():
     seen = device["last_seen"]

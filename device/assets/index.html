@@ -10,6 +10,7 @@
   @media (prefers-color-scheme: dark) { :root { --bg:#141413; --card:#1e1e1c; --ink:#efede7; --muted:#a19f98;
           --line:#33322e; --ok:#5cc28a; --warn:#e3a33b; --bad:#ef6b62; --accent:#7fb0ff; --accent-ink:#0d1b30; } }
   * { box-sizing:border-box }
+  [hidden] { display:none !important }
   body { margin:0; font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink) }
   main { max-width:1000px; margin:0 auto; padding:16px }
   h1 { font-size:22px; margin:0 }
@@ -129,6 +130,8 @@
           </div>
           <div id="names"></div>
           <div class="row"><button class="primary" id="save">Save settings</button></div>
+          <label>Box software</label>
+          <div class="row"><button id="update">Update from the laptop</button><span class="muted" id="updateMsg"></span></div>
         </details>
         <details>
           <summary>Test without the camera</summary>
@@ -172,6 +175,7 @@ socket.on("event", (m) => {
 socket.on("calibrate_response", (r) => { r.ok ? toast(`Saved the ${r.kind} photo.`) : toast(r.error); });
 socket.on("save_config_response", (r) => r.ok && toast("Settings saved."));
 socket.on("simulate_response", () => {});
+socket.on("update_response", (r) => { const m = r.ok ? r.message : `Update failed: ${r.error}`; $("updateMsg").textContent = m; toast(m); });
 
 function renderPills() {
   if (!S) return;
@@ -280,6 +284,7 @@ document.addEventListener("click", (e) => {
   if (b.dataset.cal) socket.emit("calibrate", {slot: "all", kind: b.dataset.cal});
   if (b.dataset.sim) { socket.emit("simulate", {slot: Number(b.dataset.sim), state: b.dataset.st}); toast("Sent to the agent."); }
 });
+$("update").onclick = () => { $("updateMsg").textContent = "Updating…"; socket.emit("update", {}); };
 $("deliveryBtn").onclick = () => { socket.emit("delivery_check", {}); toast("Delivery check started. Keep the cartons on the shelf for 60 seconds."); };
 $("boxesOk").onclick = () => { boxesOk = true; try { localStorage.setItem("boxesOk", "1"); } catch (e) {} render(); };
 $("redo").onclick = () => { boxesOk = false; try { localStorage.removeItem("boxesOk"); } catch (e) {} render(); };
