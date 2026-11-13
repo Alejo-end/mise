@@ -108,7 +108,14 @@
       <div class="card">
         <h2>Kitchen box</h2>
         <div class="facts" id="facts"></div>
-        <p class="muted" style="margin-top:8px">Turn the knob to change the most the agent may spend without asking. Press the knob to report the <span id="knobSlot">milk</span> as low.</p>
+        <p class="muted" style="margin-top:8px">Turn the knob to change the most the agent may spend without asking. Press the knob to report the <span id="knobSlot">milk</span> as low. Hold it for 2 seconds to check a delivery.</p>
+      </div>
+
+      <div class="card">
+        <h2>Delivery check</h2>
+        <p class="muted">When a delivery arrives, put the cartons on the shelf and the thermo in the crate. Then hold the knob for 2 seconds, or press the button. The box measures for 60 seconds and checks the delivery against the order.</p>
+        <div class="row"><button class="primary" id="deliveryBtn">Start delivery check</button><span id="deliveryState" class="muted"></span></div>
+        <p id="deliveryResult" style="margin-top:8px"></p>
       </div>
 
       <div class="card">
@@ -212,6 +219,11 @@ function render() {
     ["Buzzer", {off: "Quiet", approval: "Beeping: approve on phone", alarm: "Alarm: too warm", confirm: "Beep"}[S.buzzer] || S.buzzer],
     ["Alarm above", `${S.config.temperature_limit_c} °C`],
   ].map(([k, v]) => `<div class="fact"><span>${k}</span><strong>${v}</strong></div>`).join("");
+  const left = S.delivery_left_s;
+  $("deliveryBtn").disabled = left != null;
+  $("deliveryState").textContent = left != null ? `Measuring: ${left} s left` : "";
+  const ld = S.last_delivery;
+  $("deliveryResult").innerHTML = ld ? `<span class="${ld.status === "ok" ? "full-c" : "alarm"}">${esc(ld.summary || ld.status)}</span>` : "";
   const ks = S.config.slots.find(c => c.slot == S.config.manual_slot);
   $("knobSlot").textContent = ks ? ks.product_hint : `spot ${S.config.manual_slot}`;
 
@@ -268,6 +280,7 @@ document.addEventListener("click", (e) => {
   if (b.dataset.cal) socket.emit("calibrate", {slot: "all", kind: b.dataset.cal});
   if (b.dataset.sim) { socket.emit("simulate", {slot: Number(b.dataset.sim), state: b.dataset.st}); toast("Sent to the agent."); }
 });
+$("deliveryBtn").onclick = () => { socket.emit("delivery_check", {}); toast("Delivery check started. Keep the cartons on the shelf for 60 seconds."); };
 $("boxesOk").onclick = () => { boxesOk = true; try { localStorage.setItem("boxesOk", "1"); } catch (e) {} render(); };
 $("redo").onclick = () => { boxesOk = false; try { localStorage.removeItem("boxesOk"); } catch (e) {} render(); };
 document.querySelectorAll("details")[0].addEventListener("toggle", (e) => { settingsOpen = e.target.open; if (!settingsOpen && S) render(); });

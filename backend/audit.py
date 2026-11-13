@@ -79,8 +79,11 @@ def story(entries: list[dict]) -> list[str]:
         elif s == "approval":
             if d.get("status") == "open":
                 lines.append(f"{t} Asked {d.get('approver', 'the chef')} to approve: {len(d['options'])} options.")
+            elif d.get("status") == "expired":
+                lines.append(f"{t} The approval request expired after 2 hours. A new quote is needed.")
             else:
-                lines.append(f"{t} {e['actor']} {d['status']} the request{(' (option ' + str(d['option']) + ')') if d.get('option') is not None else ''}.")
+                opt = f" (option {d['option'] + 1})" if d.get("option") is not None else ""
+                lines.append(f"{t} {e['actor']} {d['status']} the request{opt}.")
         elif s == "recheck":
             lines.append(f"{t} Checked price and stock again just before ordering: {d['summary']}")
         elif s == "order":
@@ -88,7 +91,13 @@ def story(entries: list[dict]) -> list[str]:
         elif s == "blocked":
             lines.append(f"{t} Blocked: {d['summary']}")
         elif s == "alarm":
-            lines.append(f"{t} Cold room alarm: {d['temperature_c']:.1f} °C.")
+            if d.get("active", True):
+                lines.append(f"{t} Cold room alarm: {d['temperature_c']:.1f} °C. Auto-orders wait for the chef.")
+            else:
+                lines.append(f"{t} Cold room back to {d['temperature_c']:.1f} °C.")
+        elif s in ("restock", "error", "delivery_check", "driving_test", "device"):
+            prefix = {"error": "Error: ", "driving_test": "Driving test: "}.get(s, "")
+            lines.append(f"{t} {prefix}{d.get('summary', '')}")
         else:
             lines.append(f"{t} {s}: {d.get('summary', '')}")
     return lines

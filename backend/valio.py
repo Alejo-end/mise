@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time as time_mod
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -65,6 +66,7 @@ class LocalCatalog:
     def __init__(self, path: Path = ROOT / "fixtures" / "mock_catalog.json"):
         self.products = {p["id"]: p for p in json.loads(path.read_text())["products"]}
         self.orders: dict[str, dict] = {}
+        self.orders_by_key: dict[str, str] = {}
 
     def _answer(self, endpoint: str, value) -> Claim:
         raw = json.dumps({"endpoint": endpoint, "data": value}, sort_keys=True).encode()
@@ -91,11 +93,15 @@ class LocalCatalog:
         }
         return self._answer(f"POST /availability {product_id} x{quantity}", value)
 
-    def place_order(self, lines: list[dict]) -> Claim:
+    def place_order(self, lines: list[dict], idempotency_key: str) -> Claim:
+        """The same key returns the same order and never books stock twice."""
+        if idempotency_key in self.orders_by_key:
+            return self._answer("POST /orders", self.orders[self.orders_by_key[idempotency_key]])
         order_id = "ORD-" + uuid.uuid4().hex[:8].upper()
         for l in lines:
             self.products[l["product_id"]]["stock"] -= l["quantity"]
         self.orders[order_id] = {"order_id": order_id, "lines": lines, "status": "confirmed"}
+        self.orders_by_key[idempotency_key] = order_id
         return self._answer("POST /orders", self.orders[order_id])
 
 
@@ -109,8 +115,20 @@ class ValioHttp:
 
         self.http = httpx.Client(base_url=base_url, headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
 
-    def _call(self, method: str, path: str, **kw) -> tuple[bytes, object]:
-        r = self.http.request(method, path, **kw)
+    def _call(self, method: str, path: str, retries: int = 3, **kw) -> tuple[bytes, object]:
+        """Retry network errors and 5xx answers with a short wait. Callers decide whether a call is safe to retry."""
+        import httpx
+
+        for attempt in range(retries):
+            try:
+                r = self.http.request(method, path, **kw)
+                if r.status_code < 500:
+                    r.raise_for_status()
+                    return r.content, r.json()
+            except httpx.TransportError:
+                if attempt == retries - 1:
+                    raise
+            time_mod.sleep(0.5 * (attempt + 1))
         r.raise_for_status()
         return r.content, r.json()
 
@@ -127,8 +145,10 @@ class ValioHttp:
         raw, data = self._call("POST", "/availability", json=body)  # TODO: real path
         return _claim(f"POST /availability {product_id} x{quantity}", raw, data)
 
-    def place_order(self, lines: list[dict]) -> Claim:
-        raw, data = self._call("POST", "/orders", json={"lines": lines})  # TODO: real path
+    def place_order(self, lines: list[dict], idempotency_key: str) -> Claim:
+        # Safe to retry only because the key makes a repeated call return the first order.
+        raw, data = self._call("POST", "/orders", json={"lines": lines},
+                               headers={"Idempotency-Key": idempotency_key})  # TODO: real path
         return _claim("POST /orders", raw, data)
 
 

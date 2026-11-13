@@ -19,9 +19,10 @@ const int START_STEPS = 4;  // 40 euro at power on
 // Buzzer modes set by Python: 0 off, 1 approval waiting, 2 temperature alarm, 3 one short confirm beep.
 volatile int buzzMode = 0;
 
-unsigned long lastThermo = 0, lastKnob = 0, lastBuzz = 0, lastPress = 0;
+unsigned long lastThermo = 0, lastKnob = 0, lastBuzz = 0, pressStart = 0;
 int lastSteps = -1;
-bool lastPressed = false;
+bool lastPressed = false, longSent = false;
+const unsigned long LONG_PRESS_MS = 1500;  // hold the knob this long to start a delivery check
 int alarmPhase = 0;
 
 void set_buzzer(int mode) {
@@ -60,9 +61,16 @@ void loop() {
       lastSteps = steps;
       Bridge.notify("knob_limit", steps * EUR_PER_STEP);
     }
-    if (pressed && !lastPressed && now - lastPress > 400) {
-      lastPress = now;
-      Bridge.notify("knob_pressed");
+    if (pressed && !lastPressed) {
+      pressStart = now;
+      longSent = false;
+    }
+    if (pressed && !longSent && now - pressStart >= LONG_PRESS_MS) {
+      longSent = true;
+      Bridge.notify("knob_long_press");   // delivery check
+    }
+    if (!pressed && lastPressed && !longSent && now - pressStart > 30) {
+      Bridge.notify("knob_pressed");      // short press: mark the selected slot low
     }
     lastPressed = pressed;
   }

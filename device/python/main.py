@@ -78,6 +78,8 @@ state = {
     "last_frame": None,
     "camera_ok": False,
     "camera_error": "",
+    "delivery": None,  # {"ends": time, "temps": [...]} while a delivery check runs, else None
+    "last_delivery": None,
 }
 
 
@@ -184,9 +186,39 @@ def on_knob_pressed():
     post_async({"type": "manual_low", "slot": slot, "product_hint": s["product_hint"] if s else None})
 
 
+DELIVERY_SECONDS = 60
+
+
+def start_delivery_check():
+    """Measure the temperature for 60 s, then send the counts and the average to the agent."""
+    if state["delivery"]:
+        return {"ok": False, "error": "a delivery check is already running"}
+    state["delivery"] = {"ends": time.time() + DELIVERY_SECONDS, "temps": []}
+    set_buzzer("confirm")
+
+    def finish():
+        time.sleep(DELIVERY_SECONDS)
+        d, state["delivery"] = state["delivery"], None
+        temps = d["temps"] or ([state["temperature_c"]] if state["temperature_c"] is not None else [])
+        counts = {str(k): v["units"] for k, v in state["slots"].items() if v.get("units") is not None}
+        reply = post_event({"type": "delivery_check", "counts": counts,
+                            "temperature_c": round(max(temps), 2) if temps else None,
+                            "seconds_measured": DELIVERY_SECONDS})
+        state["last_delivery"] = reply
+
+    threading.Thread(target=finish, daemon=True).start()
+    return {"ok": True}
+
+
+def on_knob_long_press():
+    start_delivery_check()
+
+
 def on_thermo(celsius, humidity):
     if celsius is None:
         return
+    if state["delivery"]:
+        state["delivery"]["temps"].append(float(celsius))
     state["temperature_c"] = round(float(celsius), 2)
     state["humidity"] = None if humidity is None else round(float(humidity), 1)
     limit = float(config["temperature_limit_c"])
@@ -202,6 +234,7 @@ def on_thermo(celsius, humidity):
 
 Bridge.provide("knob_limit", on_knob_limit)
 Bridge.provide("knob_pressed", on_knob_pressed)
+Bridge.provide("knob_long_press", on_knob_long_press)
 Bridge.provide("thermo", on_thermo)
 
 
@@ -272,6 +305,8 @@ def sensors():
         "backend_ok": state["backend_ok"], "backend_error": state["backend_error"],
         "backend_url": config["backend_url"], "buzzer": state["buzzer"], "modulinos": state["modulinos"],
         "camera_ok": state["camera_ok"], "camera_error": state["camera_error"],
+        "delivery_left_s": max(0, round(state["delivery"]["ends"] - time.time())) if state["delivery"] else None,
+        "last_delivery": state["last_delivery"],
         "slots": {str(k): {kk: vv for kk, vv in v.items() if kk in ("state", "fill", "units")} for k, v in state["slots"].items()},
         "config": {k: config[k] for k in ("slots", "temperature_limit_c", "manual_slot")},
         "calibrated": {str(s["slot"]): [k for k in ("empty", "full") if ref_path(s["slot"], k).exists()] for s in config["slots"]},
@@ -325,6 +360,7 @@ ui = WebUI()
 ui.on_message("calibrate", on_calibrate)
 ui.on_message("save_config", on_save_config)
 ui.on_message("simulate", on_simulate)
+ui.on_message("delivery_check", lambda _sid, _d: start_delivery_check())
 ui.on_message("get_state", lambda sid, _d: ui.send_message("sensors", sensors(), sid))
 ui.expose_api("GET", "/state", sensors)
 

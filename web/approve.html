@@ -47,6 +47,11 @@
   <div class="stats" id="stats"></div>
 
   <h2>Waiting for you</h2>
+  <div class="card" style="display:flex;gap:8px;align-items:center">
+    <label for="pin" style="white-space:nowrap">Your PIN</label>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="off" style="max-width:140px" aria-describedby="pinHelp">
+    <span class="meta" id="pinHelp">Needed to approve. Your name in the log comes from it.</span>
+  </div>
   <div id="approvals"><p class="empty">Nothing to approve.</p></div>
 
   <h2>Ask for something</h2>
@@ -65,6 +70,22 @@
       <button id="forceBtn">Try to order 20</button>
     </div>
     <p class="reasons" id="result"></p>
+  </div>
+
+  <h2>Deliveries</h2>
+  <div class="card">
+    <div id="deliveries"><p class="empty">No delivery checked yet. Hold the knob on the box for 2 seconds when a delivery arrives.</p></div>
+    <div id="reliability"></div>
+  </div>
+
+  <h2>Agent Driving Test</h2>
+  <div class="card">
+    <p class="meta" style="margin-top:0">An outside buying agent must pass these tests in a sandbox copy of the catalog before it may order for real.</p>
+    <div class="row">
+      <button class="primary" data-test="safe-kitchen">Test our agent</button>
+      <button data-test="naive">Test a naive agent</button>
+    </div>
+    <div id="dtest"></div>
   </div>
 
   <h2>Audit log</h2>
@@ -110,8 +131,11 @@ $("approvals").addEventListener("click", async (e) => {
   const b = e.target.closest("button"); if (!b) return;
   b.disabled = true;
   const body = b.dataset.skip ? {action:"skip"} : {action: b.dataset.o === "0" ? "approve" : "choose", option: Number(b.dataset.o)};
-  const r = await post(`/approvals/${b.dataset.a}`, body);
-  $("result").textContent = r.order_id ? `Order ${r.order_id} placed, €${r.total_eur.toFixed(2)}.` : `Result: ${label(r.status)}.`;
+  body.pin = $("pin").value.trim();
+  const resp = await fetch(`/approvals/${b.dataset.a}`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  const r = await resp.json();
+  if (!resp.ok) { b.disabled = false; $("result").textContent = r.detail || "Not allowed."; $("pin").focus(); return; }
+  $("result").textContent = r.order_id ? `Order ${r.order_id} placed, €${r.total_eur.toFixed(2)}.` : (r.reason || `Result: ${label(r.status)}.`);
   tick();
 });
 
@@ -126,13 +150,33 @@ $("forceBtn").onclick = async () => {
     : `Result: ${label(r.status)}.`;
   tick();
 };
+try { $("pin").value = sessionStorage.getItem("pin") || ""; } catch (e) {}
+$("pin").addEventListener("change", () => { try { sessionStorage.setItem("pin", $("pin").value); } catch (e) {} });
+
+document.querySelectorAll("[data-test]").forEach(b => b.onclick = async () => {
+  b.disabled = true; $("dtest").innerHTML = '<p class="meta">Running six scenarios…</p>';
+  const r = await post("/sandbox/test", {agent: b.dataset.test});
+  b.disabled = false;
+  $("dtest").innerHTML = `<p><b class="${r.passed ? "allowed" : "forbidden"}">${esc(r.summary)}</b></p>
+    <ul class="lines">${r.results.map(x => `<li><span class="${x.passed ? "allowed" : "forbidden"}">${x.passed ? "Pass" : "Fail"}</span>
+      ${esc(x.title)}: ${esc(x.observed)}</li>`).join("")}</ul>
+    ${r.licence ? `<p class="meta">Licence for ${esc(r.licence.scope.product_groups.join(", "))}, up to €${r.licence.scope.spend_limit_eur}, until ${esc(r.licence.expires.slice(0,16).replace("T"," "))}.</p>` : ""}`;
+  tick();
+});
+
 $("tStory").onclick = () => { view = "story"; $("tStory").setAttribute("aria-pressed","true"); $("tJson").setAttribute("aria-pressed","false"); tick(); };
 $("tJson").onclick = () => { view = "json"; $("tJson").setAttribute("aria-pressed","true"); $("tStory").setAttribute("aria-pressed","false"); tick(); };
 
 async function tick() {
   try {
-    const [approvals, dev, log] = await Promise.all([
-      api("/approvals/open"), api("/device"), api(view === "story" ? "/log?format=story&limit=60" : "/log?format=json&limit=60")]);
+    const [approvals, dev, log, dels, rel] = await Promise.all([
+      api("/approvals/open"), api("/device"), api(view === "story" ? "/log?format=story&limit=60" : "/log?format=json&limit=60"),
+      api("/deliveries"), api("/suppliers/reliability")]);
+    if (dels.length) $("deliveries").innerHTML = `<ul class="lines">${dels.slice(0, 5).map(d =>
+      `<li class="${d.problems.length ? "forbidden" : "allowed"}">${esc(d.summary)}</li>`).join("")}</ul>`;
+    $("reliability").innerHTML = rel.length ? `<p class="meta">Supplier record: ${rel.map(r =>
+      `${esc(r.supplier)} ${Math.round(r.score * 100)}% good (${r.good} of ${r.deliveries})`).join(" · ")}</p>` : "";
+    if (!dev.pins_set) $("pinHelp").textContent = "No PINs are set on the laptop. Put APPROVER_PINS in valio-challenge/.env.";
     renderApprovals(approvals);
     $("ruleset").textContent = `Rule set v${dev.rule_set_version}, signed by ${dev.signed_by}`;
     const slots = Object.entries(dev.slots).map(([k, v]) => `${k}: ${v.state}`).join(", ") || "no data";
@@ -141,7 +185,7 @@ async function tick() {
       ["Auto limit (knob)", dev.auto_limit_eur == null ? "–" : `€${dev.auto_limit_eur}`],
       ["Spent this week", `€${dev.weekly_spent_eur.toFixed(2)}`],
       ["Shelf", esc(slots)],
-      ["Device seen", dev.last_seen ? esc(dev.last_seen.slice(11,19)) : "never"],
+      ["Shelf box", dev.online ? "online" : (dev.last_seen ? `<span class="alarm">offline since ${esc(dev.last_seen.slice(11,16))}</span>` : "never seen")],
       ["Catalog", esc(dev.catalog)],
     ].map(([k, v]) => `<div class="stat"><span>${k}</span><strong>${v}</strong></div>`).join("");
     if (view === "story") { $("json").hidden = true; $("story").hidden = false;

@@ -7,6 +7,9 @@ forbidden, always with reasons and the rule set version.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
 from pathlib import Path
@@ -24,13 +27,45 @@ _SEVERITY = {ALLOWED: 0, NEEDS_APPROVAL: 1, FORBIDDEN: 2}
 DEFAULT_RULES = Path(__file__).resolve().parent.parent / "rules" / "school_kitchen.yaml"
 
 
-def load_rules(path: Path | str = DEFAULT_RULES) -> dict:
-    with open(path, encoding="utf-8") as f:
-        rules = yaml.safe_load(f)
+class RuleSetChanged(Exception):
+    """The rule file changed but its version did not. A new version must be signed."""
+
+
+def signature_path(path: Path) -> Path:
+    return path.with_suffix(".signed.json")
+
+
+def load_rules(path: Path | str = DEFAULT_RULES, verify: bool = True) -> dict:
+    """Load a rule set. Refuse it if its content no longer matches the hash signed for its version."""
+    path = Path(path)
+    raw = path.read_bytes()
+    rules = yaml.safe_load(raw)
     for key in ("version", "banned_allergens", "targets", "limits"):
         if key not in rules:
             raise ValueError(f"rule set {path} has no '{key}'")
+    rules["sha256"] = hashlib.sha256(raw).hexdigest()
+    if verify:
+        sig = signature_path(path)
+        if not sig.exists():
+            raise RuleSetChanged(f"{path.name} is not signed. Run: python -m backend.rules sign {path}")
+        signed = json.loads(sig.read_text())
+        if signed["version"] == rules["version"] and signed["sha256"] != rules["sha256"]:
+            raise RuleSetChanged(f"{path.name} changed but is still version {rules['version']}. "
+                                 "Raise the version and sign it again.")
+        if signed["version"] != rules["version"]:
+            raise RuleSetChanged(f"{path.name} is version {rules['version']}, but version {signed['version']} "
+                                 f"was signed. Run: python -m backend.rules sign {path}")
     return rules
+
+
+def sign(path: Path | str) -> dict:
+    """Record the version, signer and hash of a rule file. The head chef runs this after reading it."""
+    path = Path(path)
+    rules = load_rules(path, verify=False)
+    record = {"version": rules["version"], "signed_by": rules.get("signed_by"), "sha256": rules["sha256"],
+              "signed_at": datetime.now(TZ).isoformat(timespec="seconds")}
+    signature_path(path).write_text(json.dumps(record, indent=2) + "\n")
+    return record
 
 
 def target_for_slot(rules: dict, slot: int) -> dict | None:
@@ -77,6 +112,7 @@ class Context:
     weekly_spent_eur: float = 0.0
     auto_limit_eur: float | None = None  # live value from the knob, capped by the signed limit
     previous_standing_qty: int | None = None
+    cold_room_alarm_c: float | None = None  # set while the cold room is too warm
 
 
 @dataclass
@@ -180,6 +216,17 @@ def check(lines: list[Line], rules: dict, ctx: Context) -> Decision:
             result = NEEDS_APPROVAL
             reasons.append(f"the standing order grew {pct:.0f}%, more than {growth * 100:.0f}%")
 
+    if ctx.cold_room_alarm_c is not None:
+        result = NEEDS_APPROVAL
+        reasons.append(f"the cold room is at {ctx.cold_room_alarm_c:.1f} °C, so auto-orders wait for a person")
+
     if result == ALLOWED:
         reasons.append("usual product or approved substitute, within target stock, under the limits, in time")
     return Decision(result, reasons, rules["version"])
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "sign":
+        print(json.dumps(sign(sys.argv[2]), indent=2))
+    else:
+        print("usage: python -m backend.rules sign <rules.yaml>")

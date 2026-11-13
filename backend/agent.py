@@ -9,11 +9,14 @@ import math
 import re
 import threading
 import uuid
+from dataclasses import asdict
 from datetime import date, datetime, time, timedelta
 
 from . import rules as R
 from .audit import AuditLog
 from .valio import Claim
+
+APPROVAL_EXPIRY = timedelta(hours=2)
 
 NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10, "twenty": 20, "hundred": 100}
 
@@ -25,11 +28,57 @@ class Agent:
         self.log = log
         self.lock = threading.Lock()
         self.approvals: dict[str, dict] = {}
-        self.weekly_spent_eur = 0.0
+        self.orders: dict[str, dict] = {}  # order_id -> order entry, for delivery checks and weekly spend
+        self.placed_runs: dict[str, dict] = {}  # run id -> result, so one run never orders twice
         self.last_order_qty: dict[int, int] = {}
         self.pending_slots: set[int] = set()
         self.auto_limit_eur: float | None = None
         self.temperature_c: float | None = None
+        self.cold_alarm_c: float | None = None
+        self.deliveries: list[dict] = []  # delivery checks, for supplier reliability
+        self.restore()
+
+    # State ----------------------------------------------------------------
+
+    @property
+    def weekly_spent_eur(self) -> float:
+        """Spend on orders placed since Monday 00:00 this week."""
+        now = datetime.now(R.TZ)
+        monday = datetime.combine(now.date() - timedelta(days=now.weekday()), time(0), tzinfo=R.TZ)
+        return round(sum(o["total_eur"] for o in self.orders.values() if datetime.fromisoformat(o["time"]) >= monday), 2)
+
+    def restore(self) -> None:
+        """Rebuild orders, open approvals, pending slots and deliveries from the audit log after a restart."""
+        decided = set()
+        for e in self.log.entries(limit=100000):
+            d, step = e["detail"], e["step"]
+            if step == "order":
+                self.orders[e["order_id"]] = {"order_id": e["order_id"], "time": e["time"], "total_eur": d["total_eur"],
+                                              "lines": d["lines"], "slot": d.get("slot"), "run_id": e["run_id"]}
+                self.placed_runs[e["run_id"]] = {"status": "ordered", "order_id": e["order_id"], "total_eur": d["total_eur"]}
+                if d.get("slot") is not None:
+                    self.pending_slots.add(d["slot"])
+                    self.last_order_qty[d["slot"]] = sum(l["quantity"] for l in d["lines"])
+            elif step == "restock":
+                self.pending_slots.discard(d["slot"])
+            elif step == "delivery_check":
+                self.deliveries.append(d)
+            elif step == "approval" and d.get("status") == "open" and "full" in d:
+                a = d["full"]
+                a["ctx"] = context_from_dict(a["ctx"])
+                self.approvals[a["id"]] = a
+                if a.get("slot") is not None:
+                    self.pending_slots.add(a["slot"])
+            elif step == "approval" and d.get("approval_id"):
+                decided.add(d["approval_id"])
+            elif step == "alarm":
+                self.cold_alarm_c = d["temperature_c"] if d.get("active", True) else None
+        for aid in decided:
+            a = self.approvals.get(aid)
+            if a:
+                a["status"] = "closed"
+                if a.get("slot") is not None and not any(o.get("slot") == a["slot"] for o in self.orders.values()):
+                    self.pending_slots.discard(a["slot"])
 
     # Entry points ---------------------------------------------------------
 
@@ -41,8 +90,14 @@ class Agent:
             self.temperature_c = float(ev["temperature_c"])
 
         if kind == "temperature_alarm":
-            self.log.write("alarm", {"temperature_c": ev["temperature_c"], "limit_c": ev.get("limit_c")}, "device")
+            active = bool(ev.get("active", True))
+            self.cold_alarm_c = float(ev["temperature_c"]) if active else None
+            self.log.write("alarm", {"temperature_c": ev["temperature_c"], "limit_c": ev.get("limit_c"), "active": active},
+                           "device")
             return {"status": "logged"}
+        if kind == "delivery_check":
+            return self.check_delivery(ev.get("order_id"), ev.get("counts", {}), ev.get("temperature_c"),
+                                       ev.get("seconds_measured"))
         if kind == "status":
             return {"status": "ok"}
         if kind not in ("slot_state", "manual_low"):
@@ -55,7 +110,10 @@ class Agent:
         state = "low" if kind == "manual_low" else ev.get("state")
         units = int(ev.get("estimated_units") or 0) if state != "empty" else 0
         if state == "full" or (state == "low" and kind == "slot_state" and units >= target["reorder_below"]):
-            self.pending_slots.discard(slot)
+            if slot in self.pending_slots and not any(a["slot"] == slot for a in self.open_approvals()):
+                self.pending_slots.discard(slot)
+                self.log.write("restock", {"slot": slot, "summary": f"Slot {slot} is stocked again."}, "device",
+                               self.rules["version"])
             return {"status": "ok", "reason": "stock above the reorder level"}
         if slot in self.pending_slots:
             return {"status": "ignored", "reason": f"slot {slot} already has an order or a request in progress"}
@@ -68,7 +126,18 @@ class Agent:
             {"summary": f"Slot {slot} ({target['product']}) is {state} by {how}, about {units} units left.", "event": ev},
             "device", self.rules["version"], run_id=run,
         )
-        return self.buy(target, units, target["target_units"] - units, run)
+        return self._safely(run, slot, lambda: self.buy(target, units, target["target_units"] - units, run))
+
+    def _safely(self, run: str, slot: int | None, step) -> dict:
+        """Run a pipeline step. On any error, free the slot, log it and say so, instead of hanging."""
+        try:
+            return step()
+        except Exception as e:  # the catalog or the network failed; the log must show it
+            if slot is not None:
+                self.pending_slots.discard(slot)
+            self.log.write("error", {"summary": f"{type(e).__name__}: {e}", "slot": slot}, "agent",
+                           self.rules["version"], run_id=run)
+            return {"status": "error", "reason": str(e)}
 
     def handle_request(self, text: str, product_id: str | None = None) -> dict:
         """A text request from the chef, for example '1,000 litres of lactose-free milk by Monday'."""
@@ -85,32 +154,62 @@ class Agent:
         if product_id:
             # The chef (or a judge) names one product. It still goes through the rule check.
             group = target["group"] if target else "unknown"
-            return self.buy_exact(product_id, qty, group, run)
+            return self._safely(run, None, lambda: self.buy_exact(product_id, qty, group, run))
         if target is None:
             self.log.write("blocked", {"summary": "No product in the rule set matches the request."}, "agent", run_id=run)
             return {"status": "no_match"}
-        return self.buy(target, 0, qty, run, standing=False, deadline=deadline)
+        return self._safely(run, None, lambda: self.buy(target, 0, qty, run, standing=False, deadline=deadline))
 
     def decide(self, approval_id: str, action: str, option: int | None, approver: str) -> dict:
+        idx = option if option is not None else 0
         with self.lock:
             a = self.approvals.get(approval_id)
             if a is None or a["status"] != "open":
                 return {"status": "not_open"}
-            a["status"] = {"approve": "approved", "skip": "skipped"}.get(action, action)
-        self.log.write("approval", {"status": a["status"], "option": option, "approval_id": approval_id}, approver,
-                       self.rules["version"], run_id=a["run_id"])
+            if self._expired(a):
+                a["status"] = "expired"
+                self.pending_slots.discard(a["slot"])
+                self.log.write("approval", {"status": "expired", "approval_id": approval_id}, "agent",
+                               self.rules["version"], run_id=a["run_id"])
+                return {"status": "expired", "reason": "the quote is older than 2 hours; ask again for a new quote"}
+            if action != "skip" and not 0 <= idx < len(a["options"]):
+                return {"status": "bad_option"}
+            a["status"] = "deciding"  # nobody else can decide it while the order runs
         if action == "skip":
+            a["status"] = "skipped"
             self.pending_slots.discard(a["slot"])
+            self.log.write("approval", {"status": "skipped", "option": None, "approval_id": approval_id}, approver,
+                           self.rules["version"], run_id=a["run_id"])
             return {"status": "skipped"}
-        idx = option if option is not None else 0
-        if not 0 <= idx < len(a["options"]):
-            return {"status": "bad_option"}
         opt = a["options"][idx]
-        return self._order(opt["lines"], a["ctx"], a["run_id"], a["slot"], approved_by=approver,
-                           approved_total=opt["total_eur"])
+        try:
+            result = self._order(opt["lines"], a["ctx"], a["run_id"], a["slot"], approved_by=approver,
+                                 approved_total=opt["total_eur"])
+        except Exception as e:
+            a["status"] = "open"  # reopen, so the chef can try again
+            self.log.write("error", {"summary": f"Order after approval failed: {type(e).__name__}: {e}. "
+                                     "The request is open again.", "slot": a["slot"]}, "agent",
+                           self.rules["version"], run_id=a["run_id"])
+            return {"status": "error", "reason": str(e)}
+        a["status"] = "approved"
+        self.log.write("approval", {"status": "approved", "option": idx, "approval_id": approval_id,
+                                    "result": result["status"]}, approver, self.rules["version"], run_id=a["run_id"])
+        return result
+
+    def _expired(self, a: dict) -> bool:
+        return datetime.now(R.TZ) - datetime.fromisoformat(a["created"]) > APPROVAL_EXPIRY
 
     def open_approvals(self) -> list[dict]:
-        return [{k: v for k, v in a.items() if k != "ctx"} for a in self.approvals.values() if a["status"] == "open"]
+        out = []
+        for a in list(self.approvals.values()):
+            if a["status"] == "open" and self._expired(a):
+                a["status"] = "expired"
+                self.pending_slots.discard(a["slot"])
+                self.log.write("approval", {"status": "expired", "approval_id": a["id"]}, "agent",
+                               self.rules["version"], run_id=a["run_id"])
+            elif a["status"] == "open":
+                out.append({k: v for k, v in a.items() if k != "ctx"})
+        return out
 
     # Pipeline -------------------------------------------------------------
 
@@ -123,6 +222,7 @@ class Agent:
             weekly_spent_eur=self.weekly_spent_eur,
             auto_limit_eur=self.auto_limit_eur,
             previous_standing_qty=self.last_order_qty.get(target["slot"]) if standing else None,
+            cold_room_alarm_c=self.cold_alarm_c,
         )
 
     def _quote(self, product_id: str, qty: int, ctx: R.Context, run: str) -> dict | None:
@@ -173,7 +273,8 @@ class Agent:
             have = usual_q["available"] if usual_q else 0
             rest = need - have
             base = [(usual_q, have, True)] if have else []
-            ranked = rank_substitutes(safe, target, ctx)
+            approved = self.rules.get("approved_substitute_groups", {}).get(target["group"], [])
+            ranked = rank_substitutes(safe, target, ctx, approved, self.reliability())
             seen = set()
             for label, lead in ranked:
                 # Fill the gap with the lead substitute first, then the others in rank order.
@@ -189,6 +290,14 @@ class Agent:
                 if left <= 0 and key not in seen:
                     seen.add(key)
                     options.append((label, parts))
+            if not options:
+                # Nothing safe fills the whole gap: offer what is safe and in stock, and name the shortfall.
+                parts = list(base) + [(q, q["available"], False) for _, q in ranked]
+                parts += [(q, q["available"], False) for q in rest_by_rank(safe, target, ranked)]
+                parts, left = _take(parts, need)
+                if parts:
+                    shortfall = left
+                    options.append(("partial", parts))
 
         if not options:
             self.log.write("blocked", {"summary": f"No safe product can fill {need} units of {target['product']}."},
@@ -200,6 +309,10 @@ class Agent:
         for label, parts in options[:3]:
             lines = [self._line(q, n, u) for q, n, u in parts]
             d = R.check(lines, self.rules, ctx)
+            if label == "partial":
+                # A short order is a change to what was asked, so a person decides.
+                d.result = R.NEEDS_APPROVAL if d.result == R.ALLOWED else d.result
+                d.reasons.insert(0, f"only {need - shortfall} of {need} can be ordered safely; {shortfall} short")
             names = " + ".join(f"{n} × {q['product']['name']}" for q, n, u in parts)
             self.log.write("rule_check", {"subject": names, "option": label, **d.to_dict()}, "rule_check", v, run_id=run)
             checked.append({
@@ -223,7 +336,8 @@ class Agent:
     def buy_exact(self, product_id: str, qty: int, group: str, run: str) -> dict:
         v = self.rules["version"]
         ctx = R.Context(slot_group=group, needed_by=R.needed_by(self.rules, datetime.now(R.TZ)),
-                        weekly_spent_eur=self.weekly_spent_eur, auto_limit_eur=self.auto_limit_eur)
+                        weekly_spent_eur=self.weekly_spent_eur, auto_limit_eur=self.auto_limit_eur,
+                        cold_room_alarm_c=self.cold_alarm_c)
         q = self._quote(product_id, qty, ctx, run)
         if q is None:
             self.log.write("blocked", {"summary": f"Product {product_id} is not in the catalog."}, "agent", v, run_id=run)
@@ -254,13 +368,19 @@ class Agent:
             self.approvals[aid] = a
         self.log.write("approval", {"status": "open", "approval_id": aid, "approver": a["approver"],
                                     "options": [{"label": o["label"], "summary": o["summary"], "total_eur": o["total_eur"],
-                                                 "result": o["result"]} for o in options]},
+                                                 "result": o["result"]} for o in options],
+                                    "full": {k: v for k, v in a.items() if k != "ctx"} | {"ctx": context_to_dict(ctx)}},
                        "agent", self.rules["version"], run_id=run)
         return {"status": "needs_approval", "approval_id": aid}
 
     def _order(self, lines: list[dict], ctx: R.Context, run: str, slot: int | None,
                approved_by: str | None, approved_total: float) -> dict:
         v = self.rules["version"]
+        if run in self.placed_runs:
+            # This run already ordered. A retry must not order again.
+            self.log.write("recheck", {"summary": f"run {run} already placed {self.placed_runs[run]['order_id']}; "
+                                       "not ordering twice.", "changes": []}, "agent", v, run_id=run)
+            return self.placed_runs[run]
         # Step 8: ask price and stock again just before the order.
         fresh, changes = [], []
         for l in lines:
@@ -287,18 +407,88 @@ class Agent:
                                    "summary": "Order changed after the recheck", "trade_off": "; ".join(changes),
                                    "total_eur": new_total, "lines": lines}], ctx, run, slot, "changed order")
 
-        claim = self.catalog.place_order([{"product_id": l["product_id"], "quantity": l["quantity"]} for l in lines])
+        claim = self.catalog.place_order([{"product_id": l["product_id"], "quantity": l["quantity"]} for l in lines],
+                                         idempotency_key=run)
         order_id = claim.value["order_id"]
         total = round(sum(l["unit_price_eur"] * l["quantity"] for l in lines), 2)
-        self.weekly_spent_eur += total
+        now = datetime.now(R.TZ).isoformat(timespec="seconds")
+        self.orders[order_id] = {"order_id": order_id, "time": now, "total_eur": total, "lines": lines, "slot": slot,
+                                 "run_id": run}
+        self.placed_runs[run] = {"status": "ordered", "order_id": order_id, "total_eur": total}
         if slot is not None:
             # The slot stays pending until the camera sees it full again, so one empty shelf makes one order.
             self.last_order_qty[slot] = sum(l["quantity"] for l in lines)
         summary = ", ".join(f"{l['quantity']} × {l['name']}" for l in lines) + f", €{total:.2f}"
         summary += f", approved by {approved_by}." if approved_by else ", within the auto-order rules."
-        self.log.write("order", {"summary": summary, "lines": lines, "total_eur": total, "sha256": claim.sha256},
-                       approved_by or "agent", v, order_id=order_id, run_id=run)
-        return {"status": "ordered", "order_id": order_id, "total_eur": total}
+        self.log.write("order", {"summary": summary, "lines": lines, "total_eur": total, "sha256": claim.sha256,
+                                 "slot": slot}, approved_by or "agent", v, order_id=order_id, run_id=run)
+        return self.placed_runs[run]
+
+    # Cold Chain Proof -----------------------------------------------------
+
+    def check_delivery(self, order_id: str | None, counts: dict, temperature_c: float | None,
+                       seconds_measured: float | None = None) -> dict:
+        """Compare what arrived with what was ordered: units per slot, temperature and time."""
+        checked = {d["order_id"] for d in self.deliveries}
+        if order_id is None:
+            open_orders = [o for o in self.orders.values() if o["order_id"] not in checked]
+            if not open_orders:
+                return {"status": "no_open_order"}
+            order_id = max(open_orders, key=lambda o: o["time"])["order_id"]
+        order = self.orders.get(order_id)
+        if order is None:
+            return {"status": "unknown_order", "order_id": order_id}
+
+        now = datetime.now(R.TZ)
+        slot = order.get("slot")
+        ordered = sum(l["quantity"] for l in order["lines"])
+        counted = None
+        if slot is not None and str(slot) in {str(k) for k in counts}:
+            counted = int({str(k): v for k, v in counts.items()}[str(slot)])
+        short = None if counted is None else max(0, ordered - counted)
+
+        problems, per_supplier = [], {}
+        for l in order["lines"]:
+            p = self.catalog.product(l["product_id"]).value or {}
+            limit = p.get("max_temp_c")
+            warm = temperature_c is not None and limit is not None and temperature_c > limit
+            late = now > datetime.fromisoformat(l["delivery"]) + timedelta(hours=1)
+            supplier = p.get("supplier", "unknown")
+            s = per_supplier.setdefault(supplier, {"supplier": supplier, "warm": False, "late": False, "limit_c": limit})
+            s["warm"] |= warm
+            s["late"] |= late
+            if warm:
+                problems.append(f"{l['name']} arrived at {temperature_c:.1f} °C, above its {limit} °C limit")
+            if late:
+                problems.append(f"{l['name']} arrived after {l['delivery'][11:16]} on {l['delivery'][:10]}")
+        if short:
+            problems.insert(0, f"{short} of {ordered} units missing")
+        for s in per_supplier.values():
+            s["complete"] = not short  # a count is per slot, so a short slot counts against every supplier on it
+        result = {
+            "order_id": order_id, "slot": slot, "ordered": ordered, "counted": counted, "short": short,
+            "temperature_c": temperature_c, "seconds_measured": seconds_measured,
+            "complete": short in (0, None), "cold": not any(s["warm"] for s in per_supplier.values()),
+            "on_time": not any(s["late"] for s in per_supplier.values()),
+            "suppliers": list(per_supplier.values()), "problems": problems,
+            "summary": (f"Delivery {order_id}: " + ("; ".join(problems) if problems else "complete, cold and on time") + "."),
+        }
+        self.deliveries.append(result)
+        self.log.write("delivery_check", result, "device", self.rules["version"], order_id=order_id,
+                       run_id=order.get("run_id"))
+        return {"status": "ok" if not problems else "problem", **result}
+
+    def reliability(self) -> dict[str, dict]:
+        """Per supplier: the share of checked deliveries that were complete, cold and on time."""
+        out: dict[str, dict] = {}
+        for d in self.deliveries:
+            for s in d["suppliers"]:
+                r = out.setdefault(s["supplier"], {"supplier": s["supplier"], "deliveries": 0, "good": 0})
+                r["deliveries"] += 1
+                r["good"] += int(s["complete"] and not s["warm"] and not s["late"])
+        for r in out.values():
+            r["score"] = round(r["good"] / r["deliveries"], 2)
+        return out
 
 
 def rest_by_rank(safe: dict, target: dict, ranked: list) -> list[dict]:
@@ -307,15 +497,33 @@ def rest_by_rank(safe: dict, target: dict, ranked: list) -> list[dict]:
                   key=lambda q: q["unit_price_eur"])
 
 
-def rank_substitutes(safe: dict, target: dict, ctx: R.Context) -> list[tuple[str, dict]]:
-    """best: closest match, better: close match with a better price or date, good: cheapest safe option in time."""
+def _take(parts: list, need: int) -> tuple[list, int]:
+    """Take units from parts in order until need is met. Returns the parts used and what is still missing."""
+    out, left = [], need
+    for q, n, usual in parts:
+        n = min(n, left)
+        if n > 0 and all(q is not p[0] for p in out):
+            out.append((q, n, usual))
+            left -= n
+    return out, left
+
+
+def rank_substitutes(safe: dict, target: dict, ctx: R.Context, approved: list[str],
+                     reliability: dict | None = None) -> list[tuple[str, dict]]:
+    """best: closest match, better: close match with a better price or date, good: cheapest safe option in time.
+
+    A close match is one in the rule set's approved substitute groups, the same list the rule check uses.
+    Among equal matches, a supplier with a better delivery record ranks first (unknown suppliers count as 1.0).
+    """
+    reliability = reliability or {}
+    score = lambda q: reliability.get(q["product"].get("supplier"), {}).get("score", 1.0)
     subs = [q for pid, q in safe.items() if pid != target.get("product_id") and q["available"] > 0]
     if not subs:
         return []
     def closeness(q):
         p = q["product"]
-        return (p.get("substitute_group", "").startswith(target["group"]), datetime.fromisoformat(q["delivery"]) <= ctx.needed_by)
-    by_match = sorted(subs, key=lambda q: (closeness(q), -q["unit_price_eur"]), reverse=True)
+        return (p.get("substitute_group") in approved, datetime.fromisoformat(q["delivery"]) <= ctx.needed_by)
+    by_match = sorted(subs, key=lambda q: (closeness(q), score(q), -q["unit_price_eur"]), reverse=True)
     best = by_match[0]
     out = [("best", best)]
     better = next((q for q in by_match[1:] if closeness(q)[0] and (
@@ -335,6 +543,9 @@ def trade_off(label: str, parts: list, ctx: R.Context) -> str:
     when = f"arrives {datetime.fromisoformat(q['delivery']):%a %H:%M}" + (" (late)" if late else "")
     if label == "usual":
         return f"The usual product, €{q['unit_price_eur']:.2f} each, {when}."
+    if label == "partial":
+        got = sum(x[1] for x in parts)
+        return f"Only {got} units are safe and in stock. The rest is not ordered; look for another source."
     split = f"{parts[0][1]} usual + " if parts[0][2] else ""
     extra = len(parts) - (2 if parts[0][2] else 1)
     if extra > 0:
@@ -401,3 +612,13 @@ def parse_quantity(text: str) -> int | None:
         if re.search(rf"\b{w}\b", text.lower()):
             return n
     return None
+
+
+def context_to_dict(ctx: R.Context) -> dict:
+    d = asdict(ctx)
+    d["needed_by"] = ctx.needed_by.isoformat()
+    return d
+
+
+def context_from_dict(d: dict) -> R.Context:
+    return R.Context(**(d | {"needed_by": datetime.fromisoformat(d["needed_by"])}))

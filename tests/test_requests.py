@@ -118,3 +118,39 @@ def test_audit_log_refuses_edits(agent):
         agent.log.db.execute("UPDATE audit SET actor = 'someone else'")
     with pytest.raises(sqlite3.DatabaseError):
         agent.log.db.execute("DELETE FROM audit")
+
+
+def test_short_stock_offers_the_safe_part_for_approval(agent):
+    """5 safe loaves exist and the only substitute has sesame: offer the 5, name the shortfall."""
+    agent.catalog.products["MOCK-BREAD-RYE-500"]["stock"] = 5
+    r = agent.handle_event({"type": "slot_state", "slot": 1, "state": "empty", "estimated_units": 0})
+    assert r["status"] == "needs_approval"
+    (opt,) = agent.open_approvals()[0]["options"]
+    assert opt["label"] == "partial" and opt["result"] == "needs_approval"
+    assert [(l["product_id"], l["quantity"]) for l in opt["lines"]] == [("MOCK-BREAD-RYE-500", 5)]
+    assert "25 short" in opt["reasons"][0]
+
+
+def test_nothing_safe_in_stock_is_blocked(agent):
+    agent.catalog.products["MOCK-BREAD-RYE-500"]["stock"] = 0
+    r = agent.handle_event({"type": "slot_state", "slot": 1, "state": "empty", "estimated_units": 0})
+    assert r["status"] == "blocked"
+
+
+def test_ranking_uses_the_rule_sets_approved_groups(agent):
+    """A substitute the rule set does not approve is never ranked as the closest match."""
+    other = dict(agent.catalog.products["MOCK-BREAD-RYE-500"], id="MOCK-BREAD-RYE-B", name="Rye bread 500 g, brand B",
+                 price_eur=2.29, stock=100, keywords=["rye bread", "bread"])
+    agent.catalog.products["MOCK-BREAD-RYE-B"] = other
+    agent.catalog.products["MOCK-BREAD-RYE-500"]["stock"] = 5
+    agent.handle_event({"type": "slot_state", "slot": 1, "state": "empty", "estimated_units": 0})
+    opts = agent.open_approvals()[0]["options"]
+    assert all(o["result"] == "needs_approval" for o in opts)
+    assert any("outside the approved groups" in r for o in opts for r in o["reasons"])
+
+
+def test_approved_substitute_is_ranked_best(agent):
+    agent.auto_limit_eur = 40
+    agent.handle_event({"type": "slot_state", "slot": 3, "state": "empty", "estimated_units": 0})
+    best = agent.open_approvals()[0]["options"][0]
+    assert best["label"] == "best" and best["lines"][1]["product_id"] == "MOCK-MILK-LF-1L-B"
