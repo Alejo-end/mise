@@ -1,0 +1,8 @@
+name: Safe Kitchen Agent
+icon: 🥛
+description: >
+  A USB camera watches three taped shelf slots. When a slot runs low, the board
+  sends an event to the Safe Kitchen backend. Modulino Knob sets the auto-order
+  limit, Modulino Thermo watches the cold room, Modulino Buzzer beeps for approvals.
+bricks:
+  - arduino:web_ui

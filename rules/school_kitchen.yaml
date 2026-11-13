@@ -1,0 +1,23 @@
+# Kitchen rule set. The head chef signs it once. Every decision cites its version.
+# To allow something the rule check forbids, sign a new version. Nobody can approve a forbidden item.
+version: 3
+signed_by: "Head chef, Espoo school kitchen"
+site: school
+banned_allergens: [nuts, peanuts, sesame]
+must_have:
+  - {product_group: milk, property: lactose_free}
+targets:
+  - {slot: 1, product: "rye bread 500 g", product_id: "MOCK-BREAD-RYE-500", group: rye_bread, target_units: 30, reorder_below: 8}
+  - {slot: 2, product: "natural yogurt 1 kg", product_id: "MOCK-YOG-NAT-1KG", group: natural_yogurt, target_units: 12, reorder_below: 4}
+  - {slot: 3, product: "lactose-free milk 1 L", product_id: "MOCK-MILK-LF-1L", group: lactose_free_milk, target_units: 24, reorder_below: 6}
+approved_substitute_groups:
+  lactose_free_milk: [lactose_free_milk_any_brand]
+  natural_yogurt: [natural_yogurt_any_brand]
+limits:
+  auto_order_eur: 150
+  weekly_eur: 800
+  standing_order_growth: 0.15
+delivery:
+  latest_needed: "next weekday 07:00"
+approvers:
+  default: "Head chef"

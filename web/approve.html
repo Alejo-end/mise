@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Safe Kitchen</title>
+<style>
+  :root { --bg:#f6f4ef; --card:#fff; --ink:#1d1d1b; --muted:#6b6a65; --line:#e3e0d8;
+          --ok:#2f7d4f; --warn:#b26b00; --bad:#b3261e; --accent:#1f4e8c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#151514; --card:#1f1f1d; --ink:#eeece6; --muted:#a3a19a;
+          --line:#33322e; --ok:#5cc28a; --warn:#e3a33b; --bad:#ef6b62; --accent:#7fb0ff; } }
+  * { box-sizing:border-box }
+  body { margin:0; font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink) }
+  main { max-width:640px; margin:0 auto; padding:16px }
+  header { display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap }
+  h1 { font-size:20px; margin:0 } h2 { font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:24px 0 8px }
+  .meta { color:var(--muted); font-size:13px }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px }
+  .opt { border:1px solid var(--line); border-radius:10px; padding:10px; margin-top:10px }
+  .opt b { display:block }
+  .tag { display:inline-block; font-size:12px; font-weight:600; padding:1px 8px; border-radius:99px; border:1px solid currentColor; margin-right:6px }
+  .allowed { color:var(--ok) } .needs_approval { color:var(--warn) } .forbidden { color:var(--bad) }
+  .reasons { color:var(--muted); font-size:13px; margin:4px 0 0 }
+  .lines { font-size:13px; margin:6px 0 0; padding-left:18px }
+  button { font:inherit; font-weight:600; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); padding:10px 14px; cursor:pointer }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px }
+  .empty { color:var(--muted) }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 10px }
+  .stat span { display:block; font-size:12px; color:var(--muted) } .stat strong { font-size:18px }
+  ol.story { padding-left:20px; font-size:14px } ol.story li { margin:3px 0 }
+  input, select { font:inherit; padding:9px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); width:100% }
+  pre { white-space:pre-wrap; font-size:12px; max-height:360px; overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px }
+  .tabs button[aria-pressed="true"] { border-color:var(--accent); color:var(--accent) }
+  .alarm { color:var(--bad); font-weight:700 }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Safe Kitchen Agent</h1>
+    <span class="meta" id="ruleset"></span>
+  </header>
+
+  <h2>Kitchen</h2>
+  <div class="stats" id="stats"></div>
+
+  <h2>Waiting for you</h2>
+  <div id="approvals"><p class="empty">Nothing to approve.</p></div>
+
+  <h2>Ask for something</h2>
+  <div class="card">
+    <input id="text" value="1,000 litres of lactose-free milk by Monday" aria-label="Request">
+    <div class="row">
+      <button class="primary" id="send">Send request</button>
+    </div>
+    <div class="row">
+      <select id="force" aria-label="Force a product">
+        <option value="MOCK-ALMOND-1L">Force: Almond drink (nuts)</option>
+        <option value="MOCK-MILK-REG-1L">Force: Semi-skimmed milk (not lactose-free)</option>
+        <option value="MOCK-MILK-LF-1L-X">Force: Import milk (no allergen data)</option>
+        <option value="MOCK-YOG-GRANOLA">Force: Granola yogurt (nut traces)</option>
+      </select>
+      <button id="forceBtn">Try to order 20</button>
+    </div>
+    <p class="reasons" id="result"></p>
+  </div>
+
+  <h2>Audit log</h2>
+  <div class="row tabs">
+    <button id="tStory" aria-pressed="true">Story</button>
+    <button id="tJson" aria-pressed="false">Data</button>
+  </div>
+  <ol class="story" id="story"></ol>
+  <pre id="json" hidden></pre>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const label = (r) => r.replace("_", " ");
+let view = "story";
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  return r.json();
+}
+const post = (path, body) => api(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+
+function renderApprovals(list) {
+  if (!list.length) { $("approvals").innerHTML = '<p class="empty">Nothing to approve.</p>'; return; }
+  $("approvals").innerHTML = list.map(a => `
+    <div class="card">
+      <b>${esc(a.what)}${a.slot ? " · slot " + a.slot : ""}</b>
+      <div class="meta">Asked ${esc(a.created.slice(11,16))} · approver ${esc(a.approver)}</div>
+      ${a.options.map((o, i) => `
+        <div class="opt">
+          <span class="tag ${o.result}">${esc(o.label)}</span><span class="tag ${o.result}">${label(o.result)}</span>
+          <b>€${o.total_eur.toFixed(2)} · ${esc(o.trade_off)}</b>
+          <ul class="lines">${o.lines.map(l => `<li>${l.quantity} × ${esc(l.name)} at €${l.unit_price_eur.toFixed(2)}
+            <span class="meta">(price checked ${esc(l.price_checked_at.slice(11,16))})</span></li>`).join("")}</ul>
+          <p class="reasons">${o.reasons.map(esc).join("; ")}</p>
+          <div class="row"><button class="${i===0?"primary":""}" data-a="${a.id}" data-o="${i}">${i===0?"Approve":"Choose this"}</button></div>
+        </div>`).join("")}
+      <div class="row"><button data-a="${a.id}" data-skip="1">Skip</button></div>
+    </div>`).join("");
+}
+
+$("approvals").addEventListener("click", async (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  b.disabled = true;
+  const body = b.dataset.skip ? {action:"skip"} : {action: b.dataset.o === "0" ? "approve" : "choose", option: Number(b.dataset.o)};
+  const r = await post(`/approvals/${b.dataset.a}`, body);
+  $("result").textContent = r.order_id ? `Order ${r.order_id} placed, €${r.total_eur.toFixed(2)}.` : `Result: ${label(r.status)}.`;
+  tick();
+});
+
+$("send").onclick = async () => {
+  const r = await post("/request", {text: $("text").value});
+  $("result").textContent = `Result: ${label(r.status)}.`; tick();
+};
+$("forceBtn").onclick = async () => {
+  const r = await post("/request", {text: "20 forced item", product_id: $("force").value});
+  $("result").innerHTML = r.status === "forbidden"
+    ? `<span class="forbidden">Blocked by rule set v${r.rule_set_version}:</span> ${esc(r.reasons.join("; "))}`
+    : `Result: ${label(r.status)}.`;
+  tick();
+};
+$("tStory").onclick = () => { view = "story"; $("tStory").setAttribute("aria-pressed","true"); $("tJson").setAttribute("aria-pressed","false"); tick(); };
+$("tJson").onclick = () => { view = "json"; $("tJson").setAttribute("aria-pressed","true"); $("tStory").setAttribute("aria-pressed","false"); tick(); };
+
+async function tick() {
+  try {
+    const [approvals, dev, log] = await Promise.all([
+      api("/approvals/open"), api("/device"), api(view === "story" ? "/log?format=story&limit=60" : "/log?format=json&limit=60")]);
+    renderApprovals(approvals);
+    $("ruleset").textContent = `Rule set v${dev.rule_set_version}, signed by ${dev.signed_by}`;
+    const slots = Object.entries(dev.slots).map(([k, v]) => `${k}: ${v.state}`).join(", ") || "no data";
+    $("stats").innerHTML = [
+      ["Cold room", dev.temperature_c == null ? "–" : `<span class="${dev.alarm ? "alarm" : ""}">${dev.temperature_c.toFixed(1)} °C</span>`],
+      ["Auto limit (knob)", dev.auto_limit_eur == null ? "–" : `€${dev.auto_limit_eur}`],
+      ["Spent this week", `€${dev.weekly_spent_eur.toFixed(2)}`],
+      ["Shelf", esc(slots)],
+      ["Device seen", dev.last_seen ? esc(dev.last_seen.slice(11,19)) : "never"],
+      ["Catalog", esc(dev.catalog)],
+    ].map(([k, v]) => `<div class="stat"><span>${k}</span><strong>${v}</strong></div>`).join("");
+    if (view === "story") { $("json").hidden = true; $("story").hidden = false;
+      $("story").innerHTML = log.story.slice().reverse().map(l => `<li>${esc(l)}</li>`).join(""); }
+    else { $("story").hidden = true; $("json").hidden = false; $("json").textContent = JSON.stringify(log.slice().reverse(), null, 2); }
+  } catch (e) { $("result").textContent = "Backend not reachable."; }
+}
+tick(); setInterval(tick, 2000);
+</script>
+</body>
+</html>

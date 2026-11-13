@@ -1,0 +1,382 @@
+# Safe Kitchen Agent: Linux side of the UNO Q.
+#
+# Every 2 seconds it reads a camera frame and compares each taped shelf slot
+# with stored photos of the slot when empty and when full. When a slot changes
+# state, it sends an event to the backend on the laptop. It also forwards the
+# knob, the knob press and the thermo readings, and plays buzzer tones that the
+# backend asks for.
+#
+# A web page on port 7000 of the board shows the camera, the slots and the
+# sensors, and has the buttons to calibrate the slots.
+
+import base64
+import io
+import json
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+import numpy as np
+import requests
+from PIL import Image, ImageOps
+
+from arduino.app_bricks.web_ui import WebUI
+from arduino.app_peripherals.usb_camera import USBCamera
+from arduino.app_utils import App, Bridge, Logger
+
+logger = Logger("safe-kitchen")
+TZ = ZoneInfo("Europe/Helsinki")
+HERE = Path(__file__).resolve().parent
+DATA = HERE.parent / "data"
+DATA.mkdir(exist_ok=True)
+CONFIG_FILE = DATA / "config.json"
+
+DEFAULT_CONFIG = {
+    # The laptop that runs the backend. On a phone hotspot, use the laptop IP.
+    "backend_url": "http://192.168.1.10:8000",
+    "temperature_limit_c": 6.0,
+    "frame_interval_s": 2.0,
+    "manual_slot": 3,
+    # Slots as fractions of the frame: x, y, width, height.
+    "slots": [
+        {"slot": 1, "product_hint": "rye bread 500 g", "target_units": 30, "rect": [0.05, 0.30, 0.28, 0.45]},
+        {"slot": 2, "product_hint": "natural yogurt 1 kg", "target_units": 12, "rect": [0.36, 0.30, 0.28, 0.45]},
+        {"slot": 3, "product_hint": "lactose-free milk 1 L", "target_units": 24, "rect": [0.67, 0.30, 0.28, 0.45]},
+    ],
+    # Fill fraction thresholds: at or above "full" the slot is full, below "empty" it is empty, between is low.
+    "full_at": 0.66,
+    "empty_below": 0.20,
+    # Without a "full" photo, a slot whose difference from the empty photo is above this is present.
+    "present_diff": 0.10,
+}
+
+
+def load_config():
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+    if CONFIG_FILE.exists():
+        try:
+            cfg.update(json.loads(CONFIG_FILE.read_text()))
+        except Exception as e:
+            logger.warning(f"config.json unreadable, using defaults: {e}")
+    return cfg
+
+
+config = load_config()
+lock = threading.Lock()
+state = {
+    "slots": {},  # slot -> {"state", "fill", "units", "candidate", "count"}
+    "temperature_c": None,
+    "humidity": None,
+    "auto_limit_eur": 40,
+    "alarm": False,
+    "backend_ok": None,
+    "backend_error": "",
+    "buzzer": "off",
+    "modulinos": None,
+    "last_frame": None,
+    "camera_ok": False,
+    "camera_error": "",
+}
+
+
+def now_iso():
+    return datetime.now(TZ).isoformat(timespec="seconds")
+
+
+def save_config():
+    CONFIG_FILE.write_text(json.dumps(config, indent=2))
+
+
+# Backend -----------------------------------------------------------------
+
+def post_event(event: dict):
+    event.setdefault("time", now_iso())
+    event.setdefault("temperature_c", state["temperature_c"])
+    event.setdefault("auto_limit_eur", state["auto_limit_eur"])
+    event.setdefault("alarm", state["alarm"])
+    try:
+        r = requests.post(config["backend_url"].rstrip("/") + "/events", json=event, timeout=5)
+        r.raise_for_status()
+        state["backend_ok"], state["backend_error"] = True, ""
+        reply = r.json()
+        logger.info(f"event {event['type']} -> {reply}")
+        ui.send_message("event", {"event": event, "reply": reply})
+        return reply
+    except Exception as e:
+        state["backend_ok"], state["backend_error"] = False, str(e)[:200]
+        logger.warning(f"backend unreachable: {e}")
+        ui.send_message("event", {"event": event, "reply": {"status": "backend unreachable"}})
+        return None
+
+
+def post_async(event: dict):
+    threading.Thread(target=post_event, args=(event,), daemon=True).start()
+
+
+BUZZER_MODES = {"off": 0, "approval": 1, "alarm": 2, "confirm": 3}
+
+
+buzzer_wanted = {"mode": "off", "confirm": False}
+
+
+def set_buzzer(mode: str):
+    """Record the wanted buzzer mode. buzzer_worker() sends it to the microcontroller.
+
+    Bridge callbacks run on the Bridge read thread, and a Bridge.call from there
+    waits for a reply that same thread must read, so it times out. Only the
+    worker thread calls Bridge.
+    """
+    if mode == "confirm":
+        buzzer_wanted["confirm"] = True
+    else:
+        buzzer_wanted["mode"] = mode
+
+
+def buzzer_worker():
+    applied = None
+    while True:
+        try:
+            if buzzer_wanted["confirm"]:
+                buzzer_wanted["confirm"] = False
+                Bridge.call("set_buzzer", BUZZER_MODES["confirm"])
+                applied = None  # the confirm beep ends in "off" on the board, so resend the mode
+                time.sleep(0.2)
+            # The local temperature alarm wins over the approval beep.
+            mode = "alarm" if state["alarm"] else buzzer_wanted["mode"]
+            if mode != applied:
+                Bridge.call("set_buzzer", BUZZER_MODES[mode])
+                applied = mode
+                state["buzzer"] = mode
+        except Exception as e:
+            logger.warning(f"set_buzzer failed: {e}")
+            applied = None
+            time.sleep(1)
+        time.sleep(0.2)
+
+
+def poll_commands():
+    while True:
+        try:
+            r = requests.get(config["backend_url"].rstrip("/") + "/device/commands", timeout=3)
+            r.raise_for_status()
+            state["backend_ok"], state["backend_error"] = True, ""
+            set_buzzer(r.json().get("buzzer", "off"))
+        except Exception as e:
+            state["backend_ok"], state["backend_error"] = False, str(e)[:200]
+            set_buzzer("off")
+        time.sleep(2)
+
+
+# Microcontroller callbacks ------------------------------------------------
+
+def on_knob_limit(eur):
+    state["auto_limit_eur"] = int(eur)
+    ui.send_message("sensors", sensors())
+    post_async({"type": "status"})
+
+
+def on_knob_pressed():
+    slot = int(config.get("manual_slot", 3))
+    s = next((x for x in config["slots"] if x["slot"] == slot), None)
+    set_buzzer("confirm")
+    post_async({"type": "manual_low", "slot": slot, "product_hint": s["product_hint"] if s else None})
+
+
+def on_thermo(celsius, humidity):
+    if celsius is None:
+        return
+    state["temperature_c"] = round(float(celsius), 2)
+    state["humidity"] = None if humidity is None else round(float(humidity), 1)
+    limit = float(config["temperature_limit_c"])
+    # 0.5 degree hysteresis so the alarm does not flicker at the limit.
+    if not state["alarm"] and celsius > limit:
+        state["alarm"] = True
+        post_async({"type": "temperature_alarm", "active": True, "temperature_c": state["temperature_c"], "limit_c": limit})
+    elif state["alarm"] and celsius < limit - 0.5:
+        state["alarm"] = False
+        post_async({"type": "temperature_alarm", "active": False, "temperature_c": state["temperature_c"], "limit_c": limit})
+    ui.send_message("sensors", sensors())
+
+
+Bridge.provide("knob_limit", on_knob_limit)
+Bridge.provide("knob_pressed", on_knob_pressed)
+Bridge.provide("thermo", on_thermo)
+
+
+# Shelf detection -----------------------------------------------------------
+
+def crop(img: Image.Image, rect) -> np.ndarray:
+    w, h = img.size
+    x, y, cw, ch = rect
+    box = (int(x * w), int(y * h), int((x + cw) * w), int((y + ch) * h))
+    g = ImageOps.grayscale(img.crop(box)).resize((48, 48))
+    a = np.asarray(g, dtype=np.float32) / 255.0
+    return a - a.mean()  # remove overall brightness so room light matters less
+
+
+def ref_path(slot: int, kind: str) -> Path:
+    return DATA / f"slot{slot}_{kind}.npy"
+
+
+def diff(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.abs(a - b).mean())
+
+
+def classify(slot_cfg: dict, patch: np.ndarray):
+    empty_p, full_p = ref_path(slot_cfg["slot"], "empty"), ref_path(slot_cfg["slot"], "full")
+    if not empty_p.exists():
+        return None, None
+    d_empty = diff(patch, np.load(empty_p))
+    if full_p.exists():
+        d_full = diff(patch, np.load(full_p))
+        fill = d_empty / (d_empty + d_full + 1e-6)
+    else:
+        fill = 1.0 if d_empty > config["present_diff"] else 0.0
+    if fill >= config["full_at"]:
+        return "full", fill
+    if fill < config["empty_below"]:
+        return "empty", fill
+    return "low", fill
+
+
+def process_frame(img: Image.Image):
+    for s in config["slots"]:
+        patch = crop(img, s["rect"])
+        st, fill = classify(s, patch)
+        slot = s["slot"]
+        with lock:
+            cur = state["slots"].setdefault(slot, {"state": None, "fill": None, "units": None, "candidate": None, "count": 0})
+            cur["fill"] = None if fill is None else round(fill, 2)
+            if st is None:
+                continue
+            # A new state must show in two frames in a row before it counts.
+            if st == cur["candidate"]:
+                cur["count"] += 1
+            else:
+                cur["candidate"], cur["count"] = st, 1
+            changed = cur["count"] >= 2 and st != cur["state"]
+            if changed:
+                cur["state"] = st
+                cur["units"] = 0 if st == "empty" else round(fill * s["target_units"])
+        if changed:
+            post_async({"type": "slot_state", "slot": slot, "product_hint": s["product_hint"], "state": st,
+                        "estimated_units": cur["units"]})
+
+
+def sensors():
+    return {
+        "temperature_c": state["temperature_c"], "humidity": state["humidity"],
+        "auto_limit_eur": state["auto_limit_eur"], "alarm": state["alarm"],
+        "backend_ok": state["backend_ok"], "backend_error": state["backend_error"],
+        "backend_url": config["backend_url"], "buzzer": state["buzzer"], "modulinos": state["modulinos"],
+        "camera_ok": state["camera_ok"], "camera_error": state["camera_error"],
+        "slots": {str(k): {kk: vv for kk, vv in v.items() if kk in ("state", "fill", "units")} for k, v in state["slots"].items()},
+        "config": {k: config[k] for k in ("slots", "temperature_limit_c", "manual_slot")},
+        "calibrated": {str(s["slot"]): [k for k in ("empty", "full") if ref_path(s["slot"], k).exists()] for s in config["slots"]},
+    }
+
+
+def send_frame(img: Image.Image):
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=70)
+    ui.send_message("frame", {"image": base64.b64encode(buf.getvalue()).decode(), "time": now_iso()})
+
+
+# Web page callbacks --------------------------------------------------------
+
+def on_calibrate(_sid, data):
+    """data: {"slot": 3 or "all", "kind": "empty" | "full"}"""
+    img = state["last_frame"]
+    if img is None:
+        return {"ok": False, "error": "no camera frame yet"}
+    kind = data.get("kind")
+    if kind not in ("empty", "full"):
+        return {"ok": False, "error": "kind must be empty or full"}
+    which = [s for s in config["slots"] if data.get("slot") in ("all", s["slot"], str(s["slot"]))]
+    for s in which:
+        np.save(ref_path(s["slot"], kind), crop(img, s["rect"]))
+        with lock:
+            state["slots"].pop(s["slot"], None)
+    logger.info(f"saved {kind} photo for slots {[s['slot'] for s in which]}")
+    return {"ok": True, "slots": [s["slot"] for s in which], "kind": kind}
+
+
+def on_save_config(_sid, data):
+    for key in ("backend_url", "temperature_limit_c", "manual_slot", "slots"):
+        if key in data:
+            config[key] = data[key]
+    save_config()
+    ui.send_message("sensors", sensors())
+    return {"ok": True}
+
+
+def on_simulate(_sid, data):
+    """Send a slot event by hand, for tests without the camera."""
+    slot, st = int(data["slot"]), data["state"]
+    s = next((x for x in config["slots"] if x["slot"] == slot), {"product_hint": None, "target_units": 0})
+    units = {"empty": 0, "low": max(1, s["target_units"] // 6), "full": s["target_units"]}[st]
+    return post_event({"type": "slot_state", "slot": slot, "product_hint": s["product_hint"], "state": st,
+                       "estimated_units": units})
+
+
+ui = WebUI()
+ui.on_message("calibrate", on_calibrate)
+ui.on_message("save_config", on_save_config)
+ui.on_message("simulate", on_simulate)
+ui.on_message("get_state", lambda sid, _d: ui.send_message("sensors", sensors(), sid))
+ui.expose_api("GET", "/state", sensors)
+
+
+# Main loop -----------------------------------------------------------------
+
+camera = None  # opened in loop(), so the app also runs while no camera is plugged in
+last_status = 0.0
+last_camera_try = 0.0
+
+
+def loop():
+    global camera, last_status, last_camera_try
+    if state["modulinos"] is None:
+        try:
+            bits = int(Bridge.call("modulino_status"))
+            state["modulinos"] = {"knob": bool(bits & 1), "thermo": bool(bits & 2), "buzzer": bool(bits & 4)}
+            logger.info(f"modulinos: {state['modulinos']}")
+        except Exception as e:
+            logger.warning(f"modulino_status failed: {e}")
+    try:
+        if camera is None:
+            if time.time() - last_camera_try < 10:
+                raise RuntimeError("no camera yet")
+            last_camera_try = time.time()
+            camera = USBCamera(resolution=(640, 480), fps=5)
+            camera.start()
+            logger.info("camera started")
+        img = camera.capture()
+        state["camera_ok"], state["camera_error"] = img is not None, "" if img is not None else "camera gave no picture"
+        if img is not None:
+            img = img.convert("RGB")
+            state["last_frame"] = img
+            process_frame(img)
+            send_frame(img)
+    except Exception as e:
+        state["camera_ok"] = False
+        if str(e) != "no camera yet":
+            state["camera_error"] = str(e)[:160]
+            logger.warning(f"camera: {e}")
+            try:
+                camera.stop()
+            except Exception:
+                pass
+            camera = None
+    ui.send_message("sensors", sensors())
+    if time.time() - last_status > 10:
+        last_status = time.time()
+        post_async({"type": "status"})
+    time.sleep(float(config["frame_interval_s"]))
+
+
+threading.Thread(target=poll_commands, daemon=True).start()
+threading.Thread(target=buzzer_worker, daemon=True).start()
+App.run(user_loop=loop)
