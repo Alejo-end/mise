@@ -4,122 +4,178 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Safe Kitchen Shelf</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..100,400..800&display=swap">
 <style>
-  :root { --bg:#f5f3ee; --card:#fff; --ink:#1c1c1a; --muted:#6b6a65; --line:#e2dfd7;
-          --ok:#2f7d4f; --warn:#b26b00; --bad:#b3261e; --accent:#1f4e8c; --accent-ink:#fff; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#141413; --card:#1e1e1c; --ink:#efede7; --muted:#a19f98;
-          --line:#33322e; --ok:#5cc28a; --warn:#e3a33b; --bad:#ef6b62; --accent:#7fb0ff; --accent-ink:#0d1b30; } }
+  /* An instrument faceplate: aluminium panel, black print, one signal orange, real keys. */
+  :root {
+    --chassis:#c9c7c0; --panel:#e8e6e0; --key:#f6f5f1; --ink:#000; --dim:#383632; --line:#000;
+    --orange:#ff5b14; --orange-text:#9e3100; /* orange text that passes contrast on the panel */ --led-off:#8c8981; --screen:#000;
+    --font:"Archivo", "Helvetica Neue", Arial, sans-serif;
+  }
+  /* Always the light aluminium panel: it is a hardware faceplate, not a theme. */
+  :root { color-scheme:light }
   * { box-sizing:border-box }
   [hidden] { display:none !important }
-  body { margin:0; font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink) }
-  main { max-width:1000px; margin:0 auto; padding:16px }
-  h1 { font-size:22px; margin:0 }
-  h2 { font-size:17px; margin:0 0 4px }
-  p { margin:4px 0 }
-  .muted { color:var(--muted); font-size:14px }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:14px }
-  .top { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px }
-  .pills { display:flex; gap:6px; flex-wrap:wrap }
-  .pill { font-size:13px; font-weight:600; padding:4px 10px; border-radius:99px; border:1px solid var(--line); background:var(--card) }
-  .pill::before { content:""; display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:var(--muted); vertical-align:1px }
-  .pill.ok::before { background:var(--ok) } .pill.bad::before { background:var(--bad) }
-  .grid { display:grid; gap:14px; grid-template-columns:1fr } @media (min-width:820px) { .grid { grid-template-columns:3fr 2fr } }
-  .cam { position:relative; background:#000; border-radius:12px; overflow:hidden; aspect-ratio:4/3; touch-action:none; user-select:none }
+  body { margin:0; background:var(--chassis); color:var(--ink); font:400 1.1rem/1.5 var(--font); font-variation-settings:"wdth" 100 }
+  .unit { max-width:1040px; margin:16px auto; padding:0 16px }
+  .face { background:var(--panel); border:1.5px solid var(--line); border-radius:14px; overflow:hidden }
+
+  /* Top strip: name plate and the status LEDs */
+  .strip { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; padding:14px 18px; border-bottom:1.5px solid var(--line) }
+  .plate { display:flex; align-items:baseline; gap:12px }
+  .plate h1 { margin:0; font-size:1.90rem; font-weight:800; letter-spacing:-.02em; font-variation-settings:"wdth" 85; line-height:1 }
+  .plate span { color:var(--dim); font-size:1.05rem }
+  .leds { display:flex; gap:14px; flex-wrap:wrap }
+  .led { display:flex; flex-direction:column; align-items:center; gap:4px; font-size:1.00rem; color:var(--dim) }
+  .led i { width:16px; height:16px; border-radius:50%; background:var(--led-off); border:1px solid var(--line) }
+  .led.on i { background:var(--ink) }
+  .led.bad i { background:var(--orange); border-radius:3px }
+  .led b { font-weight:700; color:var(--ink) } .led.bad b { color:var(--orange-text) }
+
+  /* Modules sit on a grid separated by printed lines */
+  .grid { display:grid; grid-template-columns:1fr }
+  @media (min-width:860px) { .grid { grid-template-columns:1.45fr 1fr } .grid > .col + .col { border-left:1.5px solid var(--line) } }
+  .mod { padding:16px 18px; border-bottom:1.5px solid var(--line) }
+  .col > .mod:last-child { border-bottom:0 }
+  @media (max-width:859px) { .col > .mod:last-child { border-bottom:1.5px solid var(--line) } .grid > .col:last-child > .mod:last-child { border-bottom:0 } }
+  .mod h2 { margin:0 0 10px; font-size:1.05rem; font-weight:700; display:flex; justify-content:space-between; gap:8px }
+  .mod h2 small { font-weight:400; color:var(--dim) }
+  .hint { color:var(--dim); font-size:1.05rem; margin:6px 0 0 }
+
+  /* Camera: a screen in a bezel */
+  .cam { position:relative; background:var(--screen); border-radius:8px; border:6px solid #000; overflow:hidden; aspect-ratio:4/3; touch-action:none; user-select:none }
   .cam img { position:absolute; inset:0; width:100%; height:100%; object-fit:fill }
-  .cam .none { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#ddd; text-align:center; padding:24px; gap:6px }
-  .box { position:absolute; border:3px solid #fff; border-radius:6px; cursor:move }
-  .box b { position:absolute; left:0; top:0; background:#fff; color:#000; font-size:13px; padding:1px 7px; border-bottom-right-radius:6px }
-  .box .h { position:absolute; right:-8px; bottom:-8px; width:18px; height:18px; border-radius:50%; background:#fff; border:2px solid #000; cursor:nwse-resize }
-  .box.full { border-color:var(--ok) } .box.full b { background:var(--ok); color:#fff }
-  .box.low { border-color:var(--warn) } .box.low b { background:var(--warn); color:#000 }
-  .box.empty { border-color:var(--bad) } .box.empty b { background:var(--bad); color:#fff }
-  .camhint { font-size:13px; color:var(--muted); margin-top:6px }
-  .steps { list-style:none; padding:0; margin:8px 0 0; counter-reset:s }
-  .steps li { counter-increment:s; display:grid; grid-template-columns:30px 1fr; gap:10px; padding:10px 0; border-top:1px solid var(--line) }
-  .steps li::before { content:counter(s); width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; border:2px solid var(--line) }
-  .steps li.done::before { content:"✓"; background:var(--ok); border-color:var(--ok); color:#fff }
-  .steps li.now::before { border-color:var(--accent); color:var(--accent) }
-  .steps li.later { opacity:.5 }
-  button { font:inherit; font-weight:600; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); padding:9px 14px; cursor:pointer; min-height:42px }
-  button.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink) }
-  button:disabled { opacity:.45; cursor:not-allowed }
-  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; align-items:center }
-  .shelf { display:grid; gap:10px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)) }
-  .slot { border:1px solid var(--line); border-radius:12px; padding:12px }
-  .slot .state { font-size:20px; font-weight:700 }
-  .slot .state::first-letter { text-transform:uppercase }
-  .bar { height:8px; background:var(--line); border-radius:99px; overflow:hidden; margin:8px 0 4px }
-  .bar i { display:block; height:100%; background:var(--muted) }
-  .full .state, .full-c { color:var(--ok) } .full .bar i { background:var(--ok) }
-  .low .state { color:var(--warn) } .low .bar i { background:var(--warn) }
-  .empty .state { color:var(--bad) } .empty .bar i { background:var(--bad) }
-  .facts { display:grid; grid-template-columns:repeat(2,1fr); gap:10px }
-  .fact span { display:block; font-size:13px; color:var(--muted) } .fact strong { font-size:22px }
-  .alarm { color:var(--bad) }
-  details { border-top:1px solid var(--line); padding-top:10px; margin-top:10px }
-  summary { cursor:pointer; font-weight:600 }
-  label { display:block; font-size:14px; color:var(--muted); margin:10px 0 4px }
-  input, select { font:inherit; width:100%; padding:9px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink) }
-  .two { display:grid; grid-template-columns:1fr 1fr; gap:8px }
-  .toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:10px 16px; border-radius:10px; font-weight:600; opacity:0; transition:opacity .2s; pointer-events:none; max-width:90vw }
-  .toast.on { opacity:1 }
-  #log { font:12px ui-monospace,monospace; white-space:pre-wrap; max-height:160px; overflow:auto; color:var(--muted) }
+  .cam .none { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#e8e6e0; text-align:center; padding:24px; gap:6px }
+  .box { position:absolute; border:3px solid #fff; cursor:move }
+  .box b { position:absolute; left:-2px; top:-24px; background:#fff; color:#000; font-size:1.05rem; font-weight:800; padding:2px 7px }
+  .box .h { position:absolute; right:-14px; bottom:-14px; width:28px; height:28px; border-radius:50%; background:#fff; border:2px solid #000; cursor:nwse-resize }
+  .box.low, .box.empty { border-color:var(--orange) } .box.low b, .box.empty b { background:var(--orange) }
+  .box.empty { border-style:dashed }
+
+  /* Shelf: one channel strip per spot, like a mixer */
+  .channels { display:grid; grid-template-columns:1fr; border:1.5px solid var(--line); border-radius:8px; overflow:hidden }
+  .ch { padding:12px 14px; display:grid; grid-template-columns:auto 1fr; gap:2px 14px; align-items:center }
+  .ch + .ch { border-top:1.5px solid var(--line) }
+  .ch .num { grid-row:span 4; font-size:3.00rem; font-weight:800; line-height:.85; font-variation-settings:"wdth" 85 }
+  .ch .name { font-size:1.05rem; font-weight:600; line-height:1.2 }
+  .ch .state { font-size:1.60rem; font-weight:800; font-variation-settings:"wdth" 90; line-height:1 }
+  .ch .count { color:var(--dim); font-size:1.00rem }
+  .meter { grid-column:2; display:grid; grid-template-columns:repeat(10,1fr); gap:4px; margin-top:6px; max-width:320px }
+  .meter i { height:16px; border:1px solid var(--line); background:transparent }
+  .meter i.lit { background:var(--ink) }
+  .ch.low .meter i.lit { background:var(--orange); border-color:var(--orange) }
+  .ch.low .state, .ch.empty .state { color:var(--orange-text) }
+
+  /* The dial mirrors the knob on the box */
+  .dialrow { display:grid; grid-template-columns:auto 1fr; gap:18px; align-items:center }
+  .dial { width:170px; height:170px }
+  .readouts { display:grid; gap:12px }
+  .readout span { display:block; font-size:1.00rem; color:var(--dim) }
+  .readout strong { font-size:2.40rem; font-weight:800; line-height:1; font-variation-settings:"wdth" 85; font-variant-numeric:tabular-nums }
+  .readout.alarm strong { color:var(--orange-text) }
+  .readout em { font-style:normal; font-size:1.05rem; font-weight:600 }
+
+  /* Setup: a numbered sequence of keys */
+  .steps { list-style:none; margin:0; padding:0; counter-reset:s }
+  .steps li { counter-increment:s; display:grid; grid-template-columns:44px 1fr; gap:12px; padding:10px 0; border-top:1px solid var(--line) }
+  .steps li:first-child { border-top:0; padding-top:0 }
+  .steps li::before { content:counter(s); width:40px; height:40px; font-size:1.2rem; display:flex; align-items:center; justify-content:center; border:1.5px solid var(--line); border-radius:50%; font-weight:800 }
+  .steps li.now::before { background:var(--orange); border-color:var(--orange); color:#000 }
+  .steps li.done::before { content:"✓"; background:var(--ink); color:var(--panel) }
+  .steps li.later { color:var(--dim) }
+  .steps b { display:block; font-size:1.15rem }
+  .steps p { margin:2px 0 0; font-size:1.05rem; color:var(--dim) }
+
+  /* Keys */
+  button { font:700 1.1rem var(--font); color:#000; background:var(--key); border:1.5px solid #000; border-radius:7px; padding:12px 20px; min-height:54px; cursor:pointer; box-shadow:0 3px 0 #000; transition:transform .05s, box-shadow .05s }
+  button:active:not(:disabled) { transform:translateY(3px); box-shadow:0 0 0 #000 }
+  button.primary { background:var(--orange) }
+  button:disabled { opacity:.4; cursor:not-allowed; box-shadow:0 1px 0 #000 }
+  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline:3px solid var(--orange); outline-offset:2px }
+  .keys { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px }
+
+  /* Drawers for the rarely used parts */
+  details { border-top:1px solid var(--line); padding:10px 0 }
+  details:first-of-type { border-top:0; padding-top:0 }
+  summary { cursor:pointer; font-weight:700; font-size:1.15rem; list-style:none; display:flex; justify-content:space-between; align-items:center; min-height:48px }
+  summary::after { content:"+"; font-weight:800 } details[open] summary::after { content:"–" }
+  summary::-webkit-details-marker { display:none }
+  label { display:block; font-size:1.00rem; color:var(--dim); margin:10px 0 4px }
+  input, select { font:500 1.1rem var(--font); width:100%; padding:9px 10px; border:1.5px solid var(--line); border-radius:6px; background:var(--key); color:var(--ink) }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:10px }
+  .testrow { display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap } .testrow span { flex:1; min-width:120px }
+  #log { font:12px/1.5 ui-monospace, Menlo, monospace; white-space:pre-wrap; max-height:160px; overflow:auto; color:var(--dim); margin-top:8px }
+  .ok-t { font-weight:700 } .bad-t { color:var(--orange-text); font-weight:700 }
+
+  .toast { position:fixed; left:50%; bottom:20px; transform:translate(-50%, 10px); background:#000; color:#fff; padding:11px 16px; border-radius:7px; font-weight:600; opacity:0; transition:opacity .15s, transform .15s; pointer-events:none; max-width:90vw; border-left:6px solid var(--orange) }
+  .toast.on { opacity:1; transform:translate(-50%, 0) }
+  @media (prefers-reduced-motion: reduce) { .toast, button { transition:none } }
+
+  /* Bigger text on demand, remembered on this device */
+  html { font-size:100% } html.large { font-size:125% }
+  .size { min-height:48px; padding:6px 14px; font-size:1.1rem }
+  @media (prefers-contrast: more) { :root { --dim:#000; --led-off:#555 } }
+  .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap }
 </style>
 </head>
 <body>
-<main>
-  <div class="top">
-    <div>
-      <h1>Safe Kitchen shelf</h1>
-      <div class="muted">The camera watches the shelf and tells the kitchen agent when something runs low.</div>
-    </div>
-    <div class="pills" id="pills"></div>
-  </div>
+<div class="unit">
+ <div class="face">
+  <header class="strip">
+    <div class="plate"><h1>safe kitchen</h1><span>shelf unit · watches the shelf and tells the agent when something runs low</span></div>
+    <div class="leds" id="pills" role="list" aria-label="Status of the parts"></div>
+    <button class="size" id="size" aria-pressed="false">Larger text</button>
+  </header>
 
   <div class="grid">
-    <section>
-      <div class="cam" id="cam">
-        <img id="frame" alt="Camera view of the shelf" hidden>
-        <div class="none" id="nocam"><strong>No camera picture</strong><span id="nocamWhy">Plug the USB camera into the hub that is connected to the board.</span></div>
-      </div>
-      <div class="camhint">Drag a box to move it. Drag its round corner to resize it. Each box must cover one product spot on the shelf.</div>
+    <div class="col">
+      <section class="mod">
+        <h2>camera</h2>
+        <p class="hint" style="margin:0 0 10px">Drag a box to move it. Drag its round corner to make it bigger or smaller.</p>
+        <div class="cam" id="cam">
+          <img id="frame" alt="Camera view of the shelf" hidden>
+          <div class="none" id="nocam"><strong>No camera picture</strong><span id="nocamWhy">Plug the camera into the dongle before the board powers on.</span></div>
+        </div>
+      </section>
+      <section class="mod">
+        <h2>shelf now</h2>
+        <div class="channels" id="shelf"></div>
+      </section>
+    </div>
 
-      <div class="card" style="margin-top:14px">
-        <h2>Shelf now</h2>
-        <div class="shelf" id="shelf"></div>
-      </div>
-    </section>
+    <div class="col">
+      <section class="mod">
+        <h2>knob</h2>
+        <p class="hint" id="knobHint" style="margin:0 0 10px">Turn it to set the spend limit. Press it to report the <span id="knobSlot">milk</span> as low. Hold it to check a delivery.</p>
+        <div class="dialrow">
+          <svg class="dial" id="dial" viewBox="0 0 150 150" role="img" aria-label="Spend limit"></svg>
+          <div class="readouts" id="facts"></div>
+        </div>
+      </section>
 
-    <section>
-      <div class="card" id="setup">
-        <h2>Set up the shelf</h2>
-        <p class="muted">Do these once, in order. The board remembers them.</p>
+      <section class="mod" id="setup">
+        <h2>set up the shelf <small>once, in order</small></h2>
         <ol class="steps" id="steps">
-          <li id="s1"><div><b>Connect the camera</b><p class="muted">Plug it into the hub on the board. The picture shows on the left.</p></div></li>
-          <li id="s2"><div><b>Place the boxes</b><p class="muted">Drag the three boxes over the three product spots.</p>
-            <div class="row"><button id="boxesOk">The boxes are in place</button></div></div></li>
-          <li id="s3"><div><b>Take the empty photo</b><p class="muted">Take every product off the shelf, then press the button.</p>
-            <div class="row"><button class="primary" data-cal="empty">Shelf is empty: save photo</button></div></div></li>
-          <li id="s4"><div><b>Take the full photo</b><p class="muted">Put every product back, then press the button.</p>
-            <div class="row"><button class="primary" data-cal="full">Shelf is full: save photo</button></div></div></li>
+          <li id="s1"><div><b>Connect the camera</b><p>Camera and power supply into the dongle first, then the dongle into the board.</p></div></li>
+          <li id="s2"><div><b>Place the boxes</b><p>Drag the three boxes over the three product spots.</p>
+            <div class="keys"><button id="boxesOk">The boxes are in place</button></div></div></li>
+          <li id="s3"><div><b>Take the empty photo</b><p>Take every product off the shelf.</p>
+            <div class="keys"><button class="primary" data-cal="empty">Shelf is empty: save photo</button></div></div></li>
+          <li id="s4"><div><b>Take the full photo</b><p>Put every product back.</p>
+            <div class="keys"><button class="primary" data-cal="full">Shelf is full: save photo</button></div></div></li>
         </ol>
-        <p class="muted" id="setupDone" hidden>Setup is done. Take a product away to try it. <button id="redo" style="min-height:0;padding:4px 10px">Set up again</button></p>
-      </div>
+        <p class="hint" id="setupDone" hidden>Setup is done. Take a product away to try it. <button id="redo" style="min-height:0;padding:4px 10px;margin-left:6px">Set up again</button></p>
+      </section>
 
-      <div class="card">
-        <h2>Kitchen box</h2>
-        <div class="facts" id="facts"></div>
-        <p class="muted" style="margin-top:8px">Turn the knob to change the most the agent may spend without asking. Press the knob to report the <span id="knobSlot">milk</span> as low. Hold it for 2 seconds to check a delivery.</p>
-      </div>
+      <section class="mod">
+        <h2>delivery check <small>60 seconds</small></h2>
+        <p class="hint" style="margin-top:0">Put the cartons on the shelf and the thermo in the crate, then hold the knob or press the key.</p>
+        <div class="keys"><button class="primary" id="deliveryBtn">Start delivery check</button><span id="deliveryState" class="hint" style="margin:0"></span></div>
+        <p id="deliveryResult" style="margin:10px 0 0"></p>
+      </section>
 
-      <div class="card">
-        <h2>Delivery check</h2>
-        <p class="muted">When a delivery arrives, put the cartons on the shelf and the thermo in the crate. Then hold the knob for 2 seconds, or press the button. The box measures for 60 seconds and checks the delivery against the order.</p>
-        <div class="row"><button class="primary" id="deliveryBtn">Start delivery check</button><span id="deliveryState" class="muted"></span></div>
-        <p id="deliveryResult" style="margin-top:8px"></p>
-      </div>
-
-      <div class="card">
+      <section class="mod">
         <details>
           <summary>Settings</summary>
           <label for="url">Kitchen agent address (the laptop)</label>
@@ -129,24 +185,26 @@
             <div><label for="kslot">Knob press reports</label><select id="kslot"></select></div>
           </div>
           <div id="names"></div>
-          <div class="row"><button class="primary" id="save">Save settings</button></div>
+          <div class="keys"><button class="primary" id="save">Save settings</button></div>
           <label>Box software</label>
-          <div class="row"><button id="update">Update from the laptop</button><span class="muted" id="updateMsg"></span></div>
+          <div class="keys" style="margin-top:0"><button id="update">Update from the laptop</button><span class="hint" id="updateMsg" style="margin:0"></span></div>
         </details>
         <details>
           <summary>Test without the camera</summary>
-          <p class="muted">Send a shelf change to the agent by hand.</p>
+          <p class="hint">Send a shelf change to the agent by hand.</p>
           <div id="tests"></div>
         </details>
         <details>
           <summary>Event log</summary>
           <div id="log"></div>
         </details>
-      </div>
-    </section>
+      </section>
+    </div>
   </div>
-</main>
-<div class="toast" id="toast" role="status"></div>
+ </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="sr" id="announce" aria-live="assertive"></div>
 <script src="libs/socket.io.min.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -155,6 +213,7 @@ const socket = io(`http://${window.location.host}`);
 let S = null, slots = [], dragging = null, settingsOpen = false;
 let boxesOk = false;
 try { boxesOk = localStorage.getItem("boxesOk") === "1"; } catch (e) {}
+const KNOB_MAX = 300, SIGNED_LIMIT = 150;  // the knob's range on the box, and the limit the chef signed
 
 function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 2600); }
 function log(line) { $("log").textContent = `${new Date().toLocaleTimeString()} ${line}\n` + $("log").textContent; }
@@ -180,29 +239,61 @@ socket.on("update_response", (r) => { const m = r.ok ? r.message : `Update faile
 function renderPills() {
   if (!S) return;
   const m = S.modulinos || {};
-  const pills = [
-    ["Board", !S._offline],
-    ["Kitchen agent", S.backend_ok === true],
-    ["Camera", S.camera_ok],
-    ["Knob", m.knob], ["Thermo", m.thermo], ["Buzzer", m.buzzer],
-  ];
-  $("pills").innerHTML = pills.map(([k, ok]) => `<span class="pill ${ok ? "ok" : "bad"}" title="${ok ? "working" : "not working"}">${k}</span>`).join("");
+  const leds = [["board", !S._offline], ["agent", S.backend_ok === true], ["camera", S.camera_ok],
+                ["knob", m.knob], ["thermo", m.thermo], ["buzzer", m.buzzer]];
+  // Shape and word as well as colour: a round LED and "ok", or a square one and "check".
+  $("pills").innerHTML = leds.map(([k, ok]) =>
+    `<span class="led ${ok ? "on" : "bad"}" role="listitem"><i aria-hidden="true"></i>${k}<b>${ok ? "ok" : "check"}</b></span>`).join("");
+}
+
+function renderDial(eur) {
+  // 270° sweep from bottom left to bottom right, like the knob.
+  const cx = 75, cy = 75, r = 58, a0 = 135, sweep = 270;
+  const pt = (deg, rad) => [cx + rad * Math.cos(deg * Math.PI / 180), cy + rad * Math.sin(deg * Math.PI / 180)];
+  const arc = (from, to, rad) => { const [x1, y1] = pt(from, rad), [x2, y2] = pt(to, rad);
+    return `M${x1.toFixed(1)} ${y1.toFixed(1)} A${rad} ${rad} 0 ${to - from > 180 ? 1 : 0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`; };
+  const v = Math.max(0, Math.min(KNOB_MAX, eur || 0)), at = a0 + sweep * v / KNOB_MAX, cap = a0 + sweep * SIGNED_LIMIT / KNOB_MAX;
+  let ticks = "";
+  for (let i = 0; i <= 30; i++) { const d = a0 + sweep * i / 30, [x1, y1] = pt(d, r + 8), [x2, y2] = pt(d, r + (i % 5 ? 12 : 16));
+    ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="currentColor" stroke-width="${i % 5 ? 1 : 2}"/>`; }
+  const [cx1, cy1] = pt(cap, r - 7), [cx2, cy2] = pt(cap, r + 17), [px, py] = pt(at, r - 18);
+  $("dial").innerHTML = `<g style="color:var(--ink)">${ticks}</g>
+    <path d="${arc(a0, a0 + sweep, r)}" fill="none" stroke="var(--led-off)" stroke-width="8"/>
+    ${v > 0 ? `<path d="${arc(a0, at, r)}" fill="none" stroke="var(--orange)" stroke-width="8"/>` : ""}
+    <line x1="${cx1.toFixed(1)}" y1="${cy1.toFixed(1)}" x2="${cx2.toFixed(1)}" y2="${cy2.toFixed(1)}" stroke="var(--ink)" stroke-width="3"><title>Signed limit €${SIGNED_LIMIT}</title></line>
+    <circle cx="${cx}" cy="${cy}" r="38" fill="var(--key)" stroke="var(--ink)" stroke-width="1.5"/>
+    <line x1="${cx}" y1="${cy}" x2="${px.toFixed(1)}" y2="${py.toFixed(1)}" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/>`;
+  $("dial").setAttribute("aria-label", `Spend limit €${v}, the signed limit is €${SIGNED_LIMIT}`);
+}
+
+let lastStates = {};
+function announceChanges() {
+  // Tell screen reader users when a spot changes, the way the buzzer tells everyone else.
+  const said = [];
+  S.config.slots.forEach(c => {
+    const st = (S.slots[c.slot] || {}).state;
+    if (st && lastStates[c.slot] && lastStates[c.slot] !== st) said.push(`${c.product_hint} is now ${st}.`);
+    if (st) lastStates[c.slot] = st;
+  });
+  if (said.length) $("announce").textContent = said.join(" ");
 }
 
 function render() {
   renderPills();
+  announceChanges();
   if (!S.camera_ok) { $("frame").hidden = true; $("nocam").hidden = false;
-    $("nocamWhy").textContent = "Plug the USB camera into the hub that is connected to the board. The picture shows here within 10 seconds."; }
+    $("nocamWhy").textContent = "Plug the camera and power into the dongle, then the dongle into the board. The board finds the camera when it powers on."; }
   renderBoxes();
 
-  // Shelf cards
+  // Shelf channels
   $("shelf").innerHTML = S.config.slots.map(c => {
     const st = S.slots[c.slot] || {}, cal = S.calibrated[c.slot] || [];
     const state = st.state || (cal.includes("empty") ? "checking" : "not set up");
-    const pct = st.fill == null ? 0 : Math.round(Math.max(0, Math.min(1, st.fill)) * 100);
-    return `<div class="slot ${st.state || ""}"><div class="muted">Spot ${c.slot}</div><b>${esc(c.product_hint)}</b>
-      <div class="state">${state}</div><div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="muted">${st.units != null ? `about ${st.units} of ${c.target_units}` : `target ${c.target_units}`}</div></div>`;
+    const lit = st.fill == null || st.state === "empty" ? 0 : Math.max(1, Math.round(Math.min(1, st.fill) * 10));
+    return `<div class="ch ${st.state || ""}" role="group" aria-label="Spot ${c.slot}, ${esc(c.product_hint)}, ${state}${st.units != null ? `, about ${st.units} of ${c.target_units}` : ""}"><span class="num" aria-hidden="true">${c.slot}</span>
+      <span class="name">${esc(c.product_hint)}</span><span class="state">${state}</span>
+      <span class="count">${st.units != null ? `about ${st.units} of ${c.target_units}` : `holds ${c.target_units}`}</span>
+      <div class="meter" aria-hidden="true">${Array.from({length: 10}, (_, i) => `<i class="${i < lit ? "lit" : ""}"></i>`).join("")}</div></div>`;
   }).join("");
 
   // Setup steps
@@ -216,28 +307,34 @@ function render() {
   });
   $("steps").hidden = now === -1; $("setupDone").hidden = now !== -1;
 
-  // Kitchen box facts
-  $("facts").innerHTML = [
-    ["Cold room", S.temperature_c == null ? "–" : `<span class="${S.alarm ? "alarm" : ""}">${S.temperature_c.toFixed(1)} °C</span>`],
-    ["Agent may spend alone", `€${S.auto_limit_eur}`],
-    ["Buzzer", {off: "Quiet", approval: "Beeping: approve on phone", alarm: "Alarm: too warm", confirm: "Beep"}[S.buzzer] || S.buzzer],
-    ["Alarm above", `${S.config.temperature_limit_c} °C`],
-  ].map(([k, v]) => `<div class="fact"><span>${k}</span><strong>${v}</strong></div>`).join("");
+  // Knob, temperature, buzzer
+  renderDial(S.auto_limit_eur);
+  const buzz = {off: "quiet", approval: "beeping: approve on the phone", alarm: "alarm", confirm: "beep"}[S.buzzer] || S.buzzer;
+  $("facts").innerHTML = `
+    <div class="readout"><span>agent may spend alone</span><strong>€${Math.min(S.auto_limit_eur ?? 0, SIGNED_LIMIT)}</strong></div>
+    <div class="readout ${S.alarm ? "alarm" : ""}"><span>cold room, alarm above ${S.config.temperature_limit_c}&nbsp;°C</span>
+      <strong>${S.temperature_c == null ? "--.-" : S.temperature_c.toFixed(1)}°</strong></div>
+    <div class="readout"><span>buzzer</span><em>${esc(buzz)}</em></div>`;
+  const ks = S.config.slots.find(c => c.slot == S.config.manual_slot);
+  $("knobSlot").textContent = ks ? ks.product_hint.replace(/\s+\d.*$/, "") : `spot ${S.config.manual_slot}`;
+
+  // Delivery check
   const left = S.delivery_left_s;
   $("deliveryBtn").disabled = left != null;
-  $("deliveryState").textContent = left != null ? `Measuring: ${left} s left` : "";
+  $("deliveryState").textContent = left != null ? `measuring, ${left} s left` : "";
   const ld = S.last_delivery;
-  $("deliveryResult").innerHTML = ld ? `<span class="${ld.status === "ok" ? "full-c" : "alarm"}">${esc(ld.summary || ld.status)}</span>` : "";
-  const ks = S.config.slots.find(c => c.slot == S.config.manual_slot);
-  $("knobSlot").textContent = ks ? ks.product_hint : `spot ${S.config.manual_slot}`;
+  $("deliveryResult").innerHTML = ld ? `<span class="${ld.status === "ok" ? "ok-t" : "bad-t"}">${esc(ld.summary || ld.status)}</span>` : "";
 
   // Settings (do not overwrite while the person edits them)
-  if (!settingsOpen) {
+  // Redraw the form parts only when the setup changed, so focus and typing are never lost.
+  const formKey = JSON.stringify([S.backend_url, S.config.slots.map(c => [c.product_hint, c.target_units]), S.config.manual_slot, S.config.temperature_limit_c]);
+  if (!settingsOpen && formKey !== render.formKey) {
+    render.formKey = formKey;
     $("url").value = S.backend_url; $("tlimit").value = S.config.temperature_limit_c;
     $("kslot").innerHTML = S.config.slots.map(c => `<option value="${c.slot}" ${c.slot == S.config.manual_slot ? "selected" : ""}>Spot ${c.slot}: ${esc(c.product_hint)}</option>`).join("");
     $("names").innerHTML = S.config.slots.map(c => `<div class="two"><div><label>Spot ${c.slot} product</label><input data-name="${c.slot}" value="${esc(c.product_hint)}"></div>
       <div><label>Full shelf holds</label><input data-target="${c.slot}" type="number" min="1" value="${c.target_units}"></div></div>`).join("");
-    $("tests").innerHTML = S.config.slots.map(c => `<div class="row"><span style="flex:1">${esc(c.product_hint)}</span>
+    $("tests").innerHTML = S.config.slots.map(c => `<div class="testrow"><span>${esc(c.product_hint)}</span>
       <button data-sim="${c.slot}" data-st="empty">Mark empty</button><button data-sim="${c.slot}" data-st="full">Mark full</button></div>`).join("");
   }
 }
@@ -284,6 +381,14 @@ document.addEventListener("click", (e) => {
   if (b.dataset.cal) socket.emit("calibrate", {slot: "all", kind: b.dataset.cal});
   if (b.dataset.sim) { socket.emit("simulate", {slot: Number(b.dataset.sim), state: b.dataset.st}); toast("Sent to the agent."); }
 });
+function setSize(large) {
+  document.documentElement.classList.toggle("large", large);
+  $("size").setAttribute("aria-pressed", String(large));
+  $("size").textContent = large ? "Normal text" : "Larger text";
+  try { localStorage.setItem("large", large ? "1" : "0"); } catch (e) {}
+}
+try { setSize(localStorage.getItem("large") === "1"); } catch (e) {}
+$("size").onclick = () => setSize(!document.documentElement.classList.contains("large"));
 $("update").onclick = () => { $("updateMsg").textContent = "Updating…"; socket.emit("update", {}); };
 $("deliveryBtn").onclick = () => { socket.emit("delivery_check", {}); toast("Delivery check started. Keep the cartons on the shelf for 60 seconds."); };
 $("boxesOk").onclick = () => { boxesOk = true; try { localStorage.setItem("boxesOk", "1"); } catch (e) {} render(); };
