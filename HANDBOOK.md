@@ -164,6 +164,7 @@ In a warm room, the cold room alarm is on. Then the buzzer plays the alarm, and 
 | `backend/gateway.py`, `backend/signing.py` | The calls for an outside agent, and the signature on their answers |
 | `docs/valio-api/gateway-openapi.json` | The published description of those calls. `uv run python -m backend.export_openapi` writes it |
 | `backend/sandbox.py`, `backend/model_agent.py` | The Agent Driving Test, and a real language model as the agent under test |
+| `docs/CAPTURE_GUIDE.md` | How to calibrate the shelf and record labelled clips (draft procedure, not yet validated end to end) |
 | `backend/dirty_data.py` | The count of the real catalog under a rule set |
 | `backend/app.py`, `web/approve.html` | Endpoints and the phone page |
 | `device/` | The shelf box app for the UNO Q |
