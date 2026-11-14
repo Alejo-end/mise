@@ -1,8 +1,9 @@
 # Parallel work on the Valio device and shelf
 
-Base: branch `valio/hw-checkpoint`, commit `80a8402` (14 Nov 2026, 05:05). It contains Alejo's
-`review-14-nov` (not yet in `main`). Read this before you edit. It fixes scope, who owns which
-file, the interfaces between the parts, and the ports and test data of each checkout.
+Base: branch `valio/hw-checkpoint` (pushed to GitHub), commit `dd7ecb1` (14 Nov 2026, 05:40). It
+contains Alejo's `review-14-nov` (not yet in `main`). Read this before you edit. It fixes scope, who
+owns which file, the interfaces between the parts, and the ports and test data of each checkout.
+The task of each worker is in `docs/worker-briefs/`.
 
 ## Scope for this round
 
@@ -30,10 +31,12 @@ learned detector.
 | Integration | `junction2026/` | `valio/hw-checkpoint`, merges | backend 8000 (the board points here), camera page 8765 | `valio-challenge/data/audit.sqlite`, live |
 | Worktree 1: detection reliability | `junction2026-wt-detection/` | `wt/detection-reliability` | backend 8101 on 127.0.0.1 only | `valio-challenge/data/wt-detection.sqlite`, pytest `tmp_path` |
 | Worktree 2: shelf configuration | `junction2026-wt-shelf/` | `wt/shelf-config` | backend 8201 on 127.0.0.1 only | `valio-challenge/data/wt-shelf.sqlite`, pytest `tmp_path` |
+| Worktree 3: real Valio data and quotes | `junction2026-wt-valio/` | `wt/valio-data` | backend 8301 on 127.0.0.1 only | `valio-challenge/data/wt-valio.sqlite`, `data/valio/` (Valio files, never committed) |
+| Worktree 4: recognition experiment | `junction2026-wt-recognition/` | `exp/recognition` | none on the laptop; Modal app `valio-recognition-exp`, Modal Volume `valio-recognition` | `experiments/recognition/` and the Modal Volume |
 
-Each worktree has its own `valio-challenge/.env` (git ignores it) with its `AUDIT_DB` and the test
-PIN `1234`. Start a worktree backend with `uv run uvicorn backend.app:app --host 127.0.0.1 --port 8101`
-(or 8201).
+Each worktree has its own `valio-challenge/.env` (git ignores it) with its `AUDIT_DB`, a test
+approver PIN and `RESTOCK_MIN_S`. Start a worktree backend with
+`uv run uvicorn backend.app:app --host 127.0.0.1 --port 8101` (or 8201, 8301).
 
 Only the integration session may: deploy to the board, restart the board or its app, change
 `data/config.json` or the calibration on the board, point the board at a backend, record camera
@@ -44,12 +47,17 @@ asks and hands over a commit.
 
 | Owner | Files |
 |---|---|
-| Worktree 1 | `device/python/shelf_detect.py`; in `device/python/main.py`: `camera_worker`, `preview_worker`, `loop`, `process_frame`, `on_calibrate`, the event payloads, the detection keys of `DEFAULT_CONFIG`; `device/assets/index.html` (slot rectangles, calibration, uncertain display); in `backend/agent.py`: `handle_event` and the pending-slot bookkeeping it uses (`pending_slots`, `pending_since`, `restore` lines for them); `tests/device/` except `sequences/`; `tests/test_duplicate_orders.py`; `tools/laptop-camera.html` |
-| Worktree 2 | `rules/*.yaml` (`targets`), `backend/rules.py` (loading, saving and signing targets), `backend/shelf.py` (new), in `backend/app.py`: the event models (`SlotState` and friends), the `/events` normalisation, new `/shelf` endpoints; `web/` pages for the shelf; `tests/test_shelf_config.py` (new) |
-| Integration | `pyproject.toml`, `uv.lock`, `device/app.yaml`, `device/sketch/`, `device/board-snapshot/`, `backend/audit.py`, `backend/valio.py`, `backend/gateway.py`, `backend/signing.py`, `fixtures/`, `tests/device/sequences/`, `tools/record_sequence.py`, this file, `TEAM_BRIEF.md` |
+| Worktree 1 | `device/python/` (all of it, incl. `shelf_detect.py`), `device/assets/index.html`; in `backend/agent.py`: `handle_event`, the pending-slot bookkeeping (`pending_slots`, `pending_since`, the new pending record of interface 8, the `restore` lines for them); in `backend/app.py`: the `Status` event model and the `health` part of `GET /device` (interface 7); `backend/settings.py` (new); `.env.example` (new); `tests/device/` except `sequences/`; `tests/test_duplicate_orders.py`, `tests/test_restock_policy.py` (new), `tests/test_health.py` (new); `tools/laptop-camera.html` |
+| Worktree 2 | `rules/*.yaml` (`targets`), in `backend/rules.py`: loading, saving, versioning and signing (`load_rules`, `sign`, `target_for_slot` and new helpers); `backend/shelf.py` (new); in `backend/app.py`: `SlotState`, `ManualLow`, the `/events` normalisation, new `/shelf` endpoints; `web/` pages for the shelf; `tests/test_shelf_config.py` (new) |
+| Worktree 3 | `backend/valio.py`, `backend/allergens.py`, `backend/dirty_data.py`; in `backend/rules.py`: the rule check (`Context`, `Line`, `check`, `check_line` and what they call); in `backend/agent.py`: the buying path (`buy`, `buy_exact`, `quote_exact`, `_quote`, `_line`, `_ask`, `_order`); in `backend/gateway.py`: quote and order validation; `docs/valio-api/`; `tests/test_valio_quotes.py` (new). Alejo's existing tests change only for an intended, documented behaviour change |
+| Worktree 4 | `experiments/recognition/` (new, everything in it). Nothing outside it |
+| Integration | `pyproject.toml`, `uv.lock` (ask: integration adds a dependency), `device/app.yaml`, `device/sketch/`, `backend/audit.py`, `backend/signing.py`, `fixtures/`, `tests/device/sequences/`, `tools/record_sequence.py`, this file, `docs/worker-briefs/`, `TEAM_BRIEF.md`, merges |
 
-Anything else (the rest of `agent.py`, `sandbox.py`, `allergens.py`, the handbook): Alejo's, ask
-first. Never edit a file the other worktree owns; write the need into the handover note.
+The board snapshot and device backups stay out of git (`device/board-snapshot/` is ignored); the
+integration session keeps them in a local folder next to the checkout. Anything not listed
+(`sandbox.py`, `model_agent.py`, the handbook, other entries): Alejo's, do not edit. Never edit a
+file or function another worktree owns; write the need into your handover note instead. A worktree
+may read any file and import any function.
 
 ## Interfaces (frozen for this round)
 
@@ -134,6 +142,52 @@ are labels only.
 `tests/device/sequences/<name>/` is read-only (frames, `meta.jsonl`, calibration, config). Recorded
 by integration with `tools/record_sequence.py`. `tests/device/replay.py` models the board loop; a
 commit that changes the loop on the board changes the model too.
+
+### 7. Health and uncertainty (worktree 1), next to the typed stock events
+
+Stock events stay as in interface 1. Uncertainty travels in the existing `status` event (the board
+sends one every 10 s), in a new optional field. Old backends ignore it; old boards just omit it.
+
+```json
+{"type": "status", "health": {
+  "camera_ok": true, "frame_age_s": 0.4, "config_valid": true, "config_errors": [],
+  "slots": {"2": {"state": "low", "uncertain": "view does not match the photos", "fill": 0.43,
+                  "calibration": "ok", "assignment_id": "v4:464316"}}}}
+```
+
+`calibration` is `ok`, `missing` or `stale` (interface 9). `GET /device` returns the last `health`
+and its age; a `health` older than 30 s counts as unknown. Health never orders and never cancels:
+only `slot_state` events trigger purchases.
+
+### 8. Pending order record (worktree 1 writes it, worktree 2 reads it)
+
+`Agent.pending_for_slot(slot) -> dict | None` returns
+`{"slot", "product_id", "rule_set_version", "run_id", "since", "status": "approval" | "ordered"}`
+for an open approval or a placed, not yet restocked order. It is rebuilt from the audit log on
+restart. A pending order keeps the product and rule set version it was made with, even if the
+slot's assignment changes later.
+
+### 9. Shelf assignment and calibration validity (worktree 2 backend, worktree 1 device)
+
+The expected assignment of a slot (what should be there) is separate from the observation (what the
+camera sees). `GET /shelf` (worktree 2) returns per slot an `assignment_id` =
+`"v{rule set version}:{product_id}"`. The device (worktree 1) stores the `assignment_id` it was
+calibrated for next to the calibration photos (`data/slotN_meta.json`). If the backend's
+`assignment_id` differs, the slot's calibration is `stale`: the slot is uncertain until someone
+recalibrates. A product change goes through a new, signed rule set version (decision A), never an
+unsigned edit.
+
+Where things are enforced:
+
+| Check | Where |
+|---|---|
+| Frame freshness, each frame once, confirmation over time | device, `shelf_detect.observe` and `main.loop` |
+| Device online (no event for 30 s) | backend, `_watch_device` |
+| Slot rectangles do not overlap | device, `on_save_config` (`shelf_detect.overlapping_slots`) |
+| Calibration matches the current assignment | device, against `GET /shelf` (interface 9) |
+| Rule set signed and matching the catalog | backend at start (`load_rules`) |
+| One order per shortage, restock window | backend, `Agent.handle_event` |
+| Quote expiry, pack size, limits, deadline | backend, rule check and gateway (worktree 3) |
 
 ## Decisions that need Alejo
 
