@@ -106,6 +106,9 @@ class Line:
     delivery: datetime | None
     is_usual: bool = True
     stock_known: bool = True  # False when the supplier ships the product and the wholesaler cannot count it
+    # False when the source gives a delivery date and no time (Valio's availableDate). Then `delivery` is
+    # that date at 00:00 and the deadline check compares dates: no arrival time is invented.
+    delivery_time_known: bool = True
 
     @property
     def total_eur(self) -> float | None:
@@ -241,6 +244,11 @@ def check_line(line: Line, rules: dict, ctx: Context) -> Decision:
     if line.delivery is None:
         result = NEEDS_APPROVAL
         reasons.append(f"{name}: no delivery time, so a person must look")
+    elif not line.delivery_time_known:
+        if line.delivery.date() > ctx.needed_by.date():
+            result = NEEDS_APPROVAL
+            reasons.append(f"{name} is available on {line.delivery:%a %d.%m.}, after the needed day "
+                           f"{ctx.needed_by:%a %d.%m.}")
     elif line.delivery > ctx.needed_by:
         result = NEEDS_APPROVAL
         reasons.append(
@@ -295,6 +303,8 @@ def check(lines: list[Line], rules: dict, ctx: Context) -> Decision:
 
     if result == ALLOWED:
         reasons.append("usual product or approved substitute, within target stock, under the limits, in time")
+    if any(not l.delivery_time_known and l.delivery is not None for l in lines):
+        reasons.append("in time by date only: the source gives a delivery date, not an arrival time")
     return Decision(result, reasons, rules["version"])
 
 

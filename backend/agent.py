@@ -270,13 +270,25 @@ class Agent:
         if p.value is None:
             return None
         a: Claim = self.catalog.availability(product_id, qty, ctx.needed_by)
-        return {"product": p.value, "unit_price_eur": a.value["unit_price_eur"], "available": a.value["available_units"],
-                "delivery": a.value["delivery"], "stock_known": a.value.get("quantity_known", True),
+        v = a.value
+        return {"product": p.value, "unit_price_eur": v["unit_price_eur"], "available": v["available_units"],
+                "delivery": v["delivery"], "stock_known": v.get("quantity_known", True),
+                "problem": v.get("problem"), "closing_time": v.get("closing_time"),
+                "price_valid_to": v.get("price_valid_to"), "unit_price_with_tax_eur": v.get("unit_price_with_tax_eur"),
+                "tax_rate_pct": v.get("tax_rate_pct"), "sales_unit": v.get("sales_unit") or p.value.get("sales_unit"),
                 "claims": [p.to_dict(), a.to_dict()]}
 
     def _line(self, q: dict, qty: int, usual: bool) -> R.Line:
-        delivery = datetime.fromisoformat(q["delivery"]) if q["delivery"] else None
-        return R.Line(q["product"], qty, q["unit_price_eur"], delivery, usual, q["stock_known"])
+        delivery, known = delivery_at(q["delivery"])
+        return R.Line(q["product"], qty, q["unit_price_eur"], delivery, usual, q["stock_known"], known)
+
+    @property
+    def delivery_charge(self) -> str:
+        return getattr(self.catalog, "delivery_charge", "unknown: the catalog supplies no delivery charge")
+
+    @property
+    def source(self) -> str:
+        return getattr(self.catalog, "source", getattr(self.catalog, "name", "catalog"))
 
     def _free(self, slot: int | None) -> None:
         if slot is not None:
@@ -304,22 +316,30 @@ class Agent:
                       if p["id"] != usual_id and "pack" in p and want_pack and not same_pack(p["pack"], want_pack)]
         candidates = [p for p in candidates if p["id"] not in other_pack]
         other_packs = f" {len(other_pack)} products of another pack size were not considered." if other_pack else ""
+        # The pipeline splits orders in whole sales units. A product whose lot size does not divide one unit
+        # (for example 2.8 KG) cannot take an arbitrary whole number, so it is left out here.
+        bad_lot = [p["id"] for p in candidates if not lot_ok(1, p.get("lot_size")) and not lot_ok(need, p.get("lot_size"))]
+        candidates = [p for p in candidates if p["id"] not in bad_lot]
         if hasattr(self.catalog, "prefetch"):
             self.catalog.prefetch([p["id"] for p in candidates], ctx.needed_by)
 
-        quotes, not_orderable = {}, []
+        quotes, not_orderable, why = {}, [], {}
         for p in candidates:
             q = self._quote(p["id"], need, ctx, run)
             if q is None:
                 continue
             if q["unit_price_eur"] is None or q["delivery"] is None:
                 not_orderable.append(p["id"])  # no price or no delivery date: nothing to order now
+                if q.get("problem"):
+                    why[p["id"]] = q["problem"]
                 continue
             quotes[p["id"]] = q
-        self.log.write("candidates", {"need": need, "candidates": [
+        self.log.write("candidates", {"need": need, "source": self.source, "candidates": [
             {"id": pid, "price_eur": q["unit_price_eur"], "available": q["available"], "delivery": q["delivery"],
+             "closing_time": q.get("closing_time"), "price_valid_to": q.get("price_valid_to"),
              "checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]} for pid, q in quotes.items()],
-            "left_out": {"other_pack_size": other_pack, "no_price_or_delivery": not_orderable}},
+            "left_out": {"other_pack_size": other_pack, "no_price_or_delivery": not_orderable, "why": why,
+                         "lot_size": bad_lot}},
             "agent", v, run_id=run)
 
         # Safety check of each product alone. Forbidden products are dropped here.
@@ -387,13 +407,12 @@ class Agent:
                 "result": d.result,
                 "reasons": d.reasons,
                 "summary": names,
-                "trade_off": trade_off(label, parts, ctx),
+                "trade_off": trade_off(label, parts, ctx) + " " + charges_note([q["product"] for q, _, _ in parts],
+                                                                               self.delivery_charge),
                 "total_eur": round(sum(l.total_eur or 0 for l in lines), 2),
-                "lines": [{"product_id": q["product"]["id"], "name": q["product"]["name"], "quantity": n, "usual": u,
-                           "unit_price_eur": q["unit_price_eur"], "delivery": q["delivery"],
-                           "stock_known": q["stock_known"],
-                           "price_checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]}
-                          for q, n, u in parts],
+                "charges": charges([q["product"] for q, _, _ in parts], self.delivery_charge),
+                "source": self.source,
+                "lines": [line_of(q, n, u) for q, n, u in parts],
             })
 
         if checked[0]["result"] == R.ALLOWED:
@@ -423,12 +442,21 @@ class Agent:
         ctx = R.Context(slot_group="unknown", needed_by=deadline or R.needed_by(self.rules, datetime.now(R.TZ)),
                         weekly_spent_eur=self.weekly_spent_eur, auto_limit_eur=min(limits) if limits else None,
                         cold_room_alarm_c=self.cold_alarm_c, label_checks=self.label_checks)
+        p = self.catalog.product(product_id).value
+        if p is None:
+            return {"status": "no_match"}
+        if not lot_ok(qty, p.get("lot_size")):
+            return {"status": "invalid_quantity", "name": p["name"],
+                    "reason": f"{qty} {p.get('sales_unit') or 'units'} is not a multiple of the allowed lot size "
+                              f"{p['lot_size']} {p.get('sales_unit') or ''}".rstrip()}
         q = self._quote(product_id, qty, ctx, run)
         if q is None:
             return {"status": "no_match"}
         name = q["product"]["name"]
-        if q["unit_price_eur"] is None or q["delivery"] is None:
-            return {"status": "not_orderable", "name": name}
+        # A forbidden product is refused as forbidden, also when it has no price or date now: safety first.
+        if (q["unit_price_eur"] is None or q["delivery"] is None) and not R.safety(q["product"], self.rules)[0]:
+            return {"status": "not_orderable", "name": name,
+                    "reason": q.get("problem") or ("no price" if q["unit_price_eur"] is None else "no delivery date")}
         ctx.slot_group, usual = self._role(q["product"])
         line = self._line(q, qty, usual)
         d = R.check([line], self.rules, ctx)
@@ -438,7 +466,9 @@ class Agent:
             d.reasons.append(f"{name} is outside the product groups of the agent's licence")
         return {"status": "quote", "product": q["product"], "name": name, "usual": usual, "ctx": ctx,
                 "unit_price_eur": q["unit_price_eur"], "available_units": q["available"], "delivery": q["delivery"],
-                "total_eur": line.total_eur, "decision": d, "claims": q["claims"], "stock_known": q["stock_known"]}
+                "total_eur": line.total_eur, "decision": d, "claims": q["claims"], "stock_known": q["stock_known"],
+                "line": line_of(q, qty, usual), "charges": charges([q["product"]], self.delivery_charge),
+                "source": self.source}
 
     def buy_exact(self, product_id: str, qty: int, run: str, deadline: datetime | None = None,
                   mandate_eur: float | None = None, scope_groups: list[str] | None = None, actor: str = "agent") -> dict:
@@ -449,8 +479,12 @@ class Agent:
             self.log.write("blocked", {"summary": f"Product {product_id} is not in the catalog."}, "agent", v, run_id=run)
             return q
         if q["status"] == "not_orderable":
-            self.log.write("blocked", {"summary": f"{q['name']} has no price or no delivery date now."}, "agent", v, run_id=run)
-            return {"status": "not_orderable"}
+            self.log.write("blocked", {"summary": f"{q['name']} cannot be ordered now: {q['reason']}."}, "agent", v,
+                           run_id=run)
+            return {"status": "not_orderable", "reason": q["reason"]}
+        if q["status"] == "invalid_quantity":
+            self.log.write("blocked", {"summary": f"{q['name']}: {q['reason']}."}, "agent", v, run_id=run)
+            return {"status": "invalid_quantity", "reason": q["reason"]}
         d, name = q["decision"], q["name"]
         self.log.write("rule_check", {"subject": f"{qty} × {name}", **d.to_dict()}, "rule_check", v, run_id=run)
         if d.result == R.FORBIDDEN:
@@ -459,11 +493,8 @@ class Agent:
                            "rule_check", v, run_id=run)
             return {"status": "forbidden", "reasons": d.reasons, "rule_set_version": v}
         opt = {"label": "requested", "result": d.result, "reasons": d.reasons, "summary": f"{qty} × {name}",
-               "trade_off": "The product you asked for.", "total_eur": q["total_eur"],
-               "lines": [{"product_id": product_id, "name": name, "quantity": qty, "usual": q["usual"],
-                          "unit_price_eur": q["unit_price_eur"], "delivery": q["delivery"],
-                          "stock_known": q["stock_known"],
-                          "price_checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]}]}
+               "trade_off": "The product you asked for. " + charges_note([q["product"]], self.delivery_charge),
+               "total_eur": q["total_eur"], "charges": q["charges"], "source": q["source"], "lines": [q["line"]]}
         if d.result == R.ALLOWED:
             return self._order(opt["lines"], q["ctx"], run, None, None, opt["total_eur"], actor=actor)
         return self._ask([opt], q["ctx"], run, None, name)
@@ -510,6 +541,8 @@ class Agent:
             price, left = a.value["unit_price_eur"], a.value["available_units"]
             if price != l["unit_price_eur"]:
                 changes.append(f"{l['name']} price {l['unit_price_eur']} → {price}")
+            if a.value["delivery"] != l["delivery"]:
+                changes.append(f"{l['name']} delivery {l['delivery']} → {a.value['delivery'] or a.value.get('problem')}")
             if left < l["quantity"]:
                 short = True
                 changes.append(f"{l['name']} only {left} of {l['quantity']} left")
@@ -517,6 +550,8 @@ class Agent:
             if left > 0:  # the line as the catalog answers now: fresh price, date and proof, no more than is left
                 fresh.append((p.value, l | {"quantity": min(l["quantity"], left), "unit_price_eur": price,
                                             "delivery": a.value["delivery"],
+                                            "closing_time": a.value.get("closing_time"),
+                                            "price_valid_to": a.value.get("price_valid_to"),
                                             "stock_known": a.value.get("quantity_known", True),
                                             "price_checked_at": a.checked_at,
                                             "sha256": a.sha256}))
@@ -528,8 +563,7 @@ class Agent:
                                "agent", v, run_id=run)
                 self._free(slot)
                 return None, {"status": "blocked"}
-            rl = [R.Line(p, l["quantity"], l["unit_price_eur"], datetime.fromisoformat(l["delivery"]), l["usual"],
-                         l["stock_known"])
+            rl = [R.Line(p, l["quantity"], l["unit_price_eur"], *_delivery_pair(l["delivery"], l["usual"], l["stock_known"]))
                   for p, l in fresh]
             d = R.check(rl, self.rules, ctx)
             self.log.write("rule_check", {"subject": "order after recheck", **d.to_dict()}, "rule_check", v, run_id=run)
@@ -543,9 +577,12 @@ class Agent:
             if short or (d.result == R.NEEDS_APPROVAL and (approved_by is None or new_total > approved_total)):
                 reasons = d.reasons if d.result == R.NEEDS_APPROVAL else ["stock fell after the quote, so a person must look again"]
                 names = " + ".join(f"{l['quantity']} × {l['name']}" for l in lines)
+                products = [p for p, _ in fresh]
                 return None, self._ask([{"label": "after recheck", "result": R.NEEDS_APPROVAL, "reasons": reasons,
-                                   "summary": names, "trade_off": "; ".join(changes),
-                                   "total_eur": new_total, "lines": lines}], ctx, run, slot, "changed order")
+                                   "summary": names,
+                                   "trade_off": "; ".join(changes) + ". " + charges_note(products, self.delivery_charge),
+                                   "total_eur": new_total, "charges": charges(products, self.delivery_charge),
+                                   "source": self.source, "lines": lines}], ctx, run, slot, "changed order")
         return lines, None
 
     def _order(self, lines: list[dict], ctx: R.Context, run: str, slot: int | None,
@@ -579,14 +616,16 @@ class Agent:
         now = datetime.now(R.TZ).isoformat(timespec="seconds")
         self.orders[order_id] = {"order_id": order_id, "time": now, "total_eur": total, "lines": lines, "slot": slot,
                                  "run_id": run}
-        self.placed_runs[run] = {"status": "ordered", "order_id": order_id, "total_eur": total}
+        self.placed_runs[run] = {"status": "ordered", "order_id": order_id, "total_eur": total, **DRY}
         if slot is not None:
             # The slot stays pending until the camera sees it full again, so one empty shelf makes one order.
             self.last_order_qty[slot] = sum(l["quantity"] for l in lines)
         summary = ", ".join(f"{l['quantity']} × {l['name']}" for l in lines) + f", €{total:.2f}"
         summary += f", approved by {approved_by}." if approved_by else ", within the auto-order rules."
+        summary += " Recorded by the gateway, not sent to Valio. Delivery charge " + self.delivery_charge + "."
         self.log.write("order", {"summary": summary, "lines": lines, "total_eur": total, "sha256": claim.sha256,
-                                 "slot": slot}, approved_by or actor, v, order_id=order_id, run_id=run)
+                                 "slot": slot, "delivery_charge": self.delivery_charge, **DRY},
+                       approved_by or actor, v, order_id=order_id, run_id=run)
         return self.placed_runs[run]
 
     # Cold Chain Proof -----------------------------------------------------
@@ -617,7 +656,8 @@ class Agent:
             p = self.catalog.product(l["product_id"]).value or {}
             limit = p.get("max_temp_c")
             warm = temperature_c is not None and limit is not None and temperature_c > limit
-            late = now > datetime.fromisoformat(l["delivery"]) + timedelta(hours=1)
+            at, known = delivery_at(l["delivery"])
+            late = at is not None and (now > at + timedelta(hours=1) if known else now.date() > at.date())
             supplier = p.get("supplier", "unknown")
             s = per_supplier.setdefault(supplier, {"supplier": supplier, "warm": False, "late": False, "limit_c": limit})
             s["warm"] |= warm
@@ -625,7 +665,7 @@ class Agent:
             if warm:
                 problems.append(f"{l['name']} arrived at {temperature_c:.1f} °C, above its {limit} °C limit")
             if late:
-                problems.append(f"{l['name']} arrived after {l['delivery'][11:16]} on {l['delivery'][:10]}")
+                problems.append(f"{l['name']} arrived after {l['delivery'][11:16] or 'the day'} on {l['delivery'][:10]}")
         if short:
             problems.insert(0, f"{short} of {ordered} units missing")
         for s in per_supplier.values():
@@ -658,6 +698,75 @@ class Agent:
         return out
 
 
+DRY = {"sent_to_valio": False,
+       "note": "Recorded by the gateway, not sent to Valio: the challenge API has no order endpoint."}
+
+
+def delivery_at(value: str | None) -> tuple[datetime | None, bool]:
+    """A quote's delivery as (time, whether the time is known). A bare date ('2026-11-16') is that day at 00:00
+    with the time unknown: Valio's availability API gives a date, and we invent no arrival time."""
+    if not value:
+        return None, True
+    if len(value) == 10:
+        return datetime.combine(date.fromisoformat(value), time(0), tzinfo=R.TZ), False
+    return datetime.fromisoformat(value), True
+
+
+def _delivery_pair(value, usual, stock_known):
+    at, known = delivery_at(value)
+    return at, usual, stock_known, known
+
+
+def in_time(value: str | None, needed_by: datetime) -> bool:
+    """True when the delivery meets the deadline: by time when the source gives one, else by date."""
+    at, known = delivery_at(value)
+    if at is None:
+        return False
+    return at <= needed_by if known else at.date() <= needed_by.date()
+
+
+def when_text(value: str | None, needed_by: datetime) -> str:
+    at, known = delivery_at(value)
+    text = f"arrives {at:%a %H:%M}" if known else f"available {at:%a %d.%m.}, arrival time not supplied"
+    return text + ("" if in_time(value, needed_by) else " (late)")
+
+
+def lot_ok(qty: float, lot) -> bool:
+    """True when qty is a whole multiple of the allowed lot size (in sales units). No lot size: any qty."""
+    if not lot:
+        return True
+    steps = qty / float(lot)
+    return abs(steps - round(steps)) < 1e-6
+
+
+def charges(products: list[dict], delivery_charge: str) -> dict:
+    """Charges besides the goods. Unknown stays unknown: never 0 in a total."""
+    deposit = {}
+    for p in products:
+        if p.get("deposits"):
+            items = ", ".join(f"{d.get('quantity'):g} {d.get('unit')} of material {d.get('material')}" for d in p["deposits"])
+            deposit[p["id"]] = f"unknown: the product file lists returnable packaging ({items} per sales unit) without a price"
+    return {"delivery": delivery_charge, "deposits": deposit,
+            "totals_cover": "goods only, without tax, at the catalog price per sales unit"}
+
+
+def charges_note(products: list[dict], delivery_charge: str) -> str:
+    note = "Delivery charge unknown, not in the total."
+    if any(p.get("deposits") for p in products):
+        note += " Deposit charge unknown, not in the total."
+    return note
+
+
+def line_of(q: dict, n: int, usual: bool) -> dict:
+    """One order line as an option, an approval and an order keep it."""
+    p = q["product"]
+    return {"product_id": p["id"], "name": p["name"], "quantity": n, "usual": usual,
+            "unit_price_eur": q["unit_price_eur"], "delivery": q["delivery"], "stock_known": q["stock_known"],
+            "sales_unit": q.get("sales_unit") or p.get("sales_unit"), "closing_time": q.get("closing_time"),
+            "price_valid_to": q.get("price_valid_to"), "delivery_reliability": p.get("delivery_reliability"),
+            "price_checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]}
+
+
 def rest_by_rank(safe: dict, target: dict, ranked: list) -> list[dict]:
     chosen = [q for _, q in ranked]
     return sorted((q for pid, q in safe.items() if pid != target.get("product_id") and q not in chosen),
@@ -680,18 +789,19 @@ def rank_substitutes(safe: dict, target: dict, ctx: R.Context, rules: dict,
     """best: closest match, better: close match with a better price or date, good: cheapest safe option in time.
 
     A close match is one the rule set approves as a substitute, by the same test as the rule check.
-    Among equal matches, a supplier with a better delivery record ranks first (unknown suppliers count as 1.0).
+    Among equal matches, a supplier with a better record in our own delivery checks ranks first (unknown
+    suppliers count as 1.0). Valio's delivery reliability file does not rank: it is shown with each option
+    as information, and a missing value stays unknown.
     """
     reliability = reliability or {}
     def score(q):
-        own = q["product"].get("delivery_reliability")  # Valio's record for this product, where it has one
-        return own if own is not None else reliability.get(q["product"].get("supplier"), {}).get("score", 1.0)
+        return reliability.get(q["product"].get("supplier"), {}).get("score", 1.0)
     subs = [q for pid, q in safe.items() if pid != target.get("product_id") and q["available"] > 0]
     if not subs:
         return []
     def closeness(q):
         ok = R.is_approved_substitute(q["product"], rules, target["group"])
-        return (ok, datetime.fromisoformat(q["delivery"]) <= ctx.needed_by)
+        return (ok, in_time(q["delivery"], ctx.needed_by))
     by_match = sorted(subs, key=lambda q: (closeness(q), score(q), -q["unit_price_eur"]), reverse=True)
     best = by_match[0]
     out = [("best", best)]
@@ -699,17 +809,16 @@ def rank_substitutes(safe: dict, target: dict, ctx: R.Context, rules: dict,
         q["unit_price_eur"] < best["unit_price_eur"] or q["delivery"] < best["delivery"])), None)
     if better:
         out.append(("better", better))
-    in_time = [q for q in subs if datetime.fromisoformat(q["delivery"]) <= ctx.needed_by and q not in (best, better)]
-    if in_time:
-        out.append(("good", min(in_time, key=lambda q: q["unit_price_eur"])))
+    timely = [q for q in subs if in_time(q["delivery"], ctx.needed_by) and q not in (best, better)]
+    if timely:
+        out.append(("good", min(timely, key=lambda q: q["unit_price_eur"])))
     return out
 
 
 def trade_off(label: str, parts: list, ctx: R.Context) -> str:
     q, n, _ = next((x for x in parts if not x[2]), parts[0])
     p = q["product"]
-    late = datetime.fromisoformat(q["delivery"]) > ctx.needed_by
-    when = f"arrives {datetime.fromisoformat(q['delivery']):%a %H:%M}" + (" (late)" if late else "")
+    when = when_text(q["delivery"], ctx.needed_by)
     if label == "usual":
         return f"The usual product, €{q['unit_price_eur']:.2f} each, {when}."
     if label == "partial":
