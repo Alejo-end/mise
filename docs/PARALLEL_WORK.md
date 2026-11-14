@@ -223,3 +223,77 @@ slot; the camera tab in the background; a light change.
 Ready when `uv run pytest` is green and every xfail the worktree fixed is a plain test. Merge
 order: either first. The backend ignores unknown event fields, so version 2 events are safe before worktree 2 lands. Integration then
 deploys to the board, records a sequence, and runs the replay suite against it.
+
+## Amendments after worker 1 (14 Nov, 06:35). They override the text above where they differ
+
+Merged on `valio/integration-unattended` (merge `e55bd03`): 256 passed, 6 skipped, measured by
+integration. Details: `docs/handoff/w1-reliability.md`.
+
+- **Settings.** Backend policy values live in `backend/settings.py` with committed defaults;
+  `.env.example` lists every key. `Agent()` without settings uses the defaults and ignores the
+  environment; the app reads the environment and logs a notice when a value differs. The per-worktree
+  `.env` no longer needs `RESTOCK_MIN_S`. Worktree 1 owns three more lines in `backend/app.py`:
+  `SETTINGS = Settings.from_env()`, the `Agent(..., settings=SETTINGS)` call with its notice, and
+  `OFFLINE_AFTER_S`.
+- **Interface 3, restock (committed default C2).** After an order the slot stays pending until a delivery
+  check for the order arrives, or the slot reads stocked without a break for `RESTOCK_CONFIRM_S` (60)
+  and at least `RESTOCK_MIN_S` (120) after the order. Readings come from `slot_state` events and the
+  status health; one reading never ends it. An unsure reading, a stale calibration, no picture, a frame
+  older than `FRAME_STALE_S` (10), an invalid configuration or a health gap over `HEALTH_STALE_S` (30)
+  restarts the wait. This is a mitigation, not proof of a delivery. Demo reset: skip the request, run a
+  delivery check, or put the product back for 60 s at least 120 s after the order.
+- **Interface 7, health.** Adds a top-level `assignment_check` (`ok` / `unknown`); `calibration` is `ok`
+  when either assignment is unknown; malformed health gets a 422 (the board then sends a plain status);
+  health extends or breaks a restock hold but never orders, cancels or closes a request. `GET /device`
+  adds `health`, `health_age_s`, `health_known` (false after 30 s).
+- **Interface 8, pending record.** `since` is the trigger time; `None` while the pipeline runs; a delivery
+  check and an expired approval are applied before answering.
+- **Interface 9, calibration.** Each photo save writes `data/slotN_meta.json` with the assignment it was
+  taken for; the full photo's assignment counts; photos without a record are never stale; the board
+  polls `GET /shelf` every 60 s and a failed poll counts as unknown, never stale. Recalibrate each slot
+  once after worktree 2's `/shelf` is live.
+- **Interface 2.** "No camera frame for `CAMERA_GRACE_S`" is also enforced by the frame's age in
+  `main.loop`.
+- **Where things are enforced, added:** restock (delivery check, stocked hold, window from the order):
+  backend `Agent._settle`, `Agent._hold`, `Agent.observe_health`. Health freshness 30 s and frame
+  freshness 10 s: backend `GET /device` and the hold's gap rule. Stale calibration is uncertain: device
+  `shelf_detect.gate_calibration` in `main.process_frame`. Box configuration valid: device
+  `shelf_detect.config_errors`, reported in health only. Policy defaults equal the tested ones:
+  `backend/settings.py`, `tests/test_restock_policy.py`.
+- **Decision C, now precise.** "After the agent ordered for a slot, may the camera alone make that slot
+  orderable again, and how sure must it be?" C1 (Alejo's original): both values 0, one "full" frees it.
+  C2 (committed default): 120 s / 60 s. C3: delivery check only. His test
+  `test_one_empty_shelf_makes_one_order` is pinned to C1 with a comment.
+
+## Amendments after worker 2 (14 Nov, 06:45). They override the text above where they differ
+
+Merged on `valio/integration-unattended` (merge `e3d7db3`): 292 passed, 6 skipped, measured by
+integration. Details: `docs/handoff/w2-shelf-config.md`.
+
+- **Interface 4, shelf configuration.** `backend/shelf.py` keeps `Assignment` (from the active signed rule
+  set only) apart from `Observation` (the last `slot_state`, kept in memory). `GET /shelf` returns one row
+  per slot: the assignment fields at the top level, then `observation` (with the slot's board health and
+  its freshness) and `pending_order` (`Agent.pending_for_slot` plus `made_for_current_assignment`).
+  `PUT /shelf/{slot}` with an approver PIN signs a new rule set version (version + 1, `based_on` the
+  parent's hash, signature written before the YAML), logs a `rule_set` audit entry and activates it.
+  Files in `rules/` are never rewritten; new versions live next to the audit database
+  (`data/<audit stem>-rule-versions/`). The backend refuses to start on a changed, unsigned, missing or
+  out-of-sequence version, or on a base file re-signed after shelf changes.
+- **`assignment_id`** is `v{version that put this product into the slot}:{product_id}`, so a change marks
+  only that slot's calibration stale; a target-only change keeps the id. Live v4: `v4:477032`,
+  `v4:464316`, `v4:463335`, checked with the board's own parser.
+- **Events.** `SlotState` accepts `fill`, `frame_id`, `frame_time`; with `fill`, `/events` computes units
+  from the backend's target. Version 1 events are unchanged.
+- **Ownership note.** Worker 2 also changed the start-up line of `backend/app.py` (builds `Shelf`) and
+  added `_approver(pin)` sharing the approval lockout.
+
+## Open decisions (all need Alejo; the defaults are what the code does now)
+
+| | Decision | Default in the code |
+|---|---|---|
+| A | May a slot's product change at runtime at all, and without re-signing? | `PUT /shelf` exists and always re-signs; no unsigned path. Remove the route if runtime changes are not wanted |
+| B | Is the board "Junction" the demo board? | Treated as the demo board |
+| C | After an order, may the camera alone make the slot orderable again, and how sure must it be? | C2: 120 s after the order and 60 s of steady "full", or a delivery check |
+| D | Does `assignment_id` follow the version that put the product in the slot (only that slot recalibrates) or the active version (every change recalibrates every slot)? | Per slot (one-line change in `Assignment.assignment_id`) |
+| E | After a product change, is an older request approved later ordered under its trigger's rule set version or rechecked against the newest? | The newest: `_order` and `_recheck` use the active rule set (worker 2 measured it) |
+| F | Who may sign a new rule set version? | Any approver PIN; head chef only is not built |

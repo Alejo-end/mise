@@ -72,7 +72,11 @@ def test_approval_places_order_and_logs_it(agent):
     assert agent.log.entries()[-1]["actor"] == "Head chef"
 
 
-def test_one_empty_shelf_makes_one_order(agent):
+def test_one_empty_shelf_makes_one_order(tmp_path):
+    # Pinned to the immediate refill policy: restock_min_s=0 and no stocked hold (restock_confirm_s=0), so one
+    # "full" reading makes the slot orderable again at once. The committed default waits instead
+    # (backend/settings.py). Which one the kitchen wants is decision C in docs/PARALLEL_WORK.md.
+    agent = A.Agent(LocalCatalog(), load_rules(), AuditLog(tmp_path / "a.sqlite"), restock_min_s=0, restock_confirm_s=0)
     ev = {"type": "slot_state", "slot": 2, "state": "empty", "estimated_units": 0}
     assert agent.handle_event(ev)["status"] == "ordered"
     assert agent.handle_event(ev)["status"] == "ignored"

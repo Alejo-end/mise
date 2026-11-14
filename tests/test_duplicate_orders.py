@@ -58,13 +58,22 @@ def test_one_false_full_reading_between_lows_does_not_order_twice(agent):
     assert len(slot_requests(agent, 2)) == 1
 
 
-def test_without_a_window_a_refill_reorders_at_once_as_in_test_requests(tmp_path):
-    """The code default (0 s) keeps Alejo's behaviour until decision C."""
-    agent = A.Agent(LocalCatalog(), load_rules(), AuditLog(tmp_path / "a.sqlite"))
+def test_the_immediate_policy_reorders_at_once_as_in_test_requests(tmp_path):
+    """Alejo's original spec (no window, no stocked hold), pinned in test_requests until decision C."""
+    agent = A.Agent(LocalCatalog(), load_rules(), AuditLog(tmp_path / "a.sqlite"), restock_min_s=0, restock_confirm_s=0)
     agent.handle_event(dict(YOGURT_EMPTY))
-    agent.handle_event(dict(YOGURT_FULL))  # a real delivery, after the window
+    agent.handle_event(dict(YOGURT_FULL))  # counted as a refill at once
     agent.handle_event(dict(YOGURT_EMPTY))
     assert len([o for o in agent.orders.values() if o["slot"] == 2]) == 2
+
+
+def test_the_code_default_keeps_the_live_duplicate_to_one_order(tmp_path):
+    """No argument and no environment: the committed default (backend/settings.py) waits."""
+    agent = A.Agent(LocalCatalog(), load_rules(), AuditLog(tmp_path / "a.sqlite"))
+    agent.handle_event(dict(YOGURT_EMPTY))
+    agent.handle_event(dict(YOGURT_FULL))
+    agent.handle_event(dict(YOGURT_EMPTY))
+    assert len(slot_requests(agent, 2)) == 1
 
 
 def test_the_restock_window_survives_a_backend_restart(agent, tmp_path):
