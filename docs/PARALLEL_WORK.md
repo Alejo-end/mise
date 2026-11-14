@@ -297,3 +297,45 @@ integration. Details: `docs/handoff/w2-shelf-config.md`.
 | D | Does `assignment_id` follow the version that put the product in the slot (only that slot recalibrates) or the active version (every change recalibrates every slot)? | Per slot (one-line change in `Assignment.assignment_id`) |
 | E | After a product change, is an older request approved later ordered under its trigger's rule set version or rechecked against the newest? | The newest: `_order` and `_recheck` use the active rule set (worker 2 measured it) |
 | F | Who may sign a new rule set version? | Any approver PIN; head chef only is not built |
+
+## Amendments after worker 3 (14 Nov, 07:00). They override the text above where they differ
+
+Merged on `valio/integration-unattended` (merge `f198850`): 322 passed, 0 skipped, measured by
+integration with the shared Valio files linked (all 6 real-catalogue tests run). Details:
+`docs/handoff/w3-valio-data.md`; field status table in `docs/valio-api/API.md`.
+
+- **Sources, labelled everywhere as sponsor-provided challenge data and mock APIs.** Static files
+  downloaded once (35 API calls in total, never the whole catalogue priced), read-only in a shared folder
+  outside git, linked as `valio-challenge/data/valio`. Recorded API answers (secrets removed) are reused by
+  tests and experiments instead of new calls. The product JSON schema is only on the password-protected
+  portal and was not downloaded.
+- **Field status.** Sponsor file: pack size, lot size, deposits (listed, not priced), allergens, delivery
+  reliability, carbon, sales unit. Sponsor mock API: price per sales unit (without and with 13.5 % VAT,
+  validity), availability, available date, order cut-off, sales block. Unavailable: delivery charge,
+  arrival time or window, deposit price. Simulated by our gateway: order placement and confirmation, quote
+  expiry (earliest of 15 minutes, the cut-off and the price validity). The invented 06:00 arrival is gone.
+- **Ownership note.** Worker 3 added `VALIO_RECORD_DIR` and `VALIO_MAX_CALLS` to `.env.example` and
+  made `Agent.check_delivery` read a bare delivery date.
+
+### Demo blockers found on the live data (HANDBOOK six steps)
+
+1. **Step 1 fails on rule set v4:** our agent passes the Driving Test 5 of 6 (`api_error`) and gets no
+   licence, already at base `eca4100`. The sandbox gets the backend's rule set but runs the stand-in
+   catalogue. Proposed fix: the sandbox uses `rules/school_kitchen.yaml`. Files: `app.py` start-up and
+   `sandbox.py` (Alejo's).
+2. **Every live order goes to a person:** the API gives delivery on the requested Monday with no time,
+   and the rule set needs Monday 07:00. Allowing it needs a signed rule set with
+   `delivery.date_only_same_day: allowed` (decision G).
+3. **Step 5 "stock is short" cannot happen live** for milk 463335: the mock API reports 9,999,999,999
+   available (decision I).
+4. **Step 4's second order cannot go through alone:** rule set v4 has no no-allergen product as a usual
+   product or approved substitute, and step 3's EUR 1,400 order uses up the EUR 800 weekly limit. Needs a
+   new signed rule set, and step 4 before step 3 (or a fresh audit database).
+
+### More open decisions (Alejo)
+
+| | Decision | Default in the code |
+|---|---|---|
+| G | May a delivery on the needed day with no arrival time count as in time? | No: it goes to a person unless the signed rule set says `delivery.date_only_same_day: allowed` |
+| H | Should an unknown delivery charge send an order to a person? | No: the quote and approval say "delivery charge unknown", the total excludes it |
+| I | Does the mock API's 9,999,999,999 available count as known stock? | Treated as stock as reported |
