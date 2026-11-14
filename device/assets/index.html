@@ -54,6 +54,8 @@
   .box.empty { border-style:dashed }
   .box.conflict { border-color:#e5484d; border-width:4px } .box.conflict b { background:#e5484d; color:#fff }
   .cam.editing .box { outline:2px dashed rgba(255,255,255,.6); outline-offset:3px }
+  /* Number tags and resize corners above every box: with stacked boxes each one can still be grabbed by its tag. */
+  .box b { z-index:5; cursor:move } .box .h { z-index:6 }
   .layoutmsg { margin:.4rem 0 0; font-weight:700 } .layoutmsg.warn { color:#e5484d }
 
   /* Shelf: one channel strip per spot, like a mixer */
@@ -161,7 +163,7 @@
         <h2>set up the shelf <small>once, in order</small></h2>
         <ol class="steps" id="steps">
           <li id="s1"><div><b>Connect the camera</b><p>Camera and power supply into the dongle first, then the dongle into the board.</p></div></li>
-          <li id="s2"><div><b>Place the boxes</b><p>Press <b>Edit boxes</b>, drag every box over its product spot (drag the round corner to resize), then press <b>Save boxes</b>. Nothing is saved until then, and purchasing is paused while you edit.</p>
+          <li id="s2"><div><b>Place the boxes</b><p>Press <b>Edit boxes</b>, drag every box by its number tag over its product spot (drag the round corner to resize), then press <b>Save boxes</b>. Nothing is saved until then, and purchasing is paused while you edit.</p>
             <div class="keys"><button id="editBoxes">Edit boxes</button><button class="primary" id="saveBoxes" hidden>Save boxes</button><button id="cancelBoxes" hidden>Cancel</button><button id="boxesOk">The boxes are in place</button></div>
             <p class="layoutmsg" id="layoutMsg" aria-live="polite"></p></div></li>
           <li id="s3"><div><b>Take the empty photo</b><p>Take every product off the shelf.</p>
