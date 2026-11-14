@@ -69,16 +69,17 @@ def main() -> None:
     p.add_argument("--board", default="172.20.10.2")
     p.add_argument("--serial", default="251305272", help="adb serial of the board")
     p.add_argument("--note", default="", help="what happens in the sequence, for the README")
-    p.add_argument("--lookalike", action="append", default=[], help="look-alike product code (guided look-alike plans)")
     p.add_argument("--session", default="", help="recording session id (default: role, occasion and date)")
     p.add_argument("--labeller", default="person at the shelf (Enter marks, confirmed after capture)")
     a = p.parse_args()
 
-    plan = rp.plan_for(a.name, a.lookalike)
+    plan = rp.plan_for(a.name)
+    counts = {}
     if plan:
         a.seconds = plan["seconds"] if "--seconds" not in sys.argv else a.seconds
         check_board_ready(a.board)
         show_plan(a.name, plan, a.seconds)
+        counts = ask_counts(plan)
         input("Press Enter to START recording (then Enter at each step) ")
         out = ROOT / "data" / "recordings" / plan["role"] / a.name
     else:
@@ -143,7 +144,7 @@ def main() -> None:
     with lock:
         meta.close()
     if plan:
-        write_labels(out, a, plan, marks, lambda prompt: (print(prompt, end='', flush=True), lines.get()[1])[1])
+        write_labels(out, a, plan, counts, marks, lambda prompt: (print(prompt, end='', flush=True), lines.get()[1])[1])
 
     (out / "README.md").write_text(
         f"# Sequence {a.name}\n\nRecorded {time.strftime('%Y-%m-%d %H:%M')} from the board at {a.board}, "
@@ -174,7 +175,20 @@ def show_plan(name: str, plan: dict, seconds: float) -> None:
     print("  Press Enter exactly when you do each step. Type a word + Enter for anything unplanned.\n")
 
 
-def write_labels(out: Path, a, plan: dict, marks: list[tuple[float, str]], ask) -> None:
+def ask_counts(plan: dict) -> dict[str, int]:
+    """The number of items actually in each slot now, typed by the person (never the configured target)."""
+    if plan["start"] == "empty":
+        return {s: 0 for s in rp.SLOTS}
+    names = ", ".join(f"slot {s} {rp.LABEL[s]}" for s in rp.SLOTS)
+    while True:
+        raw = input(f"How many items are in each slot right now ({names})? Type {len(rp.SLOTS)} numbers, e.g. 2 1 2: ")
+        parts = raw.replace(",", " ").split()
+        if len(parts) == len(rp.SLOTS) and all(x.isdigit() and int(x) >= 1 for x in parts):
+            return dict(zip(rp.SLOTS, map(int, parts)))
+        print("  Please type one whole number of at least 1 per slot.")
+
+
+def write_labels(out: Path, a, plan: dict, counts: dict, marks: list[tuple[float, str]], ask) -> None:
     """labels.json for experiments/recognition (recog/real_eval.discover): human-validated after confirmation."""
     step_marks = [t for t, text in marks if not text]
     notes = [{"t": t, "text": text} for t, text in marks if text]
@@ -184,19 +198,31 @@ def write_labels(out: Path, a, plan: dict, marks: list[tuple[float, str]], ask) 
         print(f"  {st['marked_t'] if st['marked_t'] is not None else 'MISSING':>7} s  {st['do']}")
     for n_ in notes:
         print(f"  {n_['t']:>7} s  note: {n_['text']}")
+    start = rp.start_content(plan, counts)
+    final = start
+    for st in plan["steps"]:
+        final = rp.apply_ops(final, st["ops"])
+    print("Items per slot at the start -> at the end: " + "; ".join(
+        f"slot {s} {start[s]['count']} -> {final[s]['count']}" + (" (fitness bar)" if final[s]["identity"] == rp.UNFAMILIAR else "")
+        for s in rp.SLOTS))
     problems = []
     if len(step_marks) < len(plan["steps"]):
         problems.append(f"{len(plan['steps']) - len(step_marks)} step(s) not marked")
     if len(step_marks) > len(plan["steps"]):
         problems.append(f"{len(step_marks) - len(plan['steps'])} extra Enter mark(s)")
-    ok = not problems and ask("Are these marks right (each at the moment you acted)? [y/N] ").strip().lower() == "y"
+    ok = not problems and ask("Are the marks right (each at the moment you acted) and the item counts true? [y/N] ").strip().lower() == "y"
     date = time.strftime("%Y%m%d")
     session = a.session or (f"ref-{date}" if plan["role"] == "reference" else f"eval-{plan['occasion']}-{date}")
-    labels = rp.label_windows(plan["start"], plan["steps"], step_marks, a.seconds) if not problems else []
+    labels = rp.label_windows(start, plan["steps"], step_marks, a.seconds)[0] if not problems else []
     doc = {
         "schema": "shelf-recording-labels/1", "recording": a.name, "plan": plan["base"], "role": plan["role"],
         "scenario": plan.get("scenario", "reference"), "session_id": session, "occasion": plan["occasion"],
-        "lighting": plan["lighting"], "assigned": rp.ASSIGNED, "start": plan["start"], "steps": steps,
+        "lighting": plan["lighting"], "product_set": rp.SET_ID, "assigned": rp.IDENTITY,
+        "unfamiliar": {"identity": rp.UNFAMILIAR, "label_value": "unknown", "in_reference_gallery": False},
+        "identity_note": "observed identities (tools/recording_products.json); purchasing eligibility is the signed rule set",
+        "counts_start": {s: start[s]["count"] for s in rp.SLOTS}, "counts_end": {s: final[s]["count"] for s in rp.SLOTS},
+        "counts_source": "typed by the person before the recording, then changed only by the marked steps",
+        "steps": steps,
         "notes": notes, "labels": labels, "seconds": a.seconds,
         "clock": "seconds since the recorder connected; frame and mark times in meta.jsonl use the same clock",
         "transition_unlabelled_s": [rp.TRANSITION_BEFORE, rp.TRANSITION_AFTER],
@@ -205,7 +231,8 @@ def write_labels(out: Path, a, plan: dict, marks: list[tuple[float, str]], ask) 
         "problems": problems,
     }
     if plan["role"] == "evaluation":
-        doc["expected_requests"] = plan["expected_requests"]
+        doc["expected_requests"] = plan["expected_requests"]  # all 0: every slot is unmapped for purchasing
+        doc["expected_stock_events"] = plan["expected_stock_events"]
     (out / "labels.json").write_text(json.dumps(doc, indent=2))
     print(f"labels.json: {'VALIDATED' if ok else 'NOT validated (' + ('; '.join(problems) or 'not confirmed') + '): record again with a new name or fix by hand'}")
 

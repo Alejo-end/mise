@@ -1,0 +1,16 @@
+{
+  "schema": "shelf-product-set/1",
+  "set_id": "kitchen-20261114-b",
+  "note": "The products physically on the cardboard shelf from 14 Nov 2026 08:40 EET. 'identity' is the observed identity used in recordings, labels and the reference gallery; it is experimental until a barcode (GTIN) on the package matches a catalogue GTIN exactly (tools/identify_product.py). Purchasing eligibility is separate: the signed rule set decides it, and every slot below is unmapped for purchasing.",
+  "slots": {
+    "1": {"identity": "exp:chips", "label": "chips", "kind": "bag", "gtin": null, "catalogue_match": null, "purchasing": "unmapped"},
+    "2": {"identity": "exp:energy-drink", "label": "energy drink", "kind": "can", "gtin": null, "catalogue_match": null, "purchasing": "unmapped"},
+    "3": {"identity": "exp:milk", "label": "milk", "kind": "carton", "gtin": null, "catalogue_match": null, "purchasing": "unmapped"}
+  },
+  "unfamiliar": {"identity": "exp:fitness-bar", "label": "small fitness bar", "gtin": null, "catalogue_match": null,
+                 "in_reference_gallery": false, "label_value": "unknown"},
+  "previous_sets": {
+    "demo-v4": {"note": "rule set v4 demo plan of MISSING_DATA.md (bread, yoghurt, milk); no recording was made with it",
+                "slots": {"1": "477032", "2": "464316", "3": "463335"}}
+  }
+}
