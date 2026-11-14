@@ -530,7 +530,7 @@ socket.on("recognize_response", (r) => {
   const counts = Object.entries(r.visible_units || {}).map(([k, n]) => `${rname(k)} ${n}`).join(", ") || "none";
   const t = r.timing_ms || {};
   $("recogMeta").textContent = `Visible units: ${counts}. ${r.uncertain ? "Uncertain: " + (r.reasons || []).join("; ") + ". " : ""}` +
-    `Captured ${String(r.captured_at).slice(11, 23)}; ${t.total ?? "?"} ms in the service (${(r.model || {}).name || "model"} on ${(r.model || {}).device || "?"}), ${r.round_trip_ms} ms round trip. Scores are model similarities, not measured accuracy. Observes only: no stock events, no orders.`;
+    `Captured ${String(r.captured_at).slice(11, 23)}; ${t.total != null ? Math.round(t.total) : "?"} ms in the service (${(r.model || {}).name || "model"} on ${(r.model || {}).device || "?"}), ${r.round_trip_ms} ms round trip. Scores are model similarities, not measured accuracy. Observes only: no stock events, no orders.`;
 });
 socket.on("connect", () => socket.emit("recognition_status", {}));
 </script>

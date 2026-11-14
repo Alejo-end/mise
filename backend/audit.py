@@ -78,7 +78,8 @@ def story(entries: list[dict]) -> list[str]:
             lines.append(f"{t} Rule check v{e['rule_set_version']}: {d['subject']} is {d['result'].replace('_', ' ')}. {'; '.join(d['reasons'])}.")
         elif s == "approval":
             if d.get("status") == "open":
-                lines.append(f"{t} Asked {d.get('approver', 'the chef')} to approve: {len(d['options'])} options.")
+                lines.append(f"{t} Asked {d.get('approver', 'the chef')} to approve: {len(d['options'])} options." if d["options"]
+                             else f"{t} Told {d.get('approver', 'the chef')} that nothing safe can be ordered.")
             elif d.get("status") == "expired":
                 lines.append(f"{t} The approval request expired after 2 hours. A new quote is needed.")
             else:

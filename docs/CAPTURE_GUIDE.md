@@ -204,6 +204,30 @@ The obstruction, unfamiliar-product and relocation tests stay as they are.
 **untested**, as are glare, other camera angles, other shelves, more than one unfamiliar item and look-alike
 products (none available). Record them only after the normal-light plan works.
 
+## 6a. Recognize shelf (experimental prototype, observes only)
+
+Identifies enrolled products anywhere on one monitored surface; the surface (by default the area around the slot
+boxes, or the whole picture) only says where to look. It never sends stock events and never orders.
+
+- **Runs where:** the panel is on the board page (app `safe-kitchen-agent`, deployed 12:22); the board sends its
+  newest frame (never older than 2 s) to the recognition service on the laptop, port 8100 (branch `exp/recognition`,
+  `experiments/recognition/shelf_service`, DINOv2-small on the laptop CPU). Start the service with
+  `cd /Users/bigboss/Ai/Claudecode/junction2026-wt-recognition/valio-challenge/experiments/recognition && uv run --project shelf_service uvicorn shelf_service.app:app --host 0.0.0.0 --port 8100`.
+- **Once:** clear the surface and press **Save empty surface**.
+- **Enrol each product (chips, energy drink, milk):** put one product alone on the surface, choose it, keep
+  "reference photo", press **Save enrolment photo**; 4 to 6 times per product in different places and orientations,
+  mostly with the barcode hidden. Then 2 photos per product with "held-out test photo" in new positions: they are
+  only evaluated, never used as references. Never enrol the fitness bar.
+- **Recognize:** press **Recognize shelf**. Green box = enrolled product, dashed grey = unknown, orange =
+  ambiguous, red dotted = obstructed (a hand or arm). Visible units are counted per product; hidden stock is never
+  inferred. Scores are model similarities, not measured accuracy.
+- **The four checks:** move a known product elsewhere on the surface (it keeps its name); put the fitness bar down
+  (it must not be called milk); with two identical units visible, take one away (the visible count drops); hold a
+  hand over the surface (obstructed or uncertain).
+- **Measured 12:23 (no enrolment yet):** browser press to answer 0.8 to 1.3 s; board round trip 0.5 to 0.9 s, mostly
+  the frame crossing the hotspot Wi-Fi; service 4 to 6 ms for an answer without detection. Warm detection and
+  embedding: about 35 ms per call on this laptop in the writer's synthetic tests; to be measured with real photos.
+
 ## 7. Validate and upload
 
 ```

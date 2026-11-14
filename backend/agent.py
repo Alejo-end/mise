@@ -572,8 +572,9 @@ class Agent:
         if not options:
             self.log.write("blocked", {"summary": f"No safe product can fill {need} units of {target['product']}."
                                        + other_packs}, "agent", v, run_id=run)
-            self._free(slot)
-            return {"status": "blocked"}
+            # Nothing can be ordered, and that is a decision for a person too: the kitchen still needs the product.
+            # The request has no option. The approver reads it and closes it, and the slot stays held until then.
+            return self._ask([], ctx, run, slot, f"{target['product']}: nothing safe can be ordered")
 
         checked = []
         for label, parts in options[:3]:

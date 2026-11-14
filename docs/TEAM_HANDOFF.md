@@ -26,6 +26,12 @@ agent under test in the Driving Test (`backend/model_agent.py`, when a key is se
 set v6 leaves all three slots unmapped, so the shelf cannot buy anything until someone ends recording mode and signs
 purchasable products again.
 
+**Recognition prototype (experimental, observational):** a "Recognize shelf" panel on the board page (deployed 12:22
+to `safe-kitchen-agent`) calls a laptop service on `exp/recognition` (86c513e) that finds separated packages on the
+surface and names enrolled products from the person's own photos, with unknown, ambiguous and obstructed outcomes and
+visible-unit counts. Checked end to end in the real page; no products are enrolled yet, so no recognition result
+exists. It never touches purchasing. How to use: `CAPTURE_GUIDE.md` section 6a.
+
 ## 2. Known failures and limits (say them out loud)
 
 1. **Demo step 1: fixed by the merge of `review-14-nov` (19a24a8) on 14 Nov at 11:30.** The Driving Test passes 6 of 6

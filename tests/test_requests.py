@@ -135,10 +135,16 @@ def test_short_stock_offers_the_safe_part_for_approval(agent):
     assert "25 short" in opt["reasons"][0]
 
 
-def test_nothing_safe_in_stock_is_blocked(agent):
+def test_nothing_safe_in_stock_goes_to_the_head_chef_and_orders_nothing(agent):
+    """The kitchen still needs the product, so a person must hear of it. The benchmark found that nobody was told."""
     agent.catalog.products["MOCK-BREAD-RYE-500"]["stock"] = 0
     r = agent.handle_event({"type": "slot_state", "slot": 1, "state": "empty", "estimated_units": 0})
-    assert r["status"] == "blocked"
+    assert r["status"] == "needs_approval"
+    (request,) = agent.open_approvals()
+    assert request["options"] == [] and "nothing safe can be ordered" in request["what"]
+    assert agent.decide(request["id"], "approve", 0, "Head chef") == {"status": "bad_option"}  # there is nothing to approve
+    assert agent.decide(request["id"], "skip", None, "Head chef") == {"status": "skipped"}
+    assert not agent.orders and 1 not in agent.pending_slots
 
 
 def test_ranking_uses_the_rule_sets_approved_groups(agent):
