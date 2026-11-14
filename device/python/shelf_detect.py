@@ -42,6 +42,11 @@ DEFAULTS = {
     "min_detail": 0.03,          # patch contrast below this: covered or dark (real views >= 0.15)
     "mismatch_ratio": 0.85,      # nearer photo farther than this x the photos' distance: no match
     "calibration_quiet_s": 15.0, # no events this long after a calibration photo or a slot move
+    # Candidate rule (off at 0 until real recordings set it; see BETWEEN_WHY): a real shelf view lies between
+    # its empty and full photo, so (d_empty + d_full) / d(empty, full) stays near 1; a hand, a partial cover or
+    # an unrelated view goes above. max_shift_px makes the distances tolerate a product put back a few pixels off.
+    "between_ratio": 0.0,
+    "max_shift_px": 0,
 }
 
 
@@ -62,6 +67,23 @@ def diff(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.abs(a - b).mean())
 
 
+def shift_diff(a: np.ndarray, b: np.ndarray, m: int) -> float:
+    """The smallest diff over shifts of up to m pixels, compared on the overlapping part."""
+    if m <= 0:
+        return diff(a, b)
+    n0, n1 = a.shape
+    best = float("inf")
+    for dy in range(-m, m + 1):
+        for dx in range(-m, m + 1):
+            A = a[max(0, dy):n0 + min(0, dy), max(0, dx):n1 + min(0, dx)]
+            B = b[max(0, -dy):n0 + min(0, -dy), max(0, -dx):n1 + min(0, -dx)]
+            best = min(best, float(np.abs(A - B).mean()))
+    return best
+
+
+BETWEEN_WHY = "view is not between the two photos (covered, or something else is there)"
+
+
 def classify_baseline(patch: np.ndarray, empty_ref: np.ndarray | None, full_ref: np.ndarray | None, cfg: dict):
     """The original rule. Return (state, fill); state is None without an "empty" photo."""
     if empty_ref is None:
@@ -72,6 +94,14 @@ def classify_baseline(patch: np.ndarray, empty_ref: np.ndarray | None, full_ref:
         fill = d_empty / (d_empty + d_full + 1e-6)
     else:
         fill = 1.0 if d_empty > cfg["present_diff"] else 0.0
+    if fill >= cfg["full_at"]:
+        return "full", fill
+    if fill < cfg["empty_below"]:
+        return "empty", fill
+    return "low", fill
+
+
+def _state_from_fill(fill: float, cfg: dict):
     if fill >= cfg["full_at"]:
         return "full", fill
     if fill < cfg["empty_below"]:
@@ -90,6 +120,15 @@ def classify(patch: np.ndarray, empty_ref: np.ndarray | None, full_ref: np.ndarr
         span = diff(empty_ref, full_ref)
         if span > 0 and min(diff(patch, empty_ref), diff(patch, full_ref)) > setting(cfg, "mismatch_ratio") * span:
             return "uncertain", fill, "view does not match the photos"
+        ratio = float(setting(cfg, "between_ratio") or 0)
+        if ratio > 0:  # candidate rule, off by default
+            m = int(setting(cfg, "max_shift_px") or 0)
+            de, df, sp = shift_diff(patch, empty_ref, m), shift_diff(patch, full_ref, m), shift_diff(empty_ref, full_ref, m)
+            if sp > 0 and (de + df) / sp > ratio:
+                return "uncertain", de / (de + df + 1e-6), BETWEEN_WHY
+            if m > 0:  # read the fill with the same shift tolerance, so a product a few pixels off is not "low"
+                st2, fill2 = _state_from_fill(de / (de + df + 1e-6), cfg)
+                return st2, fill2, None
     return st, fill, None
 
 
@@ -254,6 +293,8 @@ def config_errors(cfg: dict) -> list[str]:
     for key in ("confirm_seconds", "min_detail", "calibration_quiet_s"):
         num(key, 0)
     num("mismatch_ratio", 0.01)
+    num("between_ratio", 0)
+    num("max_shift_px", 0, 12, integer=True)
     num("frame_interval_s", 0.05)
     return errors
 

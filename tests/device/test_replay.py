@@ -189,6 +189,58 @@ def test_known_gap_a_view_between_the_two_photos_should_be_uncertain(steady, apa
     assert [e for e in events if e.slot == 3] == [] and trackers[3]["uncertain"] is not None
 
 
+# Candidate rule for the known gap (off by default; the threshold is provisional, from synthetic views only,
+# and is set from the real recordings eval-hand, eval-unfamiliar and ref-*-poses before it is enabled).
+CANDIDATE = {"between_ratio": 1.27, "max_shift_px": 4}
+
+
+def _slot3_crop(steady, ref, gain=1.0, shift=(0, 0)):
+    img = paint_reference(steady.frames[3].image, APART[2], np.roll(ref, shift, axis=(0, 1)) * gain)
+    return sd.crop(img, APART[2])
+
+
+@pytest.mark.parametrize("view", ["recorded cup and keyboard", "half covered", "textured object", "different object"])
+def test_candidate_between_rule_makes_unrelated_and_covered_views_uncertain(steady, apart, tmp_path, view):
+    e3, f3 = steady.refs[3]
+    half = f3.copy()
+    half[:, 24:] = np.random.default_rng(1).normal(0.1, 0.2, (48, 24))
+    slot3 = {"recorded cup and keyboard": None, "half covered": half, "different object": f3.T.copy(),
+             "textured object": np.random.default_rng(1).normal(0, 0.25, e3.shape)}[view]
+    events, trackers = replay_board(_odd_view_at_slot3(steady, apart, slot3), steady, {**apart, **CANDIDATE}, end=12.0)
+    assert [e for e in events if e.slot == 3] == [] and trackers[3]["uncertain"] is not None
+    agent = agent_for(tmp_path)
+    feed(agent, events)
+    assert agent.orders == {} and agent.open_approvals() == []
+
+
+def test_candidate_between_rule_keeps_genuine_shelf_states(steady):
+    e3, f3 = steady.refs[3]
+    cfg = {**steady.config, **CANDIDATE}
+    part = lambda frac: np.concatenate([e3[:, :int(48 * frac)], f3[:, int(48 * frac):]], 1)  # some units gone
+    genuine = {"full": (f3, "full"), "empty": (e3, "empty"), "a third gone": (part(1 / 3), "low"),
+               "half gone": (part(1 / 2), "low"), "two thirds gone": (part(2 / 3), "low"),
+               "half blend": ((e3 + f3) / 2, "low")}
+    for name, (ref, expected) in genuine.items():
+        st, _, why = sd.classify(_slot3_crop(steady, ref), e3, f3, cfg)
+        assert (st, why) == (expected, None), name
+    # A product put back 4 px off: today a false "low" (fill about 0.61); with shift tolerance it stays full.
+    assert sd.classify(_slot3_crop(steady, f3, shift=(0, 4)), e3, f3, steady.config)[0] == "low"
+    assert sd.classify(_slot3_crop(steady, f3, shift=(0, 4)), e3, f3, cfg)[:3:2] == ("full", None)
+    assert sd.classify(_slot3_crop(steady, f3, gain=0.8), e3, f3, cfg)[:3:2] == ("full", None)
+
+
+def test_candidate_between_rule_still_orders_when_the_milk_is_taken(steady, apart, tmp_path):
+    looks = [FULL] * 3 + [MILK_GONE] * 10
+    events, _ = replay_board(timeline(steady, apart, looks), steady, {**apart, **CANDIDATE})
+    agent = agent_for(tmp_path)
+    feed(agent, events)
+    assert len(requests_for(agent, 3)) == 1
+
+
+def test_the_candidate_rule_is_off_by_default():
+    assert sd.DEFAULTS["between_ratio"] == 0 and sd.DEFAULTS["max_shift_px"] == 0
+
+
 def test_a_covered_lens_is_uncertain(steady, apart):
     dark = Image.fromarray(np.clip(np.random.default_rng(0).normal(14, 3, (360, 480, 3)), 0, 255).astype(np.uint8))
     events, trackers = replay_board([Frame(float(i), dark) for i in range(8)], steady, apart, end=7.0)
