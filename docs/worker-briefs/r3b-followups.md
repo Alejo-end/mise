@@ -43,3 +43,16 @@ Owns `experiments/sustainability/` and `docs/sustainability.md` (patch delivery)
    whose fixed cost is divided by N; show N = 1, 10, 50, 200; include queueing headroom and that cold starts
    vanish only while traffic keeps the service warm). Keep GPU execution as paid time in every option.
 3. Keep measured inputs (rates, billing, board) as they are; tests must pass.
+
+## Recognition requirements from 14 Nov 08:50 (the person's instructions; apply in every recognition writer)
+
+- The shelf now holds chips (slot 1), an energy drink (slot 2) and milk (slot 3); a small fitness bar is the
+  unfamiliar item, never in the reference gallery (label value "unknown"). Product set and observed identities:
+  `tools/recording_products.json` (integration branch). Labels: `labels.json` of each recording (counts typed by
+  the person, orientation and barcode visibility per view).
+- Initial identification (enrolment: barcode, owner-confirmed catalogue choice, previous orders) is separate from
+  runtime recognition. Runtime recognition must work without a visible barcode, from reference images and context.
+- Score barcode-hidden views separately (`barcode_visible: false` in the label windows).
+- Context (expected slot, purchase history) may inform but must never force an identity; uncertain observations stay
+  explicitly uncertain. The swap and move recordings test exactly this.
+- All slots are unmapped for purchasing (signed rule set v6): recognition results never lead to orders.
