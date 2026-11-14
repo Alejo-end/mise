@@ -264,3 +264,36 @@ integration. Details: `docs/handoff/w1-reliability.md`.
   orderable again, and how sure must it be?" C1 (Alejo's original): both values 0, one "full" frees it.
   C2 (committed default): 120 s / 60 s. C3: delivery check only. His test
   `test_one_empty_shelf_makes_one_order` is pinned to C1 with a comment.
+
+## Amendments after worker 2 (14 Nov, 06:45). They override the text above where they differ
+
+Merged on `valio/integration-unattended` (merge `e3d7db3`): 292 passed, 6 skipped, measured by
+integration. Details: `docs/handoff/w2-shelf-config.md`.
+
+- **Interface 4, shelf configuration.** `backend/shelf.py` keeps `Assignment` (from the active signed rule
+  set only) apart from `Observation` (the last `slot_state`, kept in memory). `GET /shelf` returns one row
+  per slot: the assignment fields at the top level, then `observation` (with the slot's board health and
+  its freshness) and `pending_order` (`Agent.pending_for_slot` plus `made_for_current_assignment`).
+  `PUT /shelf/{slot}` with an approver PIN signs a new rule set version (version + 1, `based_on` the
+  parent's hash, signature written before the YAML), logs a `rule_set` audit entry and activates it.
+  Files in `rules/` are never rewritten; new versions live next to the audit database
+  (`data/<audit stem>-rule-versions/`). The backend refuses to start on a changed, unsigned, missing or
+  out-of-sequence version, or on a base file re-signed after shelf changes.
+- **`assignment_id`** is `v{version that put this product into the slot}:{product_id}`, so a change marks
+  only that slot's calibration stale; a target-only change keeps the id. Live v4: `v4:477032`,
+  `v4:464316`, `v4:463335`, checked with the board's own parser.
+- **Events.** `SlotState` accepts `fill`, `frame_id`, `frame_time`; with `fill`, `/events` computes units
+  from the backend's target. Version 1 events are unchanged.
+- **Ownership note.** Worker 2 also changed the start-up line of `backend/app.py` (builds `Shelf`) and
+  added `_approver(pin)` sharing the approval lockout.
+
+## Open decisions (all need Alejo; the defaults are what the code does now)
+
+| | Decision | Default in the code |
+|---|---|---|
+| A | May a slot's product change at runtime at all, and without re-signing? | `PUT /shelf` exists and always re-signs; no unsigned path. Remove the route if runtime changes are not wanted |
+| B | Is the board "Junction" the demo board? | Treated as the demo board |
+| C | After an order, may the camera alone make the slot orderable again, and how sure must it be? | C2: 120 s after the order and 60 s of steady "full", or a delivery check |
+| D | Does `assignment_id` follow the version that put the product in the slot (only that slot recalibrates) or the active version (every change recalibrates every slot)? | Per slot (one-line change in `Assignment.assignment_id`) |
+| E | After a product change, is an older request approved later ordered under its trigger's rule set version or rechecked against the newest? | The newest: `_order` and `_recheck` use the active rule set (worker 2 measured it) |
+| F | Who may sign a new rule set version? | Any approver PIN; head chef only is not built |
