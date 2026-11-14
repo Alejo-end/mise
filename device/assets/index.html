@@ -137,6 +137,7 @@
   <header class="strip">
     <div class="plate"><h1>safe kitchen</h1><span>shelf unit · watches the shelf and tells the agent when something runs low</span><span id="buildTag" style="display:block;font-size:.85rem;opacity:.75">page build __PAGE_BUILD__</span></div>
     <div class="leds" id="pills" role="list" aria-label="Status of the parts"></div>
+    <a class="size" href="#recog" style="text-decoration:none;color:inherit">Recognize shelf ↓</a>
     <button class="size" id="size" aria-pressed="false">Larger text</button>
   </header>
   <div id="staleBanner" hidden style="background:#ff5f5f;color:#000;font-weight:800;padding:10px 14px;margin:8px 0;border:3px solid #000">This page is older than the app running on the board. Reload the page (Cmd+R, or pull down on a phone).</div>
@@ -150,10 +151,6 @@
           <img id="frame" alt="Camera view of the shelf" hidden>
           <div class="none" id="nocam"><strong>No camera picture</strong><span id="nocamWhy">Plug the camera into the dongle before the board powers on.</span></div>
         </div>
-      </section>
-      <section class="mod">
-        <h2>shelf now</h2>
-        <div class="channels" id="shelf"></div>
       </section>
       <section class="mod" id="recog">
         <h2>recognize shelf <small>experimental · observes only, never orders</small></h2>
@@ -172,6 +169,10 @@
         <div class="cam" id="recogCam" hidden><img id="recogFrame" alt="The picture that was recognised"></div>
         <ul id="recogList"></ul>
         <p class="hint" id="recogMeta"></p>
+      </section>
+      <section class="mod">
+        <h2>shelf now</h2>
+        <div class="channels" id="shelf"></div>
       </section>
     </div>
 
