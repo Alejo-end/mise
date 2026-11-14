@@ -339,3 +339,14 @@ integration with the shared Valio files linked (all 6 real-catalogue tests run).
 | G | May a delivery on the needed day with no arrival time count as in time? | No: it goes to a person unless the signed rule set says `delivery.date_only_same_day: allowed` |
 | H | Should an unknown delivery charge send an order to a person? | No: the quote and approval say "delivery charge unknown", the total excludes it |
 | I | Does the mock API's 9,999,999,999 available count as known stock? | Treated as stock as reported |
+
+## Cloud workload round (14 Nov, from 07:10)
+
+| Session | Checkout | Branches | Cloud |
+|---|---|---|---|
+| Worker 5: sandbox fixes and agent benchmark | `junction2026-wt-bench/` | `fix/sandbox-harness` (reversible fixes in `backend/sandbox.py`, for Alejo's review), `exp/agent-bench` | Modal app `valio-agent-bench`, Volume `valio-agent-bench` |
+| Worker 6: recognition at scale | `junction2026-wt-recognition/` | `exp/recognition` | Modal app `valio-recognition-exp`, Volume `valio-recognition` |
+
+Credentials for cloud jobs: only the Modal Secret `verda-inference`. No Valio key is in the cloud; no
+experiment calls a Valio API or places an external order. The board and the live backend stay unchanged.
+Neither branch merges into `valio/integration-unattended` or `main` without review.
