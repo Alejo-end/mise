@@ -12,7 +12,9 @@ Valio's materials are **sponsor-provided challenge data and a mock API**, not a 
 | `0130062` | A moved delivery date after an approval goes back to a person; "in time by date only" never on a late line; recordings never overwrite and never break a call |
 | `3864ad6` | The three Codex review findings fixed (see "Codex review") |
 | `c8e3418` | No "in time by date only" note on a same-day line that needs a person (seen in the live smoke test) |
-| (this file) | Handoff, and the call count in `API.md` |
+| `2526394` | This handoff, and the call count in `API.md` |
+| `245354a` | Merge of `valio/integration-unattended` (`d318c95`, workers 1 and 2), see "After the merge" |
+| (last) | This section of the handoff |
 
 ## Measured: data imported
 
@@ -66,7 +68,8 @@ unit without tax, VAT 13.5 %; no delivery charge, no deposit price anywhere.
 | `0130062` | 190 passed |
 | `3864ad6`, `c8e3418` (final) | **192 passed, 0 skipped, 0 failed** (24 in `tests/test_valio_quotes.py`, one replays the recorded API answers; 27 in `tests/test_valio_catalog.py`) |
 
-All runs with `RESTOCK_MIN_S=0` in the shell. Without it, the same 2 tests fail in this worktree only.
+All runs before the merge with `RESTOCK_MIN_S=0` in the shell; without it the same 2 tests failed in
+this worktree only. After the merge (worker 1's settings), they pass either way.
 
 Alejo's tests changed, intended and documented (three edits in `tests/test_valio_catalog.py`):
 `test_price_and_availability_come_from_the_two_real_endpoints` expects the bare date instead of the
@@ -153,6 +156,29 @@ goes to a person. All approvals except steps 3 and 4 were skipped.
 6. Handbook notes (Alejo's file): label the Valio materials as sponsor-provided mock data and API; the
    06:00 delivery is gone; the run settings need `VALIO_RECORD_DIR` and optionally `VALIO_MAX_CALLS`.
 7. The worktree `.env` sets `RESTOCK_MIN_S=120`, which makes 2 committed tests fail in this worktree.
+
+## After the merge with `valio/integration-unattended` (`245354a`)
+
+- Conflict: one, in `backend/agent.py`; both sides had added module-level helpers at the same place. Both
+  kept (worker 3: `DRY`, `delivery_at`, `in_time`, `allot`, `lot_ok`, `charges`, `line_of`; worker 1:
+  `stocked`, `slot_problem`). `rules.py` and `app.py` merged without conflict.
+- `.env.example` (worker 1's file): added `VALIO_RECORD_DIR` and `VALIO_MAX_CALLS`, the two settings
+  my adapter reads; worker 1's `test_env_example_lists_every_key_the_backend_reads` failed without them.
+- **Tests after the merge, with the Valio files linked: 322 passed, 0 skipped, 0 failed**, with and
+  without `RESTOCK_MIN_S=0`. All 6 real-catalogue tests in `tests/test_valio_catalog.py` ran and passed.
+  (Integration measured 292 passed, 6 skipped without the files; + 6 now running + 24 new = 322.)
+
+### Which rule set version an order cites (measured by worker 2; behaviour not changed, open decision)
+
+An approval request is logged with the version active when it was made (`Agent._ask`, the `approval`
+entry). When the chef approves later, `Agent.decide` calls `_order`, which takes `v = self.rules["version"]`
+(`backend/agent.py`, `_order`, line 772) and runs `_recheck` (line 714), which also re-runs `R.check`
+against `self.rules`. `self.rules` is the **active** rule set: `PUT /shelf` replaces it (`app.py` line 348,
+`agent.rules = new`). So an old request approved after a product change is rechecked under the new rules
+and its `recheck`, `rule_check` and `order` entries cite the **new** version; the `approval` entry keeps
+the old one. The pending record (`Agent.pending`, worker 1) keeps the version it was triggered under.
+Open decision for Alejo: order under the request's version, refuse it, or recheck under the new one
+(today's behaviour).
 
 ## Codex review
 
