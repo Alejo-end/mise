@@ -78,6 +78,8 @@ gateway robustness, that Qwen is "production-safe", or that Kimi has a general f
 
 ## 6. Where results live
 
+Short economics and decision brief: `docs/team-decision-brief.md` on branch `exp/sustainability` (48df27c; six cost options with break-even conditions; every operating figure a projection).
+
 Branches and owners: the table in `TEAM_BRIEF.md`. Cloud outputs: Modal Volumes `valio-agent-bench`,
 `valio-recognition`, `valio-replenishment-sim`, `valio-retail-vision`, `valio-market-research`. Raw sponsor data, page
 copies and private results stay out of git.
