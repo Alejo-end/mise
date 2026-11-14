@@ -1,12 +1,19 @@
 """Replay recorded camera sequences through the board's shelf detection, on the laptop.
 
-The model of the board loop is the BASELINE as of commit ce9e52f (device/python/main.py):
+Two models of the board loop:
+
+replay_baseline(): the board code up to commit ce9e52f, which recorded steady-01.
 - the camera thread keeps only the newest frame;
 - the shelf check runs every frame_interval_s on that newest frame, whether or not it
   is new, as long as some frame arrived in the last CAMERA_GRACE_S (camera_ok);
-- shelf_detect.observe() needs the same state in two checks in a row.
-If worktree 1 changes this loop on the board, it changes replay_baseline() here in the
-same commit, so the tests keep modelling what the board really does.
+- observe_baseline() needs the same state in two checks in a row.
+It must keep reproducing the board's own readings in recordings made with that code.
+
+replay_board(): the board code now (device/python/main.py loop and process_frame).
+- a frame is checked at most once (frame numbers);
+- classify() may say "uncertain"; no camera frame for CAMERA_GRACE_S makes every slot uncertain;
+- observe() needs confirm_frames different frames over confirm_seconds.
+A commit that changes the loop on the board changes replay_board() too.
 """
 
 from __future__ import annotations
@@ -99,11 +106,47 @@ def replay_baseline(frames: list[Frame], seq: Sequence, interval: float | None =
             for s in cfg["slots"]:
                 n = s["slot"]
                 empty_ref, full_ref = seq.refs[n]
-                st, fill = sd.classify(sd.crop(img, s["rect"]), empty_ref, full_ref, cfg)
+                st, fill = sd.classify_baseline(sd.crop(img, s["rect"]), empty_ref, full_ref, cfg)
                 if st is not None:
                     seen[n].append(newest)
-                if sd.observe(trackers[n], st, fill, s["target_units"]):
+                if sd.observe_baseline(trackers[n], st, fill, s["target_units"]):
                     events.append(Event(round(tick, 3), n, trackers[n]["state"], trackers[n]["units"],
                                         trackers[n]["fill"], seen[n][-2:]))
+        tick += interval
+    return events, trackers
+
+
+def replay_board(frames: list[Frame], seq: Sequence, overrides: dict | None = None, interval: float | None = None,
+                 end: float | None = None) -> tuple[list[Event], dict]:
+    """Run the current board loop over frames. overrides replaces config keys, for example the slots."""
+    cfg = {**seq.config, **(overrides or {})}
+    interval = interval or float(cfg.get("frame_interval_s", 1.0))
+    trackers = {s["slot"]: sd.new_tracker() for s in cfg["slots"]}
+    counted: dict[int, list[int]] = {s["slot"]: [] for s in cfg["slots"]}  # frames behind each count
+    events: list[Event] = []
+    frames = sorted(frames, key=lambda f: f.t)
+    if not frames:
+        return events, trackers
+    end = end if end is not None else frames[-1].t + CAMERA_GRACE_S + interval
+    last_checked = None
+    tick = frames[0].t
+    while tick <= end:
+        newest = max((i for i, f in enumerate(frames) if f.t <= tick), default=None)
+        if newest is not None and tick - frames[newest].t <= CAMERA_GRACE_S:
+            if newest != last_checked:  # main.loop: a frame is checked at most once
+                last_checked = newest
+                img, t = frames[newest].image, frames[newest].t
+                for s in cfg["slots"]:
+                    n, cur = s["slot"], trackers[s["slot"]]
+                    empty_ref, full_ref = seq.refs[n]
+                    st, fill, why = sd.classify(sd.crop(img, s["rect"]), empty_ref, full_ref, cfg)
+                    changed = sd.observe(cur, st, fill, s["target_units"], newest, t, cfg, why=why)
+                    counted[n] = (counted[n] + [newest])[-cur["count"]:] if cur["count"] else []
+                    if changed:
+                        events.append(Event(round(tick, 3), n, cur["state"], cur["units"], cur["fill"], list(counted[n])))
+        else:  # main.mark_uncertain("no camera frame")
+            for s in cfg["slots"]:
+                sd.observe(trackers[s["slot"]], "uncertain", None, s["target_units"], None, tick, cfg, why="no camera frame")
+                counted[s["slot"]] = []
         tick += interval
     return events, trackers

@@ -232,7 +232,7 @@ socket.on("event", (m) => {
   }
 });
 socket.on("calibrate_response", (r) => { r.ok ? toast(`Saved the ${r.kind} photo.`) : toast(r.error); });
-socket.on("save_config_response", (r) => r.ok && toast("Settings saved."));
+socket.on("save_config_response", (r) => toast(r.ok ? "Settings saved." : r.error));
 socket.on("simulate_response", () => {});
 socket.on("update_response", (r) => { const m = r.ok ? r.message : `Update failed: ${r.error}`; $("updateMsg").textContent = m; toast(m); });
 
@@ -288,7 +288,8 @@ function render() {
   // Shelf channels
   $("shelf").innerHTML = S.config.slots.map(c => {
     const st = S.slots[c.slot] || {}, cal = S.calibrated[c.slot] || [];
-    const state = st.state || (cal.includes("empty") ? "checking" : "not set up");
+    // "unsure" never changes stock: covered lens, a view that does not match the photos, no camera, calibrating.
+    const state = st.uncertain ? `unsure: ${esc(st.uncertain)}` : (st.state || (cal.includes("empty") ? "checking" : "not set up"));
     const lit = st.fill == null || st.state === "empty" ? 0 : Math.max(1, Math.round(Math.min(1, st.fill) * 10));
     return `<div class="ch ${st.state || ""}" role="group" aria-label="Spot ${c.slot}, ${esc(c.product_hint)}, ${state}${st.units != null ? `, about ${st.units} of ${c.target_units}` : ""}"><span class="num" aria-hidden="true">${c.slot}</span>
       <span class="name">${esc(c.product_hint)}</span><span class="state">${state}</span>
