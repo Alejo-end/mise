@@ -1,8 +1,27 @@
 # Parallel work on the Valio device and shelf
 
-Base: branch `valio/hw-checkpoint`, commit `4f62200` (14 Nov 2026, 04:50). Read this before
-you edit. It fixes who owns which file, the interfaces between the parts, and the ports
-and test data of each checkout.
+Base: branch `valio/hw-checkpoint`, commit `80a8402` (14 Nov 2026, 05:05). It contains Alejo's
+`review-14-nov` (not yet in `main`). Read this before you edit. It fixes scope, who owns which
+file, the interfaces between the parts, and the ports and test data of each checkout.
+
+## Scope for this round
+
+The entry is the Aimo Agent Gateway. The shelf box is one client that proves it (HANDBOOK.md,
+DEMO_PLAN.md). The shelf's job in the demo is step 5: "take the milk off the shelf, the camera
+triggers the agent, the box beeps, a safe substitute needs approval". The team brief forbids
+features the work order does not list.
+
+In scope (makes demo step 5 reliable, no new product concepts):
+- three fixed taped slots, one catalogue product per slot, the two-photo detector as baseline;
+- editable slot rectangles that may not overlap;
+- the backend as the one source of truth for which product a slot holds;
+- "uncertain" for obscured or unknown views and for stale frames: never a stock change;
+- no stock events while calibrating; one order per real shortage.
+
+Not in this round (needs a concrete requirement first, see "Machine learning" and the open
+decisions): free-form storage surfaces holding several products, product identity tracked across
+areas, detecting a product moved between slots, physical dimensions, AI-assisted setup, a
+learned detector.
 
 ## Sessions
 
@@ -12,125 +31,126 @@ and test data of each checkout.
 | Worktree 1: detection reliability | `junction2026-wt-detection/` | `wt/detection-reliability` | backend 8101 on 127.0.0.1 only | `valio-challenge/data/wt-detection.sqlite`, pytest `tmp_path` |
 | Worktree 2: shelf configuration | `junction2026-wt-shelf/` | `wt/shelf-config` | backend 8201 on 127.0.0.1 only | `valio-challenge/data/wt-shelf.sqlite`, pytest `tmp_path` |
 
-Each worktree has its own `valio-challenge/.env` (git ignores it) with its `AUDIT_DB` and
-the test PIN `1234`. Start a worktree backend with
-`uv run uvicorn backend.app:app --host 127.0.0.1 --port 8101` (or 8201).
+Each worktree has its own `valio-challenge/.env` (git ignores it) with its `AUDIT_DB` and the test
+PIN `1234`. Start a worktree backend with `uv run uvicorn backend.app:app --host 127.0.0.1 --port 8101`
+(or 8201).
 
-Only the integration session may:
-- deploy to the board, restart the board or its app, or change `data/config.json` and the
-  calibration on the board;
-- point the board at a backend;
-- record new camera sequences (it needs the live board);
-- change the files marked "integration" below, and merge.
-
-A worktree that needs any of these asks the integration session and hands over a commit.
+Only the integration session may: deploy to the board, restart the board or its app, change
+`data/config.json` or the calibration on the board, point the board at a backend, record camera
+sequences, change the files marked "integration", and merge. A worktree that needs any of these
+asks and hands over a commit.
 
 ## File ownership
 
 | Owner | Files |
 |---|---|
-| Worktree 1 | `device/python/shelf_detect.py`; in `device/python/main.py`: `camera_worker`, `preview_worker`, `loop`, `process_frame`, the event payloads; `device/assets/index.html` (slot rectangles and calibration); `backend/agent.py` **only** `handle_event` lines 85 to 129 (trigger, pending slot, restock); `tests/device/` except `sequences/`; `tests/test_duplicate_orders.py`; `tools/laptop-camera.html` |
-| Worktree 2 | `rules/school_kitchen.yaml` (`targets`); `backend/rules.py` (loading, saving and signing targets); `backend/shelf.py` (new); `backend/app.py` (`Event` model, the `/events` normalisation, new `/shelf` endpoints); `web/` (pages to edit products per slot); `tests/test_shelf_config.py` (new) |
-| Integration | `pyproject.toml`, `uv.lock`, `device/app.yaml`, `device/sketch/`, `device/board-snapshot/`, `backend/audit.py`, `backend/valio.py`, `fixtures/`, `tests/device/sequences/`, `tools/record_sequence.py`, this file, `TEAM_BRIEF.md` |
+| Worktree 1 | `device/python/shelf_detect.py`; in `device/python/main.py`: `camera_worker`, `preview_worker`, `loop`, `process_frame`, `on_calibrate`, the event payloads, the detection keys of `DEFAULT_CONFIG`; `device/assets/index.html` (slot rectangles, calibration, uncertain display); in `backend/agent.py`: `handle_event` and the pending-slot bookkeeping it uses (`pending_slots`, `pending_since`, `restore` lines for them); `tests/device/` except `sequences/`; `tests/test_duplicate_orders.py`; `tools/laptop-camera.html` |
+| Worktree 2 | `rules/*.yaml` (`targets`), `backend/rules.py` (loading, saving and signing targets), `backend/shelf.py` (new), in `backend/app.py`: the event models (`SlotState` and friends), the `/events` normalisation, new `/shelf` endpoints; `web/` pages for the shelf; `tests/test_shelf_config.py` (new) |
+| Integration | `pyproject.toml`, `uv.lock`, `device/app.yaml`, `device/sketch/`, `device/board-snapshot/`, `backend/audit.py`, `backend/valio.py`, `backend/gateway.py`, `backend/signing.py`, `fixtures/`, `tests/device/sequences/`, `tools/record_sequence.py`, this file, `TEAM_BRIEF.md` |
 
-Any other file: ask integration first. Never edit a file the other worktree owns, even for
-a one-line fix; write the need into the handover note instead.
+Anything else (the rest of `agent.py`, `sandbox.py`, `allergens.py`, the handbook): Alejo's, ask
+first. Never edit a file the other worktree owns; write the need into the handover note.
 
 ## Interfaces (frozen for this round)
 
-### 1. Slot event, device to backend (`POST /events`), version 2
+### 1. Slot event, device to backend (`POST /events`)
+
+The backend's `SlotState` model accepts `state` only as `"full"`, `"low"` or `"empty"` and answers
+422 to anything else. It ignores unknown fields. So:
+
+- The device never sends `"uncertain"`. Uncertainty stays on the device and on its page.
+- Version 2 adds three optional fields. Sending them before the backend reads them is harmless.
 
 ```json
-{"type": "slot_state", "slot": 2, "state": "empty",
- "fill": 0.37, "frame_id": 1234, "frame_time": "2026-11-14T04:39:46+02:00",
- "estimated_units": 4}
+{"type": "slot_state", "slot": 2, "state": "empty", "estimated_units": 0,
+ "fill": 0.03, "frame_id": 1234, "frame_time": "2026-11-14T04:39:46+02:00"}
 ```
 
-- `fill`: 0 to 1, from `shelf_detect.classify`.
-- `frame_id`: a number that grows with every new camera frame since the app started.
-- `frame_time`: when the newer of the two confirming frames arrived.
-- `estimated_units`: kept so version 1 senders still work.
+`fill`: 0 to 1. `frame_id`: grows with every new frame since the app started. `frame_time`: arrival
+of the newest confirming frame. Worktree 1 sends them; worktree 2 adds them to `SlotState` and,
+when `fill` is present, computes units as `round(fill x target_units)` from the shelf
+configuration. Version 1 events (no `fill`) keep working.
 
-Worktree 1 makes the device send `fill`, `frame_id` and `frame_time`. Worktree 2 makes the
-backend accept them, and compute units as `round(fill x target_units)` from its shelf
-configuration when `fill` is present. The backend must keep accepting version 1 events
-(no `fill`). Neither side changes the other side's code.
+### 2. Detection contract on the device (worktree 1)
 
-### 2. Shelf configuration, owned by the backend
+- A frame is checked at most once. A state counts only after `confirm_frames` (default 3)
+  different frames over at least `confirm_seconds` (default 3) agree.
+- A slot is `uncertain` when its view matches neither calibration photo:
+  `min(d_empty, d_full) > uncertain_ratio x d(empty photo, full photo)`. Uncertain resets the
+  confirmation and never becomes a stock change. `uncertain_ratio` is provisional until a
+  recorded occlusion sequence sets it.
+- No camera frame for `CAMERA_GRACE_S` makes every slot uncertain.
+- Saving a calibration photo or the rectangles starts a quiet period (`calibration_quiet_s`,
+  default 15): readings show on the page, no events go out.
+- New keys live in the device's `config.json`, owned by worktree 1. Defaults keep old configs valid.
 
-The backend is the one source of truth for what a slot holds. Today two copies disagree:
-the rule set says slot 1 has `target_units: 30, reorder_below: 8`, the board's config says
-`target_units: 1`, so slot 1 always reads below the reorder level.
+### 3. Trigger contract in the backend (worktree 1, `handle_event`)
+
+- `handle_event` runs under the agent lock, so two events cannot both pass the pending check.
+- A "full" reading less than `RESTOCK_MIN_S` (environment, default 120) after the slot's trigger is
+  logged as "ignored: too soon after the order to be a delivery" and keeps the slot pending.
+- Demo reset: approve or skip the request, or wait `RESTOCK_MIN_S`. The gateway calls and the
+  rule check do not change.
+
+### 4. Shelf configuration, owned by the backend (worktree 2)
+
+The backend is the one source of truth for what a slot holds. Rule set v4
+(`rules/school_kitchen_valio.yaml`) names real product codes per slot. Today the board's config
+still says slot 1 `target_units: 1`, the rule set says 30.
 
 ```
-GET /shelf            -> [{"slot": 1, "product": "rye bread 500 g", "product_id": "MOCK-BREAD-RYE-500",
+GET /shelf            -> [{"slot": 1, "product": "rye bread 500 g", "product_id": "477032",
                            "group": "rye_bread", "target_units": 30, "reorder_below": 8}, ...]
 PUT /shelf/{slot}     <- {"product_id": ..., "target_units": ..., "reorder_below": ...}
 ```
 
-A change is checked against the catalog and the rules, needs an approver PIN, goes into the
-audit log, and survives a restart. The targets are part of the signed rule set today:
-worktree 2 keeps that story honest (re-sign on change, or move targets out of the signed
-part with a log entry that says so).
+`GET /shelf` reads the active rule set. `PUT` waits for decision A below. Until then worktree 2
+builds the read side, the event normalisation and the validation, not the write path.
 
-### 3. Device configuration, owned by the device
+### 5. Device configuration, owned by the device
 
 `data/config.json` on the board: `rect`, `full_at`, `empty_below`, `present_diff`,
-`frame_interval_s`, `camera_source`, `backend_url`, `manual_slot`, `temperature_limit_c`.
-After worktree 2 lands, `product_hint` and `target_units` on the device are labels only.
+`frame_interval_s`, `camera_source`, `backend_url`, `manual_slot`, `temperature_limit_c`, and the
+new keys of interface 2. After worktree 2 lands, `product_hint` and `target_units` on the device
+are labels only.
 
-### 4. Recorded sequences (read-only)
+### 6. Recorded sequences and the replay model
 
-`tests/device/sequences/<name>/`: `frames/NNNNNN.jpg` (the board's 480 x 360 preview),
-`meta.jsonl` (one line per frame and per board reading), `calibration/slotN_{empty,full}.npy`,
-`config.json`, `README.md`. Recorded by integration with `tools/record_sequence.py`.
+`tests/device/sequences/<name>/` is read-only (frames, `meta.jsonl`, calibration, config). Recorded
+by integration with `tools/record_sequence.py`. `tests/device/replay.py` models the board loop; a
+commit that changes the loop on the board changes the model too.
 
-### 5. Replay model
+## Decisions that need Alejo
 
-`tests/device/replay.py`, `replay_baseline()`, models the board loop. It matches the board's
-own readings on `steady-01`. If worktree 1 changes the loop on the board, it changes the
-model in the same commit, so the tests keep describing the real board.
+| | Decision | Why it matters | Default until he answers |
+|---|---|---|---|
+| A | May a person change which product a slot holds without a new, re-signed rule set version? | Slot targets sit in the signed rule set. An edit outside it weakens "every decision names the rule set version" | Read-only `/shelf`; product changes go through a new rule set version |
+| B | Is the board here (`Junction`, all Modulinos answer, no `~/safe-kitchen-agent.backup-20261114`) the demo board, or is there a second UNO Q? | The handbook describes a board with that backup and no Modulinos answering | Treat this board as the demo board |
+| C | How soon may a slot reorder after a refill in the demo (`RESTOCK_MIN_S`)? | Repeating demo step 5 inside that window gives "already in progress" | 120 s, and approve or skip to reset |
 
-## Evidence at the checkpoint
+## Evidence
 
-`uv run pytest`: 91 passed, 5 strict xfails. Each xfail is a requirement the baseline breaks,
-shown by running it:
-
-| Test | Failure | Owner |
-|---|---|---|
-| `test_a_state_needs_two_different_frames_in_the_recording` | In `steady-01` every first state was confirmed by frame 0 seen twice: the board got about 1 frame/s and checks once a second | 1 |
-| `test_a_stale_glitch_frame_cannot_change_a_slot` | One glitch frame, then the camera stops: `camera_ok` stays true for 2 s and the same frame confirms "empty" | 1 |
-| `test_a_stale_glitch_frame_cannot_trigger_a_purchase` | The same, end to end: the agent orders 12 x yogurt for an unchanged shelf | 1 |
-| `test_slot_rectangles_do_not_overlap` | Live calibration: the three rectangles nearly coincide, slots move together | 1 (validation), integration (recalibration) |
-| `test_one_false_full_reading_between_lows_does_not_order_twice` | One "full" reading counts as restocked. Seen live: orders `ORD-68CE0E08` and `ORD-592FF708`, 26 s apart, same yogurt | 1 |
-
-Also seen, not yet a test:
-- Calibrating a slot resets its state, so the next frame is a "change" and can order.
-- A board restart resends every slot state; with no order pending, that opens a request
-  (seen 04:37:27 after a deployment). Expected behaviour given the reading, but noisy.
-- The camera page runs at about 1 frame/s when its tab is in the background (browser timer
-  throttling), so stale checks are the normal case, not the exception.
-- Risk, not shown: `handle_event` checks and adds the pending slot without the lock; two
-  events at the same moment could both order.
+At `80a8402`: 147 passed, 6 skipped (real Valio product file not on this laptop), 5 strict xfails.
+The xfails are the failures shown on 14 Nov: one frame seen twice confirms a state (real data),
+a stale glitch frame flips a slot and buys, the slot rectangles overlap, and one "full" reading lets
+a slot order twice (live orders `ORD-68CE0E08`, `ORD-592FF708`). Also seen: calibrating causes
+events; a board restart resends states; the camera tab in the background gives about 1 frame/s.
 
 ## Machine learning
 
-The current detector stays as the baseline. Evaluate a model only against a recorded
-sequence where the baseline misreads a **real** shelf change: record it, add it as a strict
-xfail replay test, then compare model and baseline on every sequence. Adopt the model only
-if it fixes those failures, adds none, and runs on the UNO Q within the 1 s check. So far no
-recognition failure is shown: every failure above is staleness, configuration or restock
-logic. `steady-01` shows a cup and a keyboard, not a shelf, so real-shelf recordings come first.
+The two-photo detector stays the baseline, as DEMO_PLAN.md says ("a later version" may use Edge
+Impulse) and as TEAM_BRIEF.md says ("two photos for each shelf slot are enough"). Evaluate a model
+only against a recorded sequence where the baseline misreads a real shelf change. None exists:
+`steady-01` shows a cup and a keyboard, not the shelf.
 
 ## Recordings integration still owes
 
-Needs the person at the board, about 15 s each: a hand over each slot; remove and refill
-each slot; the camera tab in the background; a light change. Point the camera at the real
-shelf and recalibrate without overlapping rectangles first.
+With the person at the board, about 15 s each, after the camera points at the cardboard shelf and
+the rectangles are recalibrated without overlap: a hand over each slot; remove and refill each
+slot; the camera tab in the background; a light change.
 
 ## Handover and merge
 
-A worktree is ready when `uv run pytest` is green and every xfail it fixed is now a plain
-test. Merge order: worktree 2 first (the backend accepts version 2 events, harmless while the
-device sends version 1), then worktree 1. Integration then deploys to the board, records a
-new sequence, and runs the replay suite against it.
+Ready when `uv run pytest` is green and every xfail the worktree fixed is a plain test. Merge
+order: worktree 2 first (the backend accepts version 2 events), then worktree 1. Integration then
+deploys to the board, records a sequence, and runs the replay suite against it.
