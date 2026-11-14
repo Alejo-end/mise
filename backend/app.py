@@ -29,6 +29,7 @@ from .settings import Settings
 from .shelf import Shelf, ShelfError, versions_dir_for
 from .signing import Signer
 from .batches import Batches, insight, parse_gs1
+from . import openfoodfacts, recognize
 from .cold import BREACH, DEFAULT_ALLOWED_MIN, ColdLog, exposure
 from .stock import StockHistory, against_delivery, outlook
 from .valio import ValioCatalog, make_client
@@ -98,6 +99,8 @@ if TEXT_SCAN_GAPS:
                          f"{', '.join(TEXT_SCAN_GAPS)}. For them, only the allergen codes are checked."},
               "rule_check", ruleset["version"])
 agent = Agent(catalog, ruleset, log, settings=SETTINGS)
+if openfoodfacts.enabled():  # OPEN_FOOD_FACTS=1: pictures, and a second allergen opinion that can only add a warning
+    agent.second_source = openfoodfacts.enrich_all
 if SETTINGS.overrides():
     log.write("notice", {"summary": "Settings differ from the committed defaults in backend/settings.py: "
                          + ", ".join(f"{k}={v:g}" for k, v in SETTINGS.overrides().items()) + "."},
@@ -157,6 +160,17 @@ class DeliveryCheck(_Base):
     seconds_measured: float | None = None
 
 
+class DeliveryDecision(_Base):
+    """A person at the box accepts or rejects a delivery, with the knob menu. The temperature goes into the record."""
+    type: Literal["delivery_decision"]
+    accepted: bool
+
+
+class AlarmSeen(_Base):
+    """A person at the box confirms that they saw the cold alarm, with the knob menu."""
+    type: Literal["alarm_seen"]
+
+
 class SlotHealth(BaseModel):
     """One slot in the board's health (interface 7). Fields it does not know are kept."""
     model_config = ConfigDict(extra="allow")
@@ -182,7 +196,8 @@ class Status(_Base):
     health: Health | None = None
 
 
-Event = Annotated[Union[SlotState, ManualLow, TemperatureAlarm, DeliveryCheck, Status], Field(discriminator="type")]
+Event = Annotated[Union[SlotState, ManualLow, TemperatureAlarm, DeliveryCheck, DeliveryDecision, AlarmSeen, Status],
+                  Field(discriminator="type")]
 
 
 class Decision(BaseModel):
@@ -239,10 +254,42 @@ def approve_page():
     return FileResponse(ROOT / "web" / "approve.html")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+@app.get("/favicon.png", include_in_schema=False)
+def favicon():
+    """The "m" of the name, for the browser tab."""
+    return FileResponse(ROOT / "web" / "favicon.png", media_type="image/png")
+
+
+@app.get("/icon.png", include_in_schema=False)
+def icon():
+    """The same mark, larger, for a phone's home screen."""
+    return FileResponse(ROOT / "web" / "icon.png", media_type="image/png")
+
+
 @app.get("/fonts/name.ttf")
 def name_font():
     """The cursive font of the name on the case, so the page and the box carry the same name. SIL Open Font License."""
     return FileResponse(ROOT / "enclosure" / "fonts" / "Borel-Regular.ttf", media_type="font/ttf")
+
+
+def _box_decision(data: dict) -> dict:
+    """What a person decided at the box with the knob menu. The box has no PIN, so the record names the box and
+    not a person, and these decisions never order and never approve an order."""
+    temp = data.get("temperature_c")
+    at = f" at {temp:.1f} °C" if temp is not None else ", with no temperature reading"
+    if data["type"] == "alarm_seen":
+        log.write("alarm_seen", {"summary": f"A person at the box confirmed the cold alarm{at}. The buzzer is quiet for 10 minutes.",
+                                 "temperature_c": temp}, "box", ruleset["version"])
+        return {"status": "logged"}
+    last = agent.deliveries[-1] if agent.deliveries else None  # the delivery that the box checked last
+    order = agent.orders.get(last["order_id"]) if last and last.get("order_id") else None
+    what = f"the delivery of order {last['order_id']}" if order else "a delivery"
+    word = "accepted" if data["accepted"] else "rejected"
+    log.write("delivery_decision", {"summary": f"A person at the box {word} {what}{at}.", "accepted": data["accepted"],
+                                    "temperature_c": temp}, "box", ruleset["version"],
+              order_id=last["order_id"] if order else None, run_id=order.get("run_id") if order else None)
+    return {"status": "logged", "accepted": data["accepted"], "order_id": last["order_id"] if order else None}
 
 
 @app.post("/events")
@@ -263,6 +310,8 @@ def events(ev: Event):
         device["alarm"] = data["active"]
     elif "alarm" in data:
         device["alarm"] = data["alarm"]
+    if data["type"] in ("delivery_decision", "alarm_seen"):
+        return _box_decision(data)
     if data["type"] == "slot_state":
         data = shelf.observe(data)  # the observation; with fill, units = round(fill x the assignment's target)
         device["slots"][str(data["slot"])] = {"state": data["state"], "units": data.get("estimated_units")}
@@ -307,7 +356,14 @@ def approvals_open():
     waiting = agent.open_approvals()
     runs = {a["run_id"] for a in waiting}
     started = {e["run_id"]: e for e in log.entries(2000) if e["step"] == "trigger" and e["run_id"] in runs}
-    return [a | {"asked_by": started[a["run_id"]]["actor"] if a["run_id"] in started else None,
+    def picture(a, key):  # the pack of the first product of the first option, if the second source has one
+        first = next((line for o in a["options"] for line in o["lines"]), None)
+        product = catalog.products.get(str(first["product_id"])) if first else None
+        if product and openfoodfacts.enabled():
+            openfoodfacts.enrich(product)  # kept in memory after the first lookup
+        return (product or {}).get(key)
+    return [a | {"picture": picture(a, "picture"), "picture_large": picture(a, "picture_large"),
+                 "asked_by": started[a["run_id"]]["actor"] if a["run_id"] in started else None,
                  "request": started[a["run_id"]]["detail"].get("text") if a["run_id"] in started else None,
                  "stock": _stock_for(a)}
             for a in waiting]
@@ -527,6 +583,8 @@ def _by_code(code: str) -> list[dict]:
 
 def _scan_answer(product: dict) -> dict:
     """What the catalog and this kitchen's rules say about one product, for a person who holds the pack."""
+    if openfoodfacts.enabled():
+        openfoodfacts.enrich(product)
     forbidden, person = R.safety(product, ruleset)
     verdict = "forbidden" if forbidden else "read_label" if person else "allowed"
     limit = _limit_for(product)
@@ -535,7 +593,8 @@ def _scan_answer(product: dict) -> dict:
     slot = next((t["slot"] for t in ruleset["targets"] if str(t.get("product_id")) == str(product["id"])), None)
     return {"product": public(product), "verdict": verdict, "reasons": forbidden or person,
             "rule_set_version": ruleset["version"], "keep_at_or_below_c": limit, "cold_room": air.to_dict(),
-            "shelf_slot": slot}
+            "shelf_slot": slot, "picture": product.get("picture"), "picture_large": product.get("picture_large"),
+            "picture_source": product.get("second_source")}
 
 
 class Scan(BaseModel):
@@ -552,6 +611,24 @@ def scan_lookup(code: str):
     if not found:
         raise HTTPException(404, "This code is not in the wholesaler's catalog.")
     return {"code": _code(code), "matches": [_scan_answer(p) for p in found]}
+
+
+class Picture(BaseModel):
+    image_b64: str = Field(min_length=100, max_length=4_000_000)  # a JPEG, about 3 MB at most
+
+
+@app.post("/recognize")
+def recognize_pack(picture: Picture):
+    """Find the catalog product on a picture of a pack. A vision model reads the barcode number and the name, and
+    plain code finds the product. Nothing is recorded: the person confirms the match and then scans it."""
+    try:
+        read = recognize.read_pack(picture.image_b64)
+    except RuntimeError as e:
+        raise HTTPException(503, f"The vision model is not set up: {e}.")
+    except Exception as e:
+        raise HTTPException(502, f"The vision model did not answer: {str(e)[:120]}")
+    how, found = recognize.match(read, list(catalog.products.values()))
+    return {"read": read, "how": how, "matches": [{**_scan_answer(p), "score": score} for p, score in found]}
 
 
 @app.post("/scan")
@@ -598,6 +675,37 @@ def batch_close(batch_id: int, c: CloseBatch):
     log.write("batch", {"summary": f"Pack {batch_id} recorded as {c.how}.", "batch_id": batch_id, "how": c.how},
               c.by or "kitchen", ruleset["version"])
     return {"id": batch_id, "done": c.how}
+
+
+# Barcode numbers of the demo's example cases (tools/demo_cases.py). A number that the catalog does not hold is left out.
+HINT_CODES = ("6408430000296", "6408430026333", "6412000031795", "2377221800008", "4008400935225", "6410500046516")
+_hints: dict | None = None
+
+
+@app.get("/hints")
+def hints():
+    """Examples that work with this catalog and this rule set, for a person who tries the page for the first time:
+    requests that the agent understands, and barcode numbers to scan, each with what the rules say about it."""
+    global _hints
+    if _hints is None:
+        def verdict(product):
+            forbidden, person = R.safety(product, ruleset)
+            return "forbidden" if forbidden else "read_label" if person else "allowed"
+        slots = [catalog.products.get(str(t.get("product_id"))) for t in ruleset["targets"]]
+        picked = {p["id"]: p for p in slots if p and p.get("gtin")}
+        for code in HINT_CODES:
+            picked.update({p["id"]: p for p in _by_code(code)[:1]})
+        seen = {verdict(p) for p in picked.values()}
+        for product in list(catalog.products.values())[:3000]:  # fill up, and make sure one forbidden product is there
+            if len(picked) >= 6 and "forbidden" in seen:
+                break
+            if product.get("gtin") and product["id"] not in picked and (len(picked) < 6 or verdict(product) == "forbidden"):
+                picked[product["id"]] = product
+                seen.add(verdict(product))
+        _hints = {
+            "requests": [f"{t['target_units']} {t['product']}" for t in ruleset["targets"]],
+            "codes": [{"gtin": p["gtin"], "name": p["name"], "verdict": verdict(p)} for p in list(picked.values())[:8]]}
+    return _hints
 
 
 @app.get("/insights")
@@ -714,6 +822,7 @@ def order_chain(order_id: str):
     decided = next((e for e in entries if e["step"] == "approval" and e["detail"].get("status") not in ("open", "expired")), None)
     delivery = next((d for d in agent.deliveries if d["order_id"] == order_id), None)
     delivered_at = next((e["time"] for e in entries if e["step"] == "delivery_check"), None)
+    door = next((e for e in reversed(entries) if e["step"] == "delivery_decision"), None)  # the newest decision at the box
     steps = [
         {"step": "asked", "done": asked is not None, "time": asked and asked["time"], "who": asked and asked["actor"],
          "text": asked["detail"].get("summary", "") if asked else "No request in the log."},
@@ -727,6 +836,9 @@ def order_chain(order_id: str):
          "text": delivery["summary"] + (f" Air at the door: {delivery['temperature_c']:.1f} °C." if delivery and delivery.get("temperature_c") is not None else "")
                  if delivery else "Not checked at the door yet."},
     ]
+    if door:  # what the person at the box decided, after the check
+        steps[-1]["text"] += " " + door["detail"]["summary"]
+        steps[-1]["accepted"] = door["detail"]["accepted"]
     stored = {"step": "stored", "done": False, "time": None, "who": "cold log", "text": "The storage record starts after the delivery check."}
     if delivery is not None and delivered_at:
         since = datetime.fromisoformat(delivered_at)

@@ -111,6 +111,26 @@ The limits:
 4. "The whole chain" is two points today: the door of the kitchen and its cold room. The warehouse and the truck need their own sensors.
 5. Nothing measures the electricity of a fridge. That needs a meter on the plug, which we do not have.
 
+### A picture of the pack
+
+The kitchen page has a button "Take a picture of the pack". On a phone it opens the camera.
+
+The Valio product data holds no pictures, so the system cannot compare a picture with a picture. It holds two things that every pack carries in print: the number under the barcode and the product name. A vision model (Kimi on Verda) reads those from the picture. Plain code in `backend/recognize.py` then finds the product. It uses the number if the catalog knows it. If not, it uses the words of the name and shows up to three candidates with the share of words that match.
+
+The model only reads. It does not pick the product. A person picks it, and only a scan after that writes to the log.
+
+What we ran on 14 November: two pictures of printed text, made by a script, against the live catalog. The first carried a barcode number, and the system found the Valio Eila milk drink by it, with the best-before date. The second carried only a name, and the system listed the Linkosuo rye bread first. Nobody tested a photo of a real pack yet. The call needs `VERDA_INFERENCE_API_KEY`.
+
+### A second source: Open Food Facts
+
+With `OPEN_FOOD_FACTS=1`, the backend asks Open Food Facts about a product by its barcode number. Open Food Facts is a free product database that shoppers fill in. Only the barcode number leaves the backend.
+
+It adds two things. The first is a picture of the pack, on the ticket and in the list after a picture of a pack. The second is another opinion on allergens. If Open Food Facts lists an allergen that this kitchen bans and the wholesaler's record does not, the order goes to a person.
+
+The second opinion can only add a warning. It never clears a product and never forbids one. The reason is in the data: we looked up eight demo products on 14 November. Five were there, and three wholesale packs were missing. The Valio milk drink and the Valio yoghurt listed no allergens, although both contain milk. An empty list there means that nobody filled it in.
+
+Each lookup has a timeout of 3 seconds and stays in memory. If the service does not answer, the wholesaler's data alone decides, as before. Data: Open Food Facts, under the Open Database License.
+
 ## What the Valio catalog looks like
 
 The Valio product file and the two API calls are synthetic. Valio built them for the challenge, and the brief says so (`CHALLENGE_BRIEFS.md`, lines 107, 108 and 121). So every count below describes the challenge file, not Valio's real suppliers. It shows what our rules do to a catalog with gaps. It does not show how large the gap is in Valio's real data.

@@ -26,9 +26,47 @@ from PIL import Image
 from arduino.app_bricks.web_ui import WebUI
 # USBCamera was removed from the Arduino bricks on 25 Sep 2026 (app-bricks-py #499).
 # Camera returns numpy frames in BGR order; numpy_to_pil converts them to an RGB PIL image.
-from arduino.app_peripherals.camera import Camera, WebSocketCamera
+try:
+    from arduino.app_peripherals.camera import Camera, WebSocketCamera
+    CAMERA_LIBRARY_ERROR = ""
+except ImportError as exc:
+    # A camera is useful, but it must not prevent the knob, LED readout, web UI or
+    # manual ordering from starting when App Lab provisions a camera-less container.
+    CAMERA_LIBRARY_ERROR = str(exc)
+    try:
+        # The bricks image 0.5.0 on this board still ships USBCamera and not Camera.
+        # USBCamera gives an RGB PIL image; the worker expects a BGR numpy frame, as Camera gives.
+        from arduino.app_peripherals.usb_camera import USBCamera
+
+        class Camera:
+            def __init__(self, resolution=(640, 480), fps=15):
+                self._camera = USBCamera(resolution=resolution, fps=fps)
+
+            def start(self):
+                self._camera.start()
+
+            def stop(self):
+                self._camera.stop()
+
+            def capture(self):
+                image = self._camera.capture()
+                return None if image is None else np.asarray(image.convert("RGB"))[:, :, ::-1]
+
+        def WebSocketCamera(**_kwargs):
+            raise RuntimeError("the camera over WebSocket needs a newer Arduino bricks image")
+
+        CAMERA_LIBRARY_ERROR = ""
+    except ImportError:
+        Camera = WebSocketCamera = None
 from arduino.app_utils import App, Bridge, Logger
-from arduino.app_utils.image import numpy_to_pil
+try:
+    from arduino.app_utils.image import numpy_to_pil
+except ImportError:
+    def numpy_to_pil(frame):
+        """Compatibility conversion for older App Lab image helpers."""
+        if getattr(frame, "ndim", 0) == 3 and frame.shape[2] >= 3:
+            return Image.fromarray(frame[:, :, :3][:, :, ::-1])
+        return Image.fromarray(frame)
 
 import shelf_detect
 from shelf_detect import crop
@@ -44,6 +82,9 @@ DEFAULT_CONFIG = {
     # The laptop that runs the backend. On a phone hotspot, use the laptop IP.
     "backend_url": "http://192.168.1.10:8000",
     "temperature_limit_c": 6.0,
+    # A camera sighting starts a timer, not an order. Someone taking one product for use should not
+    # make the kitchen buy immediately. A deliberate knob press remains immediate.
+    "shortage_confirm_s": 300.0,
     "frame_interval_s": 1.0,  # how often the shelf is checked; the live preview runs faster, see PREVIEW_FPS
     # "usb": camera plugged into the board. "websocket": frames sent over Wi-Fi to port 8080,
     # for example by tools/laptop-camera.html. The app.yaml must then list "ports: [8080]".
@@ -97,6 +138,8 @@ state = {
     "camera_error": "",
     "delivery": None,  # {"ends": time, "temps": [...]} while a delivery check runs, else None
     "last_delivery": None,
+    # Camera-confirmed low/empty readings waiting through the kitchen's grace period before they reach purchasing.
+    "shortage_wait": {},  # slot -> {"due", "event"}
     # Interface 9: slot -> assignment_id from the backend's GET /shelf, polled every SHELF_POLL_S.
     # Kept after a failed poll; "unknown" until the first answer (then no slot can be stale).
     "assignments": {},
@@ -139,6 +182,53 @@ def post_async(event: dict):
     threading.Thread(target=post_event, args=(event,), daemon=True).start()
 
 
+def queue_camera_shortage(event: dict):
+    """Hold a camera shortage before it can purchase; a human knob press is intentionally separate."""
+    wait_s = max(0.0, float(config.get("shortage_confirm_s", 300.0)))
+    if wait_s == 0:
+        post_async(event)
+        return
+    slot, now = int(event["slot"]), time.time()
+    with lock:
+        queued = state["shortage_wait"].get(slot)
+        if queued is None:
+            state["shortage_wait"][slot] = {"due": now + wait_s, "event": event}
+            logger.info(f"slot {slot} {event['state']}: waiting {wait_s:.0f} s before ordering")
+        else:
+            # Escalating low to empty keeps the original due time but sends the fresher count.
+            queued["event"] = event
+    ui.send_message("sensors", sensors())
+
+
+def cancel_camera_shortage(slot: int):
+    with lock:
+        cancelled = state["shortage_wait"].pop(slot, None)
+    if cancelled:
+        logger.info(f"slot {slot} recovered before the order grace period ended")
+        ui.send_message("sensors", sensors())
+
+
+def shortage_worker():
+    """Release only shortages that still persist after the configured grace period."""
+    while True:
+        ready = []
+        now = time.time()
+        with lock:
+            for slot, queued in list(state["shortage_wait"].items()):
+                current = state["slots"].get(slot, {})
+                if current.get("state") not in ("low", "empty"):
+                    state["shortage_wait"].pop(slot, None)
+                elif now >= queued["due"]:
+                    ready.append(queued["event"])
+                    state["shortage_wait"].pop(slot, None)
+        for event in ready:
+            logger.info(f"slot {event['slot']} still {event['state']}: order grace period ended")
+            post_async(event)
+        if ready:
+            ui.send_message("sensors", sensors())
+        time.sleep(0.5)
+
+
 BUZZER_MODES = {"off": 0, "approval": 1, "alarm": 2, "confirm": 3}
 
 
@@ -168,7 +258,8 @@ def buzzer_worker():
                 applied = None  # the confirm beep ends in "off" on the board, so resend the mode
                 time.sleep(0.2)
             # The local temperature alarm wins over the approval beep.
-            mode = "alarm" if state["alarm"] else buzzer_wanted["mode"]
+            loud = state["alarm"] and time.time() >= state.get("alarm_quiet_until", 0)
+            mode = "alarm" if loud else buzzer_wanted["mode"]
             if mode != applied:
                 Bridge.call("set_buzzer", BUZZER_MODES[mode])
                 applied = mode
@@ -255,6 +346,43 @@ def on_knob_long_press():
     start_delivery_check()
 
 
+# The knob menu of the sketch: page number -> name. The sketch owns the pages and the matrix;
+# this side gives each confirmed page its meaning.
+MENU_PAGES = {0: "limit", 1: "delivery", 2: "alarm", 3: "slot"}
+ALARM_QUIET_S = 600  # after "I have seen the alarm" the buzzer stays quiet this long
+
+
+def menu_choice(page: str, choice: int) -> str:
+    """What the choice of a page means, in words for the page of the board."""
+    if page == "delivery":
+        return "accept" if choice == 0 else "reject"
+    if page == "slot":
+        slots = sorted(config["slots"], key=lambda s: s["slot"])
+        return f"slot {slots[choice]['slot']}: {slots[choice]['product_hint']}" if choice < len(slots) else "no such slot"
+    return "seen" if page == "alarm" else ""
+
+
+def on_knob_menu(page, choice):
+    name = MENU_PAGES.get(int(page), "limit")
+    state["menu"] = {"page": name, "choice": int(choice), "label": menu_choice(name, int(choice))}
+    ui.send_message("sensors", sensors())
+
+
+def on_knob_confirm(page, choice):
+    """A hold on a menu page: the person decided. The box has no PIN, so nothing here orders or approves."""
+    name, choice = MENU_PAGES.get(int(page)), int(choice)
+    set_buzzer("confirm")
+    if name == "delivery":
+        post_async({"type": "delivery_decision", "accepted": choice == 0})
+    elif name == "alarm":
+        state["alarm_quiet_until"] = time.time() + ALARM_QUIET_S
+        post_async({"type": "alarm_seen"})
+    elif name == "slot":
+        slots = sorted(config["slots"], key=lambda s: s["slot"])
+        if choice < len(slots):
+            post_async({"type": "manual_low", "slot": slots[choice]["slot"], "product_hint": slots[choice]["product_hint"]})
+
+
 def finite(value):
     """The value as a float, or None when it is missing or not a real number (NaN, infinity)."""
     try:
@@ -285,6 +413,7 @@ def on_thermo(celsius, humidity):
         post_async({"type": "temperature_alarm", "active": True, "temperature_c": state["temperature_c"], "limit_c": limit})
     elif state["alarm"] and celsius < limit - 0.5:
         state["alarm"] = False
+        state["alarm_quiet_until"] = 0  # a new alarm is loud again
         post_async({"type": "temperature_alarm", "active": False, "temperature_c": state["temperature_c"], "limit_c": limit})
     ui.send_message("sensors", sensors())
 
@@ -292,6 +421,8 @@ def on_thermo(celsius, humidity):
 Bridge.provide("knob_limit", on_knob_limit)
 Bridge.provide("knob_pressed", on_knob_pressed)
 Bridge.provide("knob_long_press", on_knob_long_press)
+Bridge.provide("knob_menu", on_knob_menu)
+Bridge.provide("knob_confirm", on_knob_confirm)
 Bridge.provide("thermo", on_thermo)
 
 
@@ -380,9 +511,14 @@ def process_frame(img: Image.Image, frame_id: int, t: float):
         if changed:
             # Slot event version 2 (docs/PARALLEL_WORK.md, interface 1). The backend ignores fields it
             # does not know yet, and "uncertain" is never sent.
-            post_async({"type": "slot_state", "slot": slot, "product_hint": s["product_hint"], "state": cur["state"],
-                        "estimated_units": cur["units"], "fill": cur["fill"], "frame_id": frame_id,
-                        "frame_time": datetime.fromtimestamp(t, TZ).isoformat(timespec="seconds")})
+            event = {"type": "slot_state", "slot": slot, "product_hint": s["product_hint"], "state": cur["state"],
+                     "estimated_units": cur["units"], "fill": cur["fill"], "frame_id": frame_id,
+                     "frame_time": datetime.fromtimestamp(t, TZ).isoformat(timespec="seconds")}
+            if cur["state"] in ("low", "empty"):
+                queue_camera_shortage(event)
+            else:
+                cancel_camera_shortage(slot)
+                post_async(event)
 
 
 def mark_uncertain(why: str):
@@ -421,14 +557,18 @@ def sensors():
     return {
         "temperature_c": state["temperature_c"], "humidity": state["humidity"],
         "auto_limit_eur": state["auto_limit_eur"], "alarm": state["alarm"],
+        "menu": state.get("menu") or {"page": "limit", "choice": 0, "label": ""},
+        "alarm_quiet_s": max(0, round(state.get("alarm_quiet_until", 0) - time.time())),
         "backend_ok": state["backend_ok"], "backend_error": state["backend_error"],
         "backend_url": config["backend_url"], "buzzer": state["buzzer"], "modulinos": state["modulinos"],
         "camera_ok": state["camera_ok"], "camera_error": state["camera_error"],
         "delivery_left_s": max(0, round(state["delivery"]["ends"] - time.time())) if state["delivery"] else None,
         "last_delivery": state["last_delivery"],
+        "shortage_wait": [{"slot": slot, "seconds_left": max(0, round(item["due"] - time.time())),
+                           "state": item["event"]["state"]} for slot, item in state["shortage_wait"].items()],
         "slots": {str(k): {kk: vv for kk, vv in v.items() if kk in ("state", "fill", "units", "uncertain")}
                   for k, v in state["slots"].items()},
-        "config": {k: config[k] for k in ("slots", "temperature_limit_c", "manual_slot")},
+        "config": {k: config[k] for k in ("slots", "temperature_limit_c", "shortage_confirm_s", "manual_slot")},
         "calibrated": {str(s["slot"]): [k for k in ("empty", "full") if ref_path(s["slot"], k).exists()] for s in config["slots"]},
         "health": health_or_none(),
         "shelf_error": state["shelf_error"],
@@ -501,7 +641,7 @@ def on_save_config(_sid, data):
                     state["slots"].pop(n, None)
             state["setup_until"] = 0.0  # the new layout is saved; moved boxes stay paused until new photos
         start_quiet_period()
-    for key in ("backend_url", "temperature_limit_c", "manual_slot", "slots"):
+    for key in ("backend_url", "temperature_limit_c", "shortage_confirm_s", "manual_slot", "slots"):
         if key in data:
             config[key] = data[key]
     save_config()
@@ -691,6 +831,8 @@ def camera_worker():
         try:
             remote = config.get("camera_source") == "websocket"
             if camera is None:
+                if Camera is None or WebSocketCamera is None:
+                    raise RuntimeError(f"camera support is not installed: {CAMERA_LIBRARY_ERROR}")
                 if remote:
                     camera = WebSocketCamera(port=8080, resolution=(640, 480), fps=15)
                 else:
@@ -765,6 +907,7 @@ def loop():
 threading.Thread(target=poll_commands, daemon=True).start()
 threading.Thread(target=poll_shelf, daemon=True).start()
 threading.Thread(target=buzzer_worker, daemon=True).start()
+threading.Thread(target=shortage_worker, daemon=True).start()
 threading.Thread(target=camera_worker, daemon=True).start()
 threading.Thread(target=preview_worker, daemon=True).start()
 App.run(user_loop=loop)

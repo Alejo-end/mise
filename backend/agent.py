@@ -28,6 +28,9 @@ class Agent:
         self.catalog = catalog
         self.rules = ruleset
         self.log = log
+        # A function that adds a second source's data to a list of products before the rule check
+        # (backend/openfoodfacts.py). None: the wholesaler's data alone decides.
+        self.second_source = None
         self.lock = threading.Lock()
         # Guards the pending-slot check in handle_event. Separate from self.lock, which _ask takes
         # inside the buying path, so holding this one while buying would deadlock.
@@ -524,6 +527,8 @@ class Agent:
             "left_out": {"other_pack_size": other_pack, "no_price_or_delivery": not_orderable, "why": why}},
             "agent", v, run_id=run)
 
+        if self.second_source:
+            self.second_source([q["product"] for q in quotes.values()])
         # Safety check of each product alone. Forbidden products are dropped here.
         safe = {}
         for pid, q in quotes.items():
@@ -638,6 +643,8 @@ class Agent:
         if q is None:
             return {"status": "no_match"}
         name = q["product"]["name"]
+        if self.second_source:
+            self.second_source([q["product"]])
         # A forbidden product is refused as forbidden, also when it has no price or date now: safety first.
         if (q["unit_price_eur"] is None or q["delivery"] is None) and not R.safety(q["product"], self.rules)[0]:
             return {"status": "not_orderable", "name": name,

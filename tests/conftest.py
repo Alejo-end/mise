@@ -13,3 +13,4 @@ os.environ["RULES_FILE"] = str(Path(__file__).resolve().parent.parent / "rules" 
 os.environ["SHOW_PINS"] = ""  # a PIN on the page is for a demo only
 os.environ["COLD_ALLOWED_MINUTES"] = ""
 os.environ["COLD_LIMITS"] = ""
+os.environ["OPEN_FOOD_FACTS"] = ""  # no test may call an outside service

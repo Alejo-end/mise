@@ -112,3 +112,32 @@ def test_observed_prop_readings_never_enter_the_stock_timeline(tmp_path, monkeyp
     assert any(e["step"] == "observation" for e in c.get("/log?format=json").json())  # kept apart, in the audit log
     monkeypatch.delenv("SHELF_EVENTS")
     importlib.reload(m)
+
+
+def test_the_hints_name_requests_and_codes_that_this_catalog_answers():
+    from backend import app as A
+    client = TestClient(A.app)
+    hints = client.get("/hints").json()
+    assert len(hints["requests"]) == len(A.ruleset["targets"]) and hints["codes"]
+    assert "forbidden" in {c["verdict"] for c in hints["codes"]}
+    for c in hints["codes"]:
+        assert client.get(f"/scan/{c['gtin']}").status_code == 200
+
+
+def test_a_decision_at_the_box_is_logged_with_the_temperature_and_never_orders():
+    from backend import app as A
+    client = TestClient(A.app)
+    orders = len(A.agent.orders)
+    r = client.post("/events", json={"type": "delivery_decision", "accepted": False, "temperature_c": 9.4})
+    assert r.status_code == 200 and r.json()["status"] == "logged" and r.json()["accepted"] is False
+    r = client.post("/events", json={"type": "alarm_seen", "temperature_c": 9.4})
+    assert r.json() == {"status": "logged"}
+    story = " ".join(client.get("/log").json()["story"])
+    assert "rejected a delivery at 9.4 °C" in story and "confirmed the cold alarm at 9.4 °C" in story
+    assert len(A.agent.orders) == orders
+    assert client.get("/device").json()["temperature_c"] == 9.4  # the reading still reaches the cold log
+
+
+def test_a_delivery_decision_needs_a_yes_or_a_no():
+    from backend import app as A
+    assert TestClient(A.app).post("/events", json={"type": "delivery_decision"}).status_code == 422

@@ -227,7 +227,8 @@ def _worst(a: str, b: str) -> str:
     return a if _SEVERITY[a] >= _SEVERITY[b] else b
 
 
-LABEL_FIELDS = ("id", "name", "allergens", "traces", "undeclared", "text_allergens", "allergen_conflicts", "properties")
+LABEL_FIELDS = ("id", "name", "allergens", "traces", "undeclared", "text_allergens", "allergen_conflicts", "properties",
+                "second_source_allergens")
 
 
 def label_key(product: dict) -> str:
@@ -283,6 +284,12 @@ def safety(p: dict, rules: dict) -> tuple[list[str], list[str]]:
         if a.lower() in banned and a.lower() not in declared:
             person.append(f"{name}: the ingredient text names {a}, but the allergen field does not, "
                           "so a person must check the label")
+
+    # A second source (Open Food Facts) can only add a warning. It never clears or forbids a product.
+    for a in p.get("second_source_allergens") or []:
+        if a.lower() in banned and a.lower() not in declared:
+            person.append(f"{name}: {p.get('second_source') or 'a second source'} lists {a}, but the wholesaler's record "
+                          "does not, so a person must check the label")
 
     props = {x.lower() for x in p.get("properties", [])}
     conflicts = {a.lower() for a in p.get("allergen_conflicts") or []}
