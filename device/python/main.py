@@ -97,6 +97,11 @@ state = {
     "camera_error": "",
     "delivery": None,  # {"ends": time, "temps": [...]} while a delivery check runs, else None
     "last_delivery": None,
+    # Interface 9: slot -> assignment_id from the backend's GET /shelf, polled every SHELF_POLL_S.
+    # Kept after a failed poll; "unknown" until the first answer (then no slot can be stale).
+    "assignments": {},
+    "assignment_check": "unknown",
+    "shelf_error": "",
 }
 
 
@@ -173,6 +178,25 @@ def buzzer_worker():
             applied = None
             time.sleep(1)
         time.sleep(0.2)
+
+
+SHELF_POLL_S = 60
+
+
+def poll_shelf():
+    """Ask the backend every minute which product each slot should hold (GET /shelf, interface 9).
+
+    Until the backend has /shelf the call fails. That is "unknown", not "stale": slots keep working.
+    """
+    while True:
+        try:
+            r = requests.get(config["backend_url"].rstrip("/") + "/shelf", timeout=5)
+            r.raise_for_status()
+            state["assignments"] = shelf_detect.assignments_from_shelf(r.json())
+            state["assignment_check"], state["shelf_error"] = "ok", ""
+        except Exception as e:
+            state["shelf_error"] = str(e)[:200]
+        time.sleep(SHELF_POLL_S)
 
 
 def poll_commands():
@@ -284,6 +308,31 @@ def load_ref(slot: int, kind: str):
     return np.load(p) if p.exists() else None
 
 
+def meta_path(slot: int) -> Path:
+    return DATA / f"slot{slot}_meta.json"
+
+
+def load_meta(slot: int) -> dict:
+    """The slot's calibration record: for each photo, the assignment it was taken for and when."""
+    try:
+        return json.loads(meta_path(slot).read_text())
+    except Exception:
+        return {}  # photos saved before 14 Nov have no record: their assignment is unknown
+
+
+calib_meta = {s["slot"]: load_meta(s["slot"]) for s in config["slots"]}
+
+
+def calibrated_for(slot: int):
+    return shelf_detect.calibrated_for(calib_meta.get(slot), ref_path(slot, "full").exists())
+
+
+def calibration_of(slot: int) -> str:
+    """ok, missing or stale (interface 9)."""
+    return shelf_detect.calibration_status(ref_path(slot, "empty").exists(), calibrated_for(slot),
+                                           state["assignments"].get(slot))
+
+
 def classify(slot_cfg: dict, patch: np.ndarray):
     """(state, fill, why). state may be "uncertain", which never becomes a stock change."""
     slot = slot_cfg["slot"]
@@ -293,8 +342,9 @@ def classify(slot_cfg: dict, patch: np.ndarray):
 def process_frame(img: Image.Image, frame_id: int, t: float):
     quiet = time.time() < state["quiet_until"]
     for s in config["slots"]:
-        st, fill, why = classify(s, crop(img, s["rect"]))
         slot = s["slot"]
+        # A slot whose photos are for another product is uncertain until someone saves new photos.
+        st, fill, why = shelf_detect.gate_calibration(classify(s, crop(img, s["rect"])), calibration_of(slot))
         with lock:
             cur = state["slots"].setdefault(slot, shelf_detect.new_tracker())
             changed = shelf_detect.observe(cur, st, fill, s["target_units"], frame_id, t, config, quiet, why)
@@ -318,6 +368,26 @@ def start_quiet_period():
     state["quiet_until"] = time.time() + float(shelf_detect.setting(config, "calibration_quiet_s"))
 
 
+def health():
+    """The health of the status event (docs/PARALLEL_WORK.md, interface 7). Health never orders."""
+    t = state["frame_time"]
+    with lock:
+        trackers = {k: dict(v) for k, v in state["slots"].items()}
+    ids = [s["slot"] for s in config["slots"]]
+    return shelf_detect.build_health(
+        trackers, ids, state["camera_ok"], None if t is None else time.time() - t, shelf_detect.config_errors(config),
+        {n: calibration_of(n) for n in ids}, {n: calibrated_for(n) for n in ids}, state["assignment_check"])
+
+
+def health_or_none():
+    """health(), or None after logging why: a bug in the health must not stop the page or the status ping."""
+    try:
+        return health()
+    except Exception as e:
+        logger.warning(f"health: {e}")
+        return None
+
+
 def sensors():
     return {
         "temperature_c": state["temperature_c"], "humidity": state["humidity"],
@@ -331,6 +401,8 @@ def sensors():
                   for k, v in state["slots"].items()},
         "config": {k: config[k] for k in ("slots", "temperature_limit_c", "manual_slot")},
         "calibrated": {str(s["slot"]): [k for k in ("empty", "full") if ref_path(s["slot"], k).exists()] for s in config["slots"]},
+        "health": health_or_none(),
+        "shelf_error": state["shelf_error"],
     }
 
 
@@ -357,6 +429,13 @@ def on_calibrate(_sid, data):
     which = [s for s in config["slots"] if data.get("slot") in ("all", s["slot"], str(s["slot"]))]
     for s in which:
         np.save(ref_path(s["slot"], kind), crop(img, s["rect"]))
+        # Interface 9: remember which assignment these photos show (None while the backend has no /shelf).
+        calib_meta[s["slot"]] = shelf_detect.calibration_meta(
+            calib_meta.get(s["slot"]), kind, state["assignments"].get(s["slot"]), now_iso())
+        try:
+            meta_path(s["slot"]).write_text(json.dumps(calib_meta[s["slot"]], indent=2))
+        except OSError as e:
+            logger.warning(f"could not save the calibration record of slot {s['slot']}: {e}")
         with lock:
             state["slots"].pop(s["slot"], None)
     # Calibrating means hands and products moving in front of the camera: no stock events for a while.
@@ -536,11 +615,13 @@ def loop():
     ui.send_message("sensors", sensors())
     if time.time() - last_status > 10:
         last_status = time.time()
-        post_async({"type": "status"})
+        h = health_or_none()
+        post_async({"type": "status", "health": h} if h is not None else {"type": "status"})
     time.sleep(float(config["frame_interval_s"]))
 
 
 threading.Thread(target=poll_commands, daemon=True).start()
+threading.Thread(target=poll_shelf, daemon=True).start()
 threading.Thread(target=buzzer_worker, daemon=True).start()
 threading.Thread(target=camera_worker, daemon=True).start()
 threading.Thread(target=preview_worker, daemon=True).start()

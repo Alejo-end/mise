@@ -19,6 +19,14 @@ Added around it (14 Nov), so a reading becomes a stock change only when it is tr
                         reset the count.
 observe_baseline() keeps the old two-check rule, so recordings made with the old board code
 replay exactly.
+
+Health and calibration validity (interfaces 7 and 9):
+5. calibration_status(): "missing" without an empty photo, "stale" when the photos were taken for
+                        another assignment than the backend's GET /shelf names, else "ok". When
+                        either side is unknown (no /shelf yet, photos from before 14 Nov) it is
+                        "ok": unknown is never stale. gate_calibration() makes a stale slot uncertain.
+6. config_errors():     what is wrong with the box configuration (overlaps, rectangles, thresholds).
+7. build_health():      the "health" dict of the status event the board sends every 10 s.
 """
 
 from __future__ import annotations
@@ -150,3 +158,123 @@ def overlapping_slots(slots: list[dict], max_share: float = 0.05) -> list[tuple[
             if overlap(a["rect"], b["rect"]) > max_share * min(area(a["rect"]), area(b["rect"])):
                 out.append((a["slot"], b["slot"]))
     return out
+
+
+# Calibration validity (interface 9) ---------------------------------------------------------
+
+STALE_WHY = "photos are for another product; save the empty and full photos again"
+
+
+def assignments_from_shelf(payload) -> dict[int, str]:
+    """slot -> assignment_id from the backend's GET /shelf answer (a list of slots, or {"slots": [...]})."""
+    rows = payload.get("slots") if isinstance(payload, dict) else payload
+    out = {}
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict) and row.get("slot") is not None and row.get("assignment_id"):
+            out[int(row["slot"])] = str(row["assignment_id"])
+    return out
+
+
+def calibration_meta(meta: dict | None, kind: str, assignment_id: str | None, when: str) -> dict:
+    """A slot's calibration record (data/slotN_meta.json) after saving its kind ("empty"/"full") photo."""
+    out = dict(meta or {})
+    out[kind] = {"assignment_id": assignment_id, "saved": when}
+    return out
+
+
+def calibrated_for(meta: dict | None, has_full: bool) -> str | None:
+    """The assignment a slot's photos show: the full photo's (it shows the product), else the empty photo's.
+    None when unknown, for example photos saved before the record existed."""
+    entry = (meta or {}).get("full" if has_full else "empty")
+    return entry.get("assignment_id") if isinstance(entry, dict) else None
+
+
+def calibration_status(has_empty: bool, calibrated: str | None, expected: str | None) -> str:
+    """"missing", "stale" or "ok". Unknown on either side (None) is "ok", never "stale"."""
+    if not has_empty:
+        return "missing"
+    if calibrated is None or expected is None:
+        return "ok"
+    return "ok" if calibrated == expected else "stale"
+
+
+def gate_calibration(reading: tuple, status: str) -> tuple:
+    """classify()'s (state, fill, why), made uncertain when the slot's calibration is stale."""
+    st, fill, why = reading
+    if status == "stale" and st is not None:
+        return "uncertain", fill, STALE_WHY
+    return st, fill, why
+
+
+# Configuration and health (interface 7) -----------------------------------------------------
+
+def config_errors(cfg: dict) -> list[str]:
+    """What is wrong with a box configuration, in words. An empty list means valid."""
+    errors = []
+
+    def num(key, low, high=None, integer=False):
+        value = cfg.get(key, DEFAULTS.get(key))
+        if value is None:
+            return
+        ok = isinstance(value, (int, float)) and not isinstance(value, bool) and value >= low
+        ok = ok and (high is None or value <= high) and (not integer or float(value).is_integer())
+        if not ok:
+            errors.append(f"{key} must be {'a whole number ' if integer else ''}at least {low}"
+                          + (f" and at most {high}" if high is not None else "") + f", not {value!r}")
+
+    slots = cfg.get("slots")
+    if not isinstance(slots, list) or not slots:
+        return ["no shelf slots are configured"]
+    good, seen = [], set()
+    for s in slots:
+        n = s.get("slot") if isinstance(s, dict) else None
+        rect = s.get("rect") if isinstance(s, dict) else None
+        if not isinstance(n, int) or isinstance(n, bool):
+            errors.append(f"a slot has no number: {s!r}")
+            continue
+        if n in seen:
+            errors.append(f"slot {n} appears twice")
+        seen.add(n)
+        if not (isinstance(rect, (list, tuple)) and len(rect) == 4
+                and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in rect)):
+            errors.append(f"slot {n} needs a rectangle of four numbers")
+            continue
+        x, y, w, h = rect
+        if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > 1.0001 or y + h > 1.0001:
+            errors.append(f"slot {n} rectangle {list(rect)} is not inside the picture")
+            continue
+        good.append(s)
+    errors += [f"slots {a} and {b} overlap" for a, b in overlapping_slots(good)]
+    for key in ("full_at", "empty_below", "present_diff"):
+        num(key, 0, 1)
+    full_at, empty_below = cfg.get("full_at"), cfg.get("empty_below")
+    if isinstance(full_at, (int, float)) and isinstance(empty_below, (int, float)) and empty_below >= full_at:
+        errors.append(f"empty_below ({empty_below}) must be below full_at ({full_at})")
+    num("confirm_frames", 1, integer=True)
+    for key in ("confirm_seconds", "min_detail", "calibration_quiet_s"):
+        num(key, 0)
+    num("mismatch_ratio", 0.01)
+    num("frame_interval_s", 0.05)
+    return errors
+
+
+def build_health(trackers: dict, slot_ids: list[int], camera_ok: bool, frame_age_s: float | None,
+                 errors: list[str], calibration: dict[int, str], calibrated: dict[int, str | None],
+                 assignment_check: str) -> dict:
+    """The "health" of the status event (docs/PARALLEL_WORK.md, interface 7).
+
+    trackers: slot -> observe() tracker. calibration: slot -> calibration_status(). calibrated:
+    slot -> calibrated_for(). assignment_check: "ok" when the backend's GET /shelf answered at least
+    once, else "unknown" (then no slot can be stale).
+    """
+    slots = {}
+    for n in slot_ids:
+        cur = trackers.get(n) or {}
+        fill = cur.get("fill")
+        slots[str(n)] = {"state": cur.get("state"), "uncertain": cur.get("uncertain"),
+                         "fill": None if fill is None else round(min(1.0, max(0.0, float(fill))), 2),
+                         "calibration": calibration.get(n, "missing"), "assignment_id": calibrated.get(n)}
+    return {"camera_ok": bool(camera_ok),
+            "frame_age_s": None if frame_age_s is None else round(max(0.0, float(frame_age_s)), 1),
+            "config_valid": not errors, "config_errors": list(errors), "assignment_check": assignment_check,
+            "slots": slots}
