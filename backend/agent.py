@@ -316,10 +316,6 @@ class Agent:
                       if p["id"] != usual_id and "pack" in p and want_pack and not same_pack(p["pack"], want_pack)]
         candidates = [p for p in candidates if p["id"] not in other_pack]
         other_packs = f" {len(other_pack)} products of another pack size were not considered." if other_pack else ""
-        # The pipeline splits orders in whole sales units. A product whose lot size does not divide one unit
-        # (for example 2.8 KG) cannot take an arbitrary whole number, so it is left out here.
-        bad_lot = [p["id"] for p in candidates if not lot_ok(1, p.get("lot_size")) and not lot_ok(need, p.get("lot_size"))]
-        candidates = [p for p in candidates if p["id"] not in bad_lot]
         if hasattr(self.catalog, "prefetch"):
             self.catalog.prefetch([p["id"] for p in candidates], ctx.needed_by)
 
@@ -338,8 +334,7 @@ class Agent:
             {"id": pid, "price_eur": q["unit_price_eur"], "available": q["available"], "delivery": q["delivery"],
              "closing_time": q.get("closing_time"), "price_valid_to": q.get("price_valid_to"),
              "checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]} for pid, q in quotes.items()],
-            "left_out": {"other_pack_size": other_pack, "no_price_or_delivery": not_orderable, "why": why,
-                         "lot_size": bad_lot}},
+            "left_out": {"other_pack_size": other_pack, "no_price_or_delivery": not_orderable, "why": why}},
             "agent", v, run_id=run)
 
         # Safety check of each product alone. Forbidden products are dropped here.
@@ -354,10 +349,12 @@ class Agent:
 
         usual_q = safe.get(target.get("product_id"))
         options = []
-        if usual_q and usual_q["available"] >= need:
+        # Every line's quantity is a whole multiple of its product's lot size (allot), so a split never
+        # makes a line Valio would refuse.
+        if usual_q and allot(usual_q, need) >= need:
             options.append(("usual", [(usual_q, need, True)]))
         else:
-            have = usual_q["available"] if usual_q else 0
+            have = allot(usual_q, need) if usual_q else 0
             rest = need - have
             base = [(usual_q, have, True)] if have else []
             ranked = rank_substitutes(safe, target, ctx, self.rules, self.reliability())
@@ -368,7 +365,7 @@ class Agent:
                 for q in [lead] + [q for _, q in ranked if q is not lead] + rest_by_rank(safe, target, ranked):
                     if left <= 0:
                         break
-                    n = min(left, q["available"])
+                    n = allot(q, left)
                     if n > 0 and all(q is not p[0] for p in parts):
                         parts.append((q, n, False))
                         left -= n
@@ -378,8 +375,8 @@ class Agent:
                     options.append((label, parts))
             if not options:
                 # Nothing safe fills the whole gap: offer what is safe and in stock, and name the shortfall.
-                parts = list(base) + [(q, q["available"], False) for _, q in ranked]
-                parts += [(q, q["available"], False) for q in rest_by_rank(safe, target, ranked)]
+                parts = list(base) + [(q, allot(q, need), False) for _, q in ranked]
+                parts += [(q, allot(q, need), False) for q in rest_by_rank(safe, target, ranked)]
                 parts, left = _take(parts, need)
                 if parts:
                     shortfall = left
@@ -734,6 +731,14 @@ def when_text(value: str | None, needed_by: datetime) -> str:
     return text + ("" if in_time(value, needed_by) else " (late)")
 
 
+def allot(q: dict, want: int) -> int:
+    """The most whole units, up to `want` and the stock, that are a multiple of the product's lot size."""
+    n, lot = min(int(want), int(q["available"])), q["product"].get("lot_size")
+    while n > 0 and not lot_ok(n, lot):
+        n -= 1
+    return n
+
+
 def lot_ok(qty: float, lot) -> bool:
     """True when qty is a whole multiple of the allowed lot size (in sales units). No lot size: any qty."""
     if not lot:
@@ -780,7 +785,7 @@ def _take(parts: list, need: int) -> tuple[list, int]:
     """Take units from parts in order until need is met. Returns the parts used and what is still missing."""
     out, left = [], need
     for q, n, usual in parts:
-        n = min(n, left)
+        n = allot(q, min(n, left))
         if n > 0 and all(q is not p[0] for p in out):
             out.append((q, n, usual))
             left -= n

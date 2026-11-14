@@ -188,7 +188,8 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
     @router.get("/orders/{run_id}")
     def order_state(run_id: str, authorization: str | None = Header(default=None)):
         own_run(run_id, licence(authorization))
-        return {"run_id": run_id, **(state(run_id) or {"status": "ended", "detail": "See the audit entries of this run."})}
+        known = state(run_id) or {"status": "ended", "detail": "See the audit entries of this run."}
+        return {"run_id": run_id, **(known | DRY if known.get("status") == "ordered" else known)}
 
     @router.get("/key")
     def key():

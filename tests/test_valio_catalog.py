@@ -185,7 +185,9 @@ def stock_of(amounts, price=1.2):
                 {"productId": i, "quantity": 1.0, "netPriceFound": False, "error": False,
                  "catalogPrice": {"value": price, "valueWithTax": price, "validFrom": "a", "validTo": "b", "currency": "EUR"}}
                 for i in ids]})
-        day = (datetime.now(TZ) + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
+        # Today, so the date is before every "next weekday 07:00" deadline. Changed 14 Nov (worker 3): a delivery
+        # on the needed day with no arrival time now goes to a person, and "tomorrow" is the needed day Sun-Thu.
+        day = datetime.now(TZ).strftime("%Y-%m-%dT00:00:00")
         return httpx.Response(200, json={"timeNow": "x", "requestedDate": "x", "products": [
             {"productId": i, "closingTime": None, "salesBlock": False, "logisticModel": "Stock",
              "scheduleLines": [{"salesBlock": False, "availableAmount": float(amounts.get(i, 500)), "availableDate": day,

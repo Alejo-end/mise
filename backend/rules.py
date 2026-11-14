@@ -211,6 +211,14 @@ def needs_label_check(product: dict, rules: dict) -> bool:
     return bool(person) and not forbidden
 
 
+def date_only_same_day_ok(rules: dict) -> bool:
+    """True only when the signed rule set says a delivery on the needed day, with no arrival time, is in time.
+
+    Rule-set key `delivery.date_only_same_day: allowed`. Default: a person confirms it.
+    """
+    return (rules.get("delivery") or {}).get("date_only_same_day") == ALLOWED
+
+
 def check_line(line: Line, rules: dict, ctx: Context) -> Decision:
     """Safety rules for one product, then substitute, stock, price and delivery.
 
@@ -249,6 +257,11 @@ def check_line(line: Line, rules: dict, ctx: Context) -> Decision:
             result = NEEDS_APPROVAL
             reasons.append(f"{name} is available on {line.delivery:%a %d.%m.}, after the needed day "
                            f"{ctx.needed_by:%a %d.%m.}")
+        elif line.delivery.date() == ctx.needed_by.date() and not date_only_same_day_ok(rules):
+            # The source gives the day, not the hour, so it cannot show the delivery comes by the needed time.
+            result = NEEDS_APPROVAL
+            reasons.append(f"{name} is available on the needed day {line.delivery:%a %d.%m.}, but the source gives "
+                           f"no arrival time, so a person must confirm it arrives by {ctx.needed_by:%H:%M}")
     elif line.delivery > ctx.needed_by:
         result = NEEDS_APPROVAL
         reasons.append(

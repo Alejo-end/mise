@@ -53,6 +53,7 @@ RECORDS = [
     record("3", "Test steak", sales="KG", lot=2.8),
     record("4", "Test water 12 x 0.5 l crate", sales="KI", litres=0.5, deposits=[{"material": "3", "unit": "ST", "quantity": 12.0}]),
     record("5", "Test juice 1 l", litres=1.0),  # a volume only: no established mass
+    record("6", "Test milk 1 l pairs", litres=1.0, grams=1025.0, lot=2.0),  # sold in steps of two
 ]
 
 
@@ -62,7 +63,8 @@ class FakeApi:
     def __init__(self):
         self.calls = []
         self.now = datetime.now(TZ)
-        self.day = (self.now + timedelta(days=2)).date().isoformat()
+        self.day = self.now.date().isoformat()  # today: before every deadline the tests use
+        self.amounts = {}  # product -> availableAmount; default 9999999999 (measured for Stock products)
         self.closing = {}  # product -> closingTime; default: tomorrow 17:00
         self.units = {}  # product -> salesUnit the API answers; default: the file's
         self.status = []  # HTTP status codes to answer before the real answer, e.g. [429]
@@ -76,7 +78,7 @@ class FakeApi:
         if request.url.path == "/api/price":
             price = lambda v: {"value": v, "valueWithTax": round(v * 1.135, 2), "validFrom": "2026-09-01T00:00:00+0300",
                                "validTo": "2026-12-31T00:00:00+0200", "currency": "EUR"}
-            values = {"1": 1.4, "2": 2.78, "3": 13.11, "4": 24.69, "5": 1.2}
+            values = {"1": 1.4, "2": 2.78, "3": 13.11, "4": 24.69, "5": 1.2, "6": 1.5}
             return httpx.Response(200, json={"customerId": "123", "currency": "EUR", "pricingDate": "x", "products": [
                 {"productId": i, "quantity": 1.0, "catalogPrice": price(values[i]), "tax": {"taxRate": 13.5, "taxValue": 0.1},
                  "netPriceFound": True, "error": False} for i in ids]})
@@ -84,7 +86,8 @@ class FakeApi:
         sales = {r["id"]: r["salesUnit"] for r in RECORDS}
         return httpx.Response(200, json={"timeNow": self.now.strftime(fmt), "requestedDate": "x", "products": [
             {"productId": i, "closingTime": self.closing.get(i, tomorrow), "salesBlock": False, "logisticModel": "Stock",
-             "scheduleLines": [{"salesBlock": False, "availableAmount": 9999999999.0, "availableDate": self.day,
+             "scheduleLines": [{"salesBlock": False, "availableAmount": float(self.amounts.get(i, 9999999999)),
+                                "availableDate": self.day,
                                 "salesUnit": self.units.get(i, sales[i])}]} for i in ids]})
 
 
@@ -194,11 +197,19 @@ def test_the_deadline_compares_dates_when_the_source_has_no_time(agent, api):
     ctx = Context(slot_group="milk", needed_by=d)
     milk = agent.catalog.product("1").value
     on_day, known = delivery_at(d.date().isoformat())
-    assert known is False and in_time(d.date().isoformat(), d)
-    ok = check([Line(milk, 1, 1.4, on_day, True, True, known)], rules, ctx)
-    assert ok.result == ALLOWED and any("by date only" in r for r in ok.reasons)
+    assert known is False
+    day_before = check([Line(milk, 1, 1.4, on_day - timedelta(days=1), True, True, False)], rules, ctx)
+    assert day_before.result == ALLOWED and any("by date only" in r for r in day_before.reasons)
+    # The needed day itself: the source has no hour, so it cannot show "by 07:00". A person confirms it,
+    same_day = check([Line(milk, 1, 1.4, on_day, True, True, False)], rules, ctx)
+    assert same_day.result == NEEDS_APPROVAL and any("no arrival time" in r and "07:00" in r for r in same_day.reasons)
+    # unless the signed rule set says a delivery on the needed day is in time.
+    permitted = dict(rules, delivery=dict(rules["delivery"], date_only_same_day="allowed"))
+    assert check([Line(milk, 1, 1.4, on_day, True, True, False)], permitted, ctx).result == ALLOWED
     late = check([Line(milk, 1, 1.4, on_day + timedelta(days=1), True, True, False)], rules, ctx)
     assert late.result == NEEDS_APPROVAL and any("after the needed day" in r for r in late.reasons)
+    assert not any("in time by date only" in r for r in late.reasons)
+    assert in_time(d.date().isoformat(), d) and not in_time((d + timedelta(days=1)).date().isoformat(), d)
 
 
 def test_a_quantity_off_the_lot_size_is_refused(agent, api):
@@ -267,7 +278,7 @@ def test_a_gateway_quote_ends_at_the_cutoff_and_names_what_is_unknown(gateway, a
     client, signer = gateway
     cutoff = api.now + timedelta(minutes=5)
     api.closing["1"] = cutoff.strftime("%Y-%m-%dT%H:%M:%S+0200")
-    q = client.post("/gateway/quotes", json={"product_id": "1", "quantity": 10, "needed_by": api.day},
+    q = client.post("/gateway/quotes", json={"product_id": "1", "quantity": 10, "needed_by": needed(api).date().isoformat()},
                     headers={"Authorization": "Bearer ok"}).json()
     assert q["valid_until_set_by"] == "the order cut-off (closingTime)"
     assert datetime.fromisoformat(q["valid_until"]) <= cutoff
@@ -287,7 +298,8 @@ def test_a_gateway_quote_off_the_lot_size_gets_422(gateway, api):
 def test_a_gateway_order_answer_says_it_was_not_sent_to_valio(gateway, api):
     client, signer = gateway
     auth = {"Authorization": "Bearer ok"}
-    q = client.post("/gateway/quotes", json={"product_id": "1", "quantity": 10, "needed_by": api.day}, headers=auth).json()
+    q = client.post("/gateway/quotes", json={"product_id": "1", "quantity": 10, "needed_by": needed(api).date().isoformat()},
+                    headers=auth).json()
     r = client.post("/gateway/orders", json={"quote_id": q["quote_id"], "idempotency_key": "k1"}, headers=auth)
     assert r.status_code == 201 and r.json()["sent_to_valio"] is False and verify(r.json(), signer.public_key)
 
@@ -296,7 +308,8 @@ def test_an_expired_gateway_quote_is_refused(gateway, api):
     client, _ = gateway
     auth = {"Authorization": "Bearer ok"}
     api.closing["1"] = (api.now + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%S+0200")
-    q = client.post("/gateway/quotes", json={"product_id": "1", "quantity": 10, "needed_by": api.day}, headers=auth).json()
+    q = client.post("/gateway/quotes", json={"product_id": "1", "quantity": 10, "needed_by": needed(api).date().isoformat()},
+                    headers=auth).json()
     import time
     time.sleep(1.5)
     r = client.post("/gateway/orders", json={"quote_id": q["quote_id"], "idempotency_key": "k2"}, headers=auth)
@@ -380,3 +393,29 @@ def test_a_recording_never_overwrites_and_never_breaks_a_call(catalog, api, tmp_
         assert catalog.availability("1", 1, needed(api)).value["unit_price_eur"] == 1.4
     finally:
         rec.chmod(0o755)
+
+
+def test_a_split_order_respects_each_lines_lot_size(agent, api):
+    """Codex finding, 14 Nov: 1 usual unit + 2 units of a substitute sold in pairs fill a need of 3."""
+    agent.rules["approved_substitute_groups"] = {"milk": ["6"]}
+    api.amounts = {"1": 1}
+    target = agent.rules["targets"][0]
+    r = agent.buy(target, 0, 3, "run-split", standing=False)
+    assert r["status"] == "ordered"
+    (order,) = agent.orders.values()
+    assert {l["product_id"]: l["quantity"] for l in order["lines"]} == {"1": 1, "6": 2}
+    api.amounts = {"1": 2}  # a need of 3 with 2 usual units: one pair would overshoot, so 1 short
+    agent.buy(target, 0, 3, "run-short", standing=False)
+    option = agent.open_approvals()[0]["options"][0]
+    assert option["label"] == "partial" and {l["product_id"]: l["quantity"] for l in option["lines"]} == {"1": 2}
+
+
+def test_the_order_state_keeps_the_dry_run_note_after_a_restart(gateway, api, agent):
+    client, _ = gateway
+    auth = {"Authorization": "Bearer ok"}
+    q = client.post("/gateway/quotes", json={"product_id": "1", "quantity": 10, "needed_by": needed(api).date().isoformat()},
+                    headers=auth).json()
+    run = client.post("/gateway/orders", json={"quote_id": q["quote_id"], "idempotency_key": "k3"}, headers=auth).json()["run_id"]
+    agent.placed_runs[run] = {k: v for k, v in agent.placed_runs[run].items() if k in ("status", "order_id", "total_eur")}
+    state = client.get(f"/gateway/orders/{run}", headers=auth).json()  # as Agent.restore() rebuilds it
+    assert state["status"] == "ordered" and state["sent_to_valio"] is False and "not sent to Valio" in state["note"]
