@@ -126,9 +126,12 @@ def test_a_hand_over_a_slot_for_two_seconds_is_ignored(steady, apart):
 
 # Uncertain views ----------------------------------------------------------------------------
 
-def test_a_view_that_does_not_match_the_calibration_is_uncertain(steady):
-    """steady-01: the camera moved after calibration and shows a cup and a keyboard."""
+def test_a_view_that_does_not_match_the_calibration_is_uncertain(steady, apart):
+    """steady-01: the camera moved after calibration and shows a cup and a keyboard. With the recorded
+    (overlapping) boxes the layout rule speaks first; with separated boxes the view-mismatch rule does."""
     events, trackers = replay_board(steady.frames, steady, end=steady.frames[-1].t)  # while frames arrive
+    assert events == [] and {tr["uncertain"] for tr in trackers.values()} == {sd.LAYOUT_WHY}
+    events, trackers = replay_board(steady.frames, steady, apart, end=steady.frames[-1].t)
     assert events == []
     assert {tr["uncertain"] for tr in trackers.values()} == {"view does not match the photos"}
 
