@@ -125,7 +125,7 @@
   /* Recognize shelf (experimental): boxes coloured by outcome; similarity is a model score, not accuracy */
   .rbox { position:absolute; border:3px solid #fff; pointer-events:none }
   .rbox.known { border-color:#33d17a } .rbox.unknown { border-color:#c0bfbc; border-style:dashed }
-  .rbox.ambiguous { border-color:#ffa348 } .rbox.obstructed { border-color:#ff5f5f; border-style:dotted }
+  .rbox.ambiguous { border-color:#ffa348 } .rbox.not-inventory { border-color:#8a8a8a; border-width:2px } .rbox.obstructed { border-color:#ff5f5f; border-style:dotted }
   .rbox b { position:absolute; left:-3px; top:-25px; background:#000; color:#fff; font-size:.9rem; font-weight:700; padding:1px 6px; white-space:nowrap }
   .rsurf { position:absolute; border:2px dashed rgba(255,255,255,.55); pointer-events:none }
   #recogList { margin:10px 0 0; padding-left:1.2em } #recogList li { margin:2px 0 }
@@ -522,23 +522,26 @@ socket.on("recognize_response", (r) => {
   const list = $("recogList"); list.innerHTML = "";
   (r.objects || []).forEach((o, i) => {
     const top = (o.candidates || [])[0];
-    const match = o.status === "known" ? rname(o.identity) : o.status === "ambiguous" ? "ambiguous" : o.status === "obstructed" ? "obstructed" : "unknown";
+    const match = o.status === "known" ? rname(o.identity) : o.status === "not-inventory" ? "not inventory" : o.status;
     const what = o.description || (top ? `nearest ${rname(top.identity)}` : "object");
     if (o.box) {
       const d = document.createElement("div"); d.className = `rbox ${o.status}`; placeBox(d, o.box);
-      const tag = document.createElement("b"); tag.textContent = `${i + 1} ${match}${o.visible_count > 1 ? " ×" + o.visible_count : ""}`; d.appendChild(tag); cam.appendChild(d);
+      const tag = document.createElement("b"); tag.textContent = `${i + 1} ${match}${o.visible_count > 1 ? " ×" + o.visible_count : ""}${o.visibility === "partial" ? " (partly hidden)" : ""}`; d.appendChild(tag); cam.appendChild(d);
     }
     const li = document.createElement("li");
     const read = [o.brand, o.variant, o.size].filter(Boolean).join(" · ");
     li.textContent = `${i + 1}: ${what}` + (o.visible_count != null ? ` (${o.visible_count} visible)` : "") + ` → ${match}` +
       (read ? `. Readable: ${read}` : "") + (o.readable_text ? `. Text: "${o.readable_text}"` : "") +
       (o.evidence ? `. Evidence: ${o.evidence}` : "") + (o.obstruction ? `. Obstruction: ${o.obstruction}` : "") +
-      (o.match_reason ? `. Match: ${o.match_reason}` : "") + (o.box ? "" : " (no location given)") +
+      (o.match_reason ? `. Match: ${o.match_reason}` : "") + (o.match_by ? ` [${o.match_by}${o.match_level ? ", " + o.match_level : ""}]` : "") +
+      (o.visibility === "partial" ? " (partly hidden, still counted if identified)" : "") + (o.box ? "" : " (no location given)") +
       (top && !o.description ? ` (score ${Number(top.similarity).toFixed(2)})` : "");
     list.appendChild(li);
   });
   if (!(r.objects || []).length) { const li = document.createElement("li"); li.textContent = "No packages seen on the surface."; list.appendChild(li); }
-  const counts = Object.entries(r.visible_units || {}).filter(([, n]) => n > 0).map(([k, n]) => `${rname(k)} ${n}`).join(", ") || "none from the inventory";
+  const ic = r.inventory_counts || {};
+  const counts = Object.keys(ic).length ? Object.entries(ic).map(([k, c]) => `${rname(k)} ${c.status === "counted" ? c.visible : c.status === "at least" ? "at least " + c.visible : c.status}`).join(", ")
+    : (Object.entries(r.visible_units || {}).filter(([, n]) => n > 0).map(([k, n]) => `${rname(k)} ${n}`).join(", ") || "none from the inventory");
   const t = r.timing_ms || {}; const m = r.model || {};
   const steps = ["describe_api", "match_api"].filter((k) => t[k] != null).map((k) => `${k.replace("_api", "")} ${(t[k] / 1000).toFixed(1)} s`).join(", ");
   $("recogMeta").textContent = `Visible units: ${counts}. ${r.uncertain ? "Uncertain: " + (r.reasons || []).join("; ") + ". " : (r.reasons || []).length ? (r.reasons || []).join("; ") + ". " : ""}` +
