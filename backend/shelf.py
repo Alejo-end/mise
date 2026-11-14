@@ -48,7 +48,7 @@ class Assignment:
 
     @property
     def assignment_id(self) -> str:
-        return f"v{self.assigned_in_version}:{self.product_id}"
+        return f"v{self.assigned_in_version}:{self.product_id or 'unmapped'}"
 
     @classmethod
     def from_target(cls, target: dict, rules: dict) -> "Assignment":
@@ -159,6 +159,10 @@ class Shelf:
             raise ShelfError(404, f"slot {slot} is not in rule set v{rules['version']}. The shelf has slots "
                                   f"{', '.join(str(a.slot) for a in self.assignments())}; new slots need a person to "
                                   "sign a new rule file")
+        if change.get("unmapped"):
+            return self._plan_unmapped(slot, change, before)
+        if not change.get("product_id"):
+            raise ShelfError(422, "send product_id, or unmapped=true with 'product' (what the slot physically holds)")
         pid = str(change["product_id"]).strip()
         product = catalog.product(pid).value
         if product is None:
@@ -202,6 +206,32 @@ class Shelf:
         warnings = [f"{p}. Orders of it wait for a person until someone approves its label once" for p in person]
         return targets, before, after, warnings
 
+    def _plan_unmapped(self, slot: int, change: dict, before: Assignment):
+        """The slot holds something with no exact catalog match: it keeps a name for people, no product_id,
+        and so no purchasing. What the camera identifies it as lives in the recognition config, not here."""
+        rules = self.rules
+        name = (change.get("product") or "").strip()
+        if not name:
+            raise ShelfError(422, "an unmapped slot needs 'product': what it physically holds, for people to read")
+        target_units = before.target_units if change.get("target_units") is None else int(change["target_units"])
+        reorder_below = before.reorder_below if change.get("reorder_below") is None else int(change["reorder_below"])
+        if not 0 <= reorder_below < target_units:
+            raise ShelfError(422, f"reorder_below ({reorder_below}) must be below target_units ({target_units})")
+        new_version = rules["version"] + 1
+        same = before.product_id is None and before.product == name
+        targets = []
+        for t in rules["targets"]:
+            t = dict(t)
+            t.setdefault("assigned_in", rules["version"])
+            if int(t["slot"]) == slot:
+                t.update(product=name, product_id=None, group="unmapped", target_units=target_units,
+                         reorder_below=reorder_below)
+                if not same:
+                    t["assigned_in"] = new_version
+            targets.append(t)
+        after = Assignment.from_target(next(t for t in targets if int(t["slot"]) == slot), {"version": new_version})
+        return targets, before, after, [f"slot {slot} is not mapped to a catalog product: no purchase is made for it"]
+
     def change(self, slot: int, change: dict, approver: str, catalog, log,
                pending: Callable[[int], dict | None], activate: Callable[[dict], None]) -> dict:
         """Sign and activate a new rule set version with one slot changed. Return what happened.
@@ -217,8 +247,8 @@ class Shelf:
             p = pending(slot)
             parts = []
             if after.product_id != before.product_id:
-                parts.append(f"slot {slot} now holds {after.product} ({after.product_id}) instead of "
-                             f"{before.product} ({before.product_id})")
+                parts.append(f"slot {slot} now holds {after.product} ({after.product_id or 'not mapped for purchasing'}) "
+                             f"instead of {before.product} ({before.product_id or 'not mapped for purchasing'})")
             else:
                 parts.append(f"slot {slot} keeps {after.product} ({after.product_id})")
             for key, label in (("target_units", "target"), ("reorder_below", "reorder level"), ("group", "group")):

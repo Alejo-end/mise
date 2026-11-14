@@ -387,3 +387,42 @@ def test_versions_live_next_to_the_audit_log(env):
     c.put("/shelf/3", json={"pin": PIN, "product_id": "MOCK-MILK-LF-1L-B"})
     assert sorted(f.name for f in m.shelf.versions_dir.iterdir()) == ["school_kitchen.v4.signed.json",
                                                                        "school_kitchen.v4.yaml"]
+
+
+# Unmapped slots (14 Nov): the physical shelf holds chips, an energy drink and milk with no exact match in the
+# active catalog. Observed identity lives in the recognition config; the signed rule set only says "no purchasing".
+
+def test_a_slot_can_be_unmapped_through_the_signing_flow_and_never_buys(env):
+    m, c = start()
+    v0 = c.get("/shelf").json()[0]["rule_set_version"]
+    r = c.put("/shelf/1", json={"pin": PIN, "unmapped": True, "product": "chips (observed; no exact catalog match)"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "changed" and body["rule_set_version"] == v0 + 1 and body["calibration_stale"]
+    a = slot(c.get("/shelf").json(), 1)
+    assert a["product_id"] is None and a["assignment_id"] == f"v{v0 + 1}:unmapped"
+    assert a["product"] == "chips (observed; no exact catalog match)"
+    for ev in ({"type": "slot_state", "slot": 1, "state": "empty", "estimated_units": 0}, {"type": "manual_low", "slot": 1}):
+        res = c.post("/events", json=ev).json()
+        assert res["status"] == "ignored" and "not mapped" in res["reason"]
+    assert c.get("/approvals/open").json() == [] and c.get("/orders").json() == []
+    m2, c2 = start()  # the signed version survives a restart
+    assert slot(c2.get("/shelf").json(), 1)["product_id"] is None
+
+
+def test_unmapping_keeps_a_pending_order_and_other_slots(env):
+    m, c = start()
+    c.post("/events", json={"type": "slot_state", "slot": 3, "state": "empty", "estimated_units": 0})
+    before = slot(c.get("/shelf").json(), 3)
+    assert before["pending_order"] is not None
+    r = c.put("/shelf/3", json={"pin": PIN, "unmapped": True, "product": "milk (observed)"}).json()
+    assert r["pending_order"]["product_id"] == before["product_id"]  # the order stays as it was
+    after = slot(c.get("/shelf").json(), 3)
+    assert after["pending_order"] is not None and after["pending_order"]["made_for_current_assignment"] is False
+    assert slot(c.get("/shelf").json(), 2)["product_id"] is not None  # untouched
+
+
+def test_a_change_needs_a_product_or_an_explicit_unmapping(env):
+    m, c = start()
+    assert c.put("/shelf/2", json={"pin": PIN}).status_code == 422
+    assert c.put("/shelf/2", json={"pin": PIN, "unmapped": True}).status_code == 422  # needs a name for people

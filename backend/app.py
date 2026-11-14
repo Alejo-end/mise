@@ -322,7 +322,8 @@ def rules():
 
 class ShelfChange(BaseModel):
     pin: str = ""
-    product_id: str = Field(min_length=1, max_length=40)
+    product_id: str | None = Field(default=None, min_length=1, max_length=40)
+    unmapped: bool = False  # true: the slot holds `product` (a name), with no catalog product and no purchasing
     target_units: int | None = Field(default=None, ge=1, le=10000)
     reorder_below: int | None = Field(default=None, ge=0, le=10000)
     product: str | None = Field(default=None, min_length=1, max_length=80)  # name for search and pack size

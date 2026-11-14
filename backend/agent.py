@@ -170,6 +170,9 @@ class Agent:
         target = R.target_for_slot(self.rules, slot)
         if target is None:
             return {"status": "ignored", "reason": f"slot {slot} has no target in the rule set"}
+        if target.get("product_id") is None and kind in ("slot_state", "manual_low"):
+            return {"status": "ignored", "reason": f"slot {slot} holds {target.get('product')}, which is not mapped "
+                                                   "to a catalog product: no purchase"}
         state = "low" if kind == "manual_low" else ev.get("state")
         units = int(ev.get("estimated_units") or 0) if state != "empty" else 0
         self.open_approvals()  # an approval past its expiry ends here and frees its slot
