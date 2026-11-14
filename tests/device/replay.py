@@ -12,6 +12,7 @@ It must keep reproducing the board's own readings in recordings made with that c
 replay_board(): the board code now (device/python/main.py loop and process_frame).
 - a frame is checked at most once (frame numbers);
 - classify() may say "uncertain"; no camera frame for CAMERA_GRACE_S makes every slot uncertain;
+- a slot whose calibration is "stale" (interface 9) is uncertain (gate_calibration);
 - observe() needs confirm_frames different frames over confirm_seconds.
 A commit that changes the loop on the board changes replay_board() too.
 """
@@ -117,8 +118,10 @@ def replay_baseline(frames: list[Frame], seq: Sequence, interval: float | None =
 
 
 def replay_board(frames: list[Frame], seq: Sequence, overrides: dict | None = None, interval: float | None = None,
-                 end: float | None = None) -> tuple[list[Event], dict]:
-    """Run the current board loop over frames. overrides replaces config keys, for example the slots."""
+                 end: float | None = None, calibration: dict[int, str] | None = None) -> tuple[list[Event], dict]:
+    """Run the current board loop over frames. overrides replaces config keys, for example the slots.
+    calibration: slot -> "ok" / "stale" as main.calibration_of() would say (default "ok")."""
+    calibration = calibration or {}
     cfg = {**seq.config, **(overrides or {})}
     interval = interval or float(cfg.get("frame_interval_s", 1.0))
     trackers = {s["slot"]: sd.new_tracker() for s in cfg["slots"]}
@@ -139,7 +142,8 @@ def replay_board(frames: list[Frame], seq: Sequence, overrides: dict | None = No
                 for s in cfg["slots"]:
                     n, cur = s["slot"], trackers[s["slot"]]
                     empty_ref, full_ref = seq.refs[n]
-                    st, fill, why = sd.classify(sd.crop(img, s["rect"]), empty_ref, full_ref, cfg)
+                    st, fill, why = sd.gate_calibration(sd.classify(sd.crop(img, s["rect"]), empty_ref, full_ref, cfg),
+                                                        calibration.get(n, "ok"))
                     changed = sd.observe(cur, st, fill, s["target_units"], newest, t, cfg, why=why)
                     counted[n] = (counted[n] + [newest])[-cur["count"]:] if cur["count"] else []
                     if changed:
