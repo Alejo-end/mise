@@ -141,3 +141,34 @@ def test_a_decision_at_the_box_is_logged_with_the_temperature_and_never_orders()
 def test_a_delivery_decision_needs_a_yes_or_a_no():
     from backend import app as A
     assert TestClient(A.app).post("/events", json={"type": "delivery_decision"}).status_code == 422
+
+
+def test_the_screen_shows_the_newest_undecided_order_and_a_decision_removes_it():
+    from backend import app as A
+    client = TestClient(A.app)
+    client.post("/events", json={"type": "status", "temperature_c": 9.0, "auto_limit_eur": 150})
+    placed = client.post("/request", json={"text": "6 lactose-free milk", "asked_by": "Aino"}).json()
+    assert placed["status"] == "ordered", placed
+    screen = client.get("/box/screen").json()
+    assert screen["delivery"]["order_id"] == placed["order_id"] and screen["temperature_c"] == 9.0
+    assert all(len(line) <= 40 and line.isascii() for line in screen["delivery"]["lines"])
+    r = client.post("/events", json={"type": "delivery_decision", "accepted": False, "order_id": placed["order_id"], "source": "screen"})
+    assert r.json()["order_id"] == placed["order_id"]
+    after = client.get("/box/screen").json()
+    assert after["delivery"] is None or after["delivery"]["order_id"] != placed["order_id"]
+    chain = client.get(f"/orders/{placed['order_id']}/chain").json()
+    delivered = next(s for s in chain["steps"] if s["step"] == "delivered")
+    assert delivered["accepted"] is False and "on the touch screen rejected" in delivered["text"] and "9.0 °C" in delivered["text"]
+
+
+def test_the_screen_cannot_decide_an_order_that_does_not_exist():
+    from backend import app as A
+    r = TestClient(A.app).post("/events", json={"type": "delivery_decision", "accepted": True, "order_id": "ORD-NOPE", "source": "screen"})
+    assert r.status_code == 404
+
+
+def test_the_box_update_offers_every_python_file_of_the_box_app():
+    from backend import app as A
+    offered = {f["path"] for f in TestClient(A.app).get("/device/files").json()}
+    on_disk = {f"python/{p.name}" for p in (A.DEVICE_DIR / "python").glob("*.py")}
+    assert on_disk <= offered, on_disk - offered

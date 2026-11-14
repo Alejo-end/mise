@@ -164,11 +164,14 @@ class DeliveryDecision(_Base):
     """A person at the box accepts or rejects a delivery, with the knob menu. The temperature goes into the record."""
     type: Literal["delivery_decision"]
     accepted: bool
+    order_id: str | None = None  # the touch screen names the order that it showed; the knob does not know one
+    source: Literal["box", "screen"] = "box"
 
 
 class AlarmSeen(_Base):
     """A person at the box confirms that they saw the cold alarm, with the knob menu."""
     type: Literal["alarm_seen"]
+    source: Literal["box", "screen"] = "box"
 
 
 class SlotHealth(BaseModel):
@@ -276,20 +279,87 @@ def name_font():
 def _box_decision(data: dict) -> dict:
     """What a person decided at the box with the knob menu. The box has no PIN, so the record names the box and
     not a person, and these decisions never order and never approve an order."""
-    temp = data.get("temperature_c")
+    temp = data.get("temperature_c", device.get("temperature_c"))  # the screen has no sensor: the box's last reading
     at = f" at {temp:.1f} °C" if temp is not None else ", with no temperature reading"
+    where = "on the touch screen" if data.get("source") == "screen" else "at the box"
     if data["type"] == "alarm_seen":
-        log.write("alarm_seen", {"summary": f"A person at the box confirmed the cold alarm{at}. The buzzer is quiet for 10 minutes.",
-                                 "temperature_c": temp}, "box", ruleset["version"])
+        log.write("alarm_seen", {"summary": f"A person {where} confirmed the cold alarm{at}."
+                                 + (" The buzzer is quiet for 10 minutes." if data.get("source") != "screen" else ""),
+                                 "temperature_c": temp}, data.get("source", "box"), ruleset["version"])
+        device["alarm_seen_at"] = time.time()
         return {"status": "logged"}
-    last = agent.deliveries[-1] if agent.deliveries else None  # the delivery that the box checked last
-    order = agent.orders.get(last["order_id"]) if last and last.get("order_id") else None
-    what = f"the delivery of order {last['order_id']}" if order else "a delivery"
+    order_id = data.get("order_id")
+    if order_id is None and agent.deliveries:  # the knob: the delivery that the box checked last
+        order_id = agent.deliveries[-1].get("order_id")
+    order = agent.orders.get(order_id) if order_id else None
+    if data.get("order_id") and order is None:
+        raise HTTPException(404, "No such order.")
+    what = f"the delivery of order {order_id}" if order else "a delivery"
     word = "accepted" if data["accepted"] else "rejected"
-    log.write("delivery_decision", {"summary": f"A person at the box {word} {what}{at}.", "accepted": data["accepted"],
-                                    "temperature_c": temp}, "box", ruleset["version"],
-              order_id=last["order_id"] if order else None, run_id=order.get("run_id") if order else None)
-    return {"status": "logged", "accepted": data["accepted"], "order_id": last["order_id"] if order else None}
+    log.write("delivery_decision", {"summary": f"A person {where} {word} {what}{at}.", "accepted": data["accepted"],
+                                    "temperature_c": temp}, data.get("source", "box"), ruleset["version"],
+              order_id=order_id if order else None, run_id=order.get("run_id") if order else None)
+    return {"status": "logged", "accepted": data["accepted"], "order_id": order_id if order else None}
+
+
+def _plain(text: str, width: int) -> str:
+    """Text for the small screen, whose font has ASCII only: no accents or signs, cut to the width."""
+    import unicodedata
+    text = str(text).replace("€", "EUR ").replace("×", "x").replace("®", "").replace("™", "").replace("°", " ")
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    text = " ".join(text.split())
+    return text if len(text) <= width else text[:width - 2].rstrip() + ".."
+
+
+screen_recalibrate = 0  # how often someone asked the touch screen to measure its touch again
+
+
+@app.post("/box/screen/recalibrate")
+def box_screen_recalibrate():
+    """Ask the touch screen to show its four calibration targets again. It sees the request within 2 seconds."""
+    global screen_recalibrate
+    screen_recalibrate += 1
+    return {"status": "asked", "count": screen_recalibrate}
+
+
+def _wrapped(text: str, width: int) -> list[str]:
+    """Plain text on one or two lines of the small screen, broken between words. A third line is cut off."""
+    words, lines = _plain(text, 10 * width).split(), [""]
+    for word in words:
+        if lines[-1] and len(lines[-1]) + 1 + len(word) > width:
+            lines.append("")
+        lines[-1] = (lines[-1] + " " + word).strip()
+    return [_plain(line, width) for line in lines[:2]]
+
+
+@app.get("/box/screen")
+def box_screen():
+    """What the touch screen of the box shows: the order to decide at the door, with the temperature. The screen
+    draws this as it is, so every text is short and plain. It has no PIN: it accepts or rejects a delivery and
+    confirms an alarm, and it never approves an order."""
+    decided = {e["order_id"] for e in log.entries(5000) if e["step"] == "delivery_decision" and e.get("order_id")}
+    waiting = [o for o in agent.orders.values() if o["order_id"] not in decided]
+    order = max(waiting, key=lambda o: o["time"]) if waiting else None
+    limits = [_limit_for((catalog.products.get(str(l["product_id"])) or {}) | {"id": l["product_id"]}) for l in order["lines"]] if order else []
+    limit = min((x for x in limits if x is not None), default=None)
+    temp = device.get("temperature_c") if device["online"] else None
+    approvals = agent.open_approvals()
+    return {
+        "temperature_c": temp, "online": device["online"], "recalibrate": screen_recalibrate,
+        "alarm": bool(device.get("alarm")) and time.time() - device.get("alarm_seen_at", 0) > 600,
+        "approvals": len(approvals),
+        "approval": _plain(f"{approvals[0]['what']}, EUR {approvals[0]['options'][0]['total_eur']:.2f}" if approvals and approvals[0]["options"]
+                           else approvals[0]["what"] if approvals else "", 40),
+        "delivery": order and {
+            "order_id": order["order_id"], "more": len(waiting) - 1,
+            # Each product on one line, or on two when its name is long. The screen has room for two lines.
+            "lines": [part for l in order["lines"][:3] for part in _wrapped(f"{l['quantity']} x {l['name']}", 40)][:3],
+            "total": f"EUR {order['total_eur']:.2f}",
+            "limit_c": limit,
+            # Too warm for this order: the air at the box is above the storage limit of its coldest product.
+            "too_warm": temp is not None and limit is not None and temp > limit,
+        },
+    }
 
 
 @app.post("/events")
@@ -297,6 +367,8 @@ def events(ev: Event):
     data = ev.model_dump(exclude_none=True)
     if data["type"] in ("slot_state", "manual_low") and not any(t["slot"] == data["slot"] for t in ruleset["targets"]):
         raise HTTPException(400, f"slot {data['slot']} is not in rule set v{ruleset['version']}")
+    if data.get("source") == "screen":  # the touch screen is not the shelf box: its events say nothing about the box
+        return _box_decision(data)
     if not device["online"] and device["last_seen"]:
         log.write("device", {"summary": "The shelf box is back online."}, "device", ruleset["version"])
     device["last_seen"] = time.time()
@@ -452,7 +524,9 @@ def device_commands():
 
 
 DEVICE_DIR = ROOT / "device"
-DEVICE_FILES = ["python/main.py", "assets/index.html", "sketch/sketch.ino", "sketch/sketch.yaml", "app.yaml"]
+# Every file of the box app. main.py imports shelf_detect.py, so an update that leaves it out can break the box.
+DEVICE_FILES = ["python/main.py", "python/shelf_detect.py", "assets/index.html", "sketch/sketch.ino", "sketch/sketch.yaml",
+                "app.yaml"]
 
 
 @app.get("/device/files")

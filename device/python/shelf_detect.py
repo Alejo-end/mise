@@ -165,6 +165,22 @@ def observe(cur: dict, st: str | None, fill: float | None, target_units: int, fr
     return changed
 
 
+def shortage_confirmed_now(cur: dict, now: float, cfg: dict) -> bool:
+    """True when the newest readings confirm a shortage at this moment, not only an older confirmed state.
+
+    A shortage waits a grace period before it can start an order. During that time the camera can be covered,
+    stop, or be set up again. Such a reading is "uncertain": it clears the candidate and keeps the last
+    confirmed state, which then is stale. So a shortage is released only when the readings since the last
+    uncertainty again show low or empty, for the same number of frames and seconds that confirm any state.
+    """
+    return (cur.get("state") in ("low", "empty")
+            and cur.get("uncertain") is None
+            and cur.get("candidate") in ("low", "empty")
+            and cur.get("count", 0) >= setting(cfg, "confirm_frames")
+            and cur.get("since") is not None
+            and now - cur["since"] >= setting(cfg, "confirm_seconds"))
+
+
 def observe_baseline(cur: dict, st: str | None, fill: float | None, target_units: int) -> bool:
     """The original rule: the same state in two checks in a row, even of the same frame."""
     cur["fill"] = None if fill is None else round(fill, 2)

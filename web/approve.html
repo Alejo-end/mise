@@ -141,6 +141,9 @@
   .hint { height:auto; min-height:0; padding:0.1875rem 0.5rem; font-size:0.75rem; font-weight:500; border-radius:99px; color:var(--soft) }
   .hint:hover { color:var(--blue); border-color:var(--blue) } .hint i { font-style:normal; color:var(--faint) }
   .hint.forbidden i { color:var(--pink) } .hint.read_label i { color:var(--warn, #9a5b00) }
+  .gateway { display:flex; flex-wrap:wrap; align-items:baseline; gap:0.125rem 0.75rem; padding:0.5rem 0 0.625rem; font-size:0.8125rem; color:var(--soft) }
+  .gateway b { color:var(--ink); font-size:0.875rem; white-space:nowrap }
+  #health { margin:0 0 0.75rem }
   .emptystate { display:flex; align-items:center; gap:0.75rem; padding:1rem 0.875rem; border:1px dashed var(--line); border-radius:0.625rem; color:var(--soft) }
   .emptystate svg { width:1.25rem; height:1.25rem; color:var(--ok); flex:none } .emptystate b { display:block; color:var(--ink) }
   .who { display:flex; align-items:center; gap:0.375rem 0.5rem; flex-wrap:wrap; margin-bottom:0.375rem } .who .state { margin-left:auto }
@@ -254,6 +257,10 @@
     <button id="zoomClose" class="small" type="button">Close</button></div>
 </dialog>
 <div class="work">
+<!-- What this is, on the first screen: the wholesaler's gateway. "mise" is the kitchen's client of it. -->
+<div class="gateway"><b>Aimo Agent Gateway</b>
+  <span>Outside buying agents order from Valio Aimo under the kitchen's signed rules: a licence, a signed quote, a person's approval and a record of every step.</span></div>
+<p class="alert" id="health" role="alert" hidden></p>
 <div class="topbar">
   <h1 id="pageTitle">Head chef</h1>
   <div class="meta" id="ruleset"></div>
@@ -428,9 +435,18 @@ const WHO = {device: "the shelf camera", chef: "the kitchen", agent: "the agent"
 const SHORT = 4;  // log lines shown before "Show more"
 let showAll = false, forceFor = null;
 
+// A call to the backend. A failure says what failed: the network, or which address answered with which error.
 async function api(path, opts) {
-  const r = await fetch(path, opts);
-  return r.json();
+  let r;
+  try { r = await fetch(path, opts); }
+  catch (e) { throw new Error(`This page cannot reach the backend at ${location.host}. Check that the backend runs and that this device is on the same network.`); }
+  if (r.status >= 500) {
+    let detail = "";
+    try { detail = (await r.clone().json()).detail || ""; } catch (e) {}
+    throw new Error(`The backend failed on ${path.split("?")[0]} (error ${r.status})${detail ? ": " + detail : ""}.`);
+  }
+  try { return await r.json(); }
+  catch (e) { throw new Error(`The backend gave no data for ${path.split("?")[0]} (status ${r.status}).`); }
 }
 const post = (path, body) => api(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
 
@@ -874,7 +890,12 @@ async function tick() {
     $("more").textContent = showAll ? "Show the latest only" : `Show ${lines.length - SHORT} more`;
     $("more").setAttribute("aria-expanded", String(showAll));
     if ($("dataBox").open) $("json").textContent = JSON.stringify((await api("/log?format=json&limit=20")).slice().reverse(), null, 1);
-  } catch (e) { $("result").textContent = "Backend not reachable."; }
+    $("health").hidden = true;
+  } catch (e) {
+    // What failed, in words, and when. The rest of the page keeps its last content.
+    $("health").hidden = false;
+    $("health").textContent = `${e.message || "The page could not refresh."} Last try: ${new Date().toTimeString().slice(0, 8)}.`;
+  }
 }
 function setSize(large) {
   document.documentElement.classList.toggle("large", large);

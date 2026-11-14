@@ -436,7 +436,7 @@ function render() {
   });
   const buzz = {off: "quiet", approval: "beeping: approve on the phone", alarm: "alarm", confirm: "beep"}[S.buzzer] || S.buzzer;
   const waits = S.shortage_wait || [];
-  const orderWait = waits.length ? `${waits.map(w => `spot ${w.slot}: ${w.seconds_left} s`).join(" · ")} before order` : `wait ${(S.config.shortage_confirm_s || 0) / 60} min after a camera shortage`;
+  const orderWait = waits.length ? waits.map(w => w.held ? `spot ${w.slot}: waiting for a clear camera reading` : `spot ${w.slot}: ${w.seconds_left} s before order`).join(" · ") : `wait ${(S.config.shortage_confirm_s || 0) / 60} min after a camera shortage`;
   $("facts").innerHTML = `
     <div class="readout"><span>agent may spend alone</span><strong>€${Math.min(S.auto_limit_eur ?? 0, SIGNED_LIMIT)}</strong></div>
     <div class="readout"><span>camera order timing</span><em>${esc(orderWait)}</em></div>

@@ -209,7 +209,12 @@ def cancel_camera_shortage(slot: int):
 
 
 def shortage_worker():
-    """Release only shortages that still persist after the configured grace period."""
+    """Release only shortages that the camera confirms at the moment the grace period ends.
+
+    The last confirmed state is not enough: a covered camera, a stopped camera or a new set-up leaves it at
+    low or empty while nobody knows what the shelf holds. Such a shortage stays in the queue, marked as held,
+    until fresh readings confirm it again or show that the shelf is full.
+    """
     while True:
         ready = []
         now = time.time()
@@ -219,8 +224,15 @@ def shortage_worker():
                 if current.get("state") not in ("low", "empty"):
                     state["shortage_wait"].pop(slot, None)
                 elif now >= queued["due"]:
-                    ready.append(queued["event"])
-                    state["shortage_wait"].pop(slot, None)
+                    if shelf_detect.shortage_confirmed_now(current, now, config):
+                        # The count of this moment, not the one from the start of the wait.
+                        ready.append(queued["event"] | {"state": current["state"], "estimated_units": current["units"],
+                                                        "fill": current["fill"]})
+                        state["shortage_wait"].pop(slot, None)
+                    elif not queued.get("held"):
+                        queued["held"] = True
+                        logger.info(f"slot {slot}: the wait ended, but the camera reading is uncertain "
+                                    f"({current.get('uncertain') or 'not confirmed again yet'}). No order until it is clear.")
         for event in ready:
             logger.info(f"slot {event['slot']} still {event['state']}: order grace period ended")
             post_async(event)
@@ -565,7 +577,8 @@ def sensors():
         "delivery_left_s": max(0, round(state["delivery"]["ends"] - time.time())) if state["delivery"] else None,
         "last_delivery": state["last_delivery"],
         "shortage_wait": [{"slot": slot, "seconds_left": max(0, round(item["due"] - time.time())),
-                           "state": item["event"]["state"]} for slot, item in state["shortage_wait"].items()],
+                           "state": item["event"]["state"], "held": bool(item.get("held"))}
+                          for slot, item in state["shortage_wait"].items()],
         "slots": {str(k): {kk: vv for kk, vv in v.items() if kk in ("state", "fill", "units", "uncertain")}
                   for k, v in state["slots"].items()},
         "config": {k: config[k] for k in ("slots", "temperature_limit_c", "shortage_confirm_s", "manual_slot")},
