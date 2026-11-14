@@ -1,7 +1,11 @@
 """SK-1, the Safe Kitchen Agent enclosure.
 
 Main case: Arduino UNO Q + Modulino Knob + Modulino Buzzer.
-Pod: a small vented box for the Modulino Thermo, on a long Qwiic cable.
+Thermo pod: a small vented box for the Modulino Thermo, on a long Qwiic cable.
+Distance pod: a small box for the SparkFun Qwiic ToF Imager VL53L5CX, with a window for its view.
+
+No part needs a screw. Pins on the standoffs locate each board, rods under the lid or the cover
+hold it down, and each lid snaps into its base with a tight lip and two bumps.
 
 Run:  uv run --no-project --with manifold3d --with numpy --with matplotlib \
         python enclosure.py [--preview] [--assembly]
@@ -13,11 +17,14 @@ CAD files (docs.arduino.cc, "CAD files" download of each board):
   Knob     ABX00107: STEP model.
   Buzzer   ABX00108: STEP model.
   Thermo   ABX00103: STEP model.
+  ToF      SparkFun SEN-18642: Eagle board file "SparkFun Qwiic ToF Imager - VL53L5CX.brd"
+           in github.com/sparkfun/SparkFun_Qwiic_ToF_Imager_VL53L5CX.
 
 Coordinates: x runs left to right (USB-C side is left), y runs front to back,
 z is up. The bottom of the base is z = 0.
 """
 
+import math
 import struct
 import sys
 from pathlib import Path
@@ -60,6 +67,19 @@ ENC_BUSH_D, ENC_BUSH_TOP = 7.0, 11.5          # smooth bushing around the shaft
 ENC_SHAFT_D, ENC_SHAFT_TOP = 6.0, 19.52
 ENC_FLAT_FROM, ENC_FLAT_OFFSET = 14.5, 1.5    # D-flat: start height, plane offset from centre
 BUZ_BODY = (14.5, 6.68, 26.5, 18.68, 3.03)
+HOLE_D = 3.2                           # UNO Q and Modulino mounting holes
+
+# ------------------------------------------------ SparkFun VL53L5CX data ----
+# Frame: x, y from the lower-left board corner as in the Eagle file, z from the PCB top.
+TOF_X = TOF_Y = 25.4                   # 1 x 1 inch outline
+TOF_T = 1.6                            # standard SparkFun board thickness, not in the file
+TOF_HOLE_D = 3.302
+TOF_HOLES = [(2.54, 2.54), (22.86, 2.54), (2.54, 22.86), (22.86, 22.86)]
+TOF_C = (12.7, 12.7)                   # U1, the VL53L5CX module
+TOF_CHIP = (6.4, 3.0, 1.5)             # module length (along x), width, height (ST datasheet)
+TOF_QWIIC = [(0.6, 9.7, 5.6, 15.7), (19.8, 9.7, 24.8, 15.7)]  # J2, J4 bodies around their pads
+TOF_QWIIC_H = 2.95
+TOF_VIEW = 34.0                        # half angle of the window, degrees. The 63 deg diagonal view needs 31.5
 
 # ------------------------------------------------------------- case setup ----
 OX, OY = 144.0, 68.0                   # outside footprint
@@ -67,15 +87,24 @@ WALL, FLOOR, LID_T = 2.0, 2.0, 2.5
 CORNER_R, CHAMFER = 3.0, 0.6
 STANDOFF_UNO = 6.0                     # > UNO_BOTTOM
 GAP_QWIIC = 15.0                       # between UNO Q and Modulinos, for the plugs
-SCREW_INSET = 3.8                      # lid screws, from both edges of each corner
-POST_D = 6.0
-PILOT_D = 2.5                          # M3 self-tapping pilot
-SCREW_CLR_D, SCREW_HEAD_D, SCREW_HEAD_H = 3.4, 6.2, 1.2
 STANDOFF_D = 5.0
-LIP_W, LIP_H, LIP_CLR = 1.2, 2.0, 0.25
+# Screwless fit. A pin on each standoff goes up through the board hole. A rod under the lid
+# comes down over the pin and stops just above the board, so the board cannot move.
+PIN_CLR = 0.35                         # the pin is this much thinner than the hole
+PIN_ABOVE = 0.9                        # pin top above the PCB top
+CLAMP_GAP = 0.2                        # rod end above the PCB top
+BORE = 1.3                             # depth of the hole in the rod end that takes the pin
+UNO_ROD_D, MOD_ROD_D = 4.2, 5.0        # the rods stand where a screw head stood before
+# Snap lid. A lip under the lid goes into the walls. Bumps on the lip click into grooves.
+LIP_W, LIP_H, LIP_CLR = 1.6, 3.5, 0.10   # LIP_CLR is per side. 0.10 gives a very snug fit
+SNAP, SNAP_R, SNAP_LEN = 0.30, 0.6, 14.0  # bump height past the lip face, bump radius, bump length
+SNAP_XS = (36.0, 108.0)                # bumps on the front and the back wall
+PRY_W, PRY_H, PRY_D = 14.0, 1.6, 1.0   # finger notch at the top of each end wall, to lift the lid
 DOT_D, DOT_PITCH = 1.5, 2.5            # one dot grid for every grille and vent
 ENGRAVE = 0.6
 LABEL_XH = 2.4                         # x-height of the small labels
+NAME, NAME_XH = "mise", 4.4            # the name on the lid, left of the LED window
+NAME_BASE, NAME_BASE_XH, NAME_BASE_Z = "en place", 3.8, 9.6   # on the front wall of the base, under the name
 
 Z_IN = FLOOR
 UNO_O = (WALL + 1.0, (OY - UNO_Y) / 2, Z_IN + STANDOFF_UNO)       # PCB lower-left-bottom
@@ -98,16 +127,31 @@ BUZZ_O = (MOD_X0, ROW_BACK - MOD_C[1], BUZZ_TOP - MOD_T)
 KNOB_XY = (KNOB_O[0] + MOD_C[0], ROW_FRONT)
 BUZZ_XY = (BUZZ_O[0] + MOD_C[0], ROW_BACK)
 
-POSTS = [(x, y) for x in (SCREW_INSET, OX - SCREW_INSET) for y in (SCREW_INSET, OY - SCREW_INSET)]
-CABLE_NOTCH = (UNO_O[0] + UNO_X + 4.5, UNO_O[0] + UNO_X + 11.5, 3.0)  # x0, x1, depth
+# Cable opening for the outside sensors, in the back wall between the UNO Q and the Modulinos.
+# It is open at the top, so a cable with its plug on lies in from above. A tongue on the lid
+# closes it down to a gap that holds the cables: two or three Qwiic cables side by side.
+CABLE_X = (UNO_O[0] + UNO_X + 0.5, UNO_O[0] + UNO_X + 16.5)   # 16 mm wide
+CABLE_DEPTH, CABLE_GAP = 5.0, 2.2
 
-# Thermo pod.
-P_WALL, P_FLOOR, P_CLR, P_STAND, P_COVER = 1.6, 1.6, 0.4, 2.4, 2.0
-P_OX, P_OY = MOD_X + 2 * (P_CLR + P_WALL), MOD_Y + 2 * (P_CLR + P_WALL)
-P_O = (P_WALL + P_CLR, P_WALL + P_CLR, P_FLOOR + P_STAND)
-P_PCB_TOP = P_O[2] + MOD_T
-P_H = P_PCB_TOP + MOD_QWIIC_H + 0.6
-P_R = MOD_R + P_CLR + P_WALL
+# Sensor pods. One shape for both boards. Each pod has a cable slot in both end walls, so the
+# Qwiic chain can run from the case to the distance pod and on to the Thermo pod.
+P_WALL, P_FLOOR, P_STAND, P_COVER = 1.6, 1.6, 2.4, 2.0
+P_LIP_W, P_LIP_H, P_SNAP_LEN = 1.2, 3.0, 10.0
+P_CLR = LIP_CLR + P_LIP_W + 0.3        # room for the cover lip beside the board
+PODS = {
+    "thermo": dict(bx=MOD_X, by=MOD_Y, br=MOD_R, t=MOD_T, holes=MOD_HOLES, hole_d=HOLE_D, centre=MOD_C,
+                   qwiic_h=MOD_QWIIC_H, rod_d=MOD_ROD_D, label="temperature"),
+    "tof": dict(bx=TOF_X, by=TOF_Y, br=0.6, t=TOF_T, holes=TOF_HOLES, hole_d=TOF_HOLE_D, centre=TOF_C,
+                qwiic_h=TOF_QWIIC_H, rod_d=4.6, label="distance"),
+}
+
+
+def pod_geom(s):
+    """Outside size, board origin, PCB top, wall height and corner radius of a pod."""
+    ox, oy = s["bx"] + 2 * (P_CLR + P_WALL), s["by"] + 2 * (P_CLR + P_WALL)
+    o = (P_WALL + P_CLR, P_WALL + P_CLR, P_FLOOR + P_STAND)
+    top = o[2] + s["t"]
+    return ox, oy, o, top, top + s["qwiic_h"] + 0.6, s["br"] + P_CLR + P_WALL
 
 
 # --------------------------------------------------------------- helpers ----
@@ -159,18 +203,52 @@ def port_x(x0, x1, y, z, wy, wz, r):
         for py, pz in pts])
 
 
-_FONT = None
+def rod_x(x0, x1, y, z, r):
+    """A round bar along x."""
+    return Manifold.cylinder(x1 - x0, r, circular_segments=32).rotate((0, 90, 0)).translate((x0, y, z))
 
 
-def text(s, x, y, z0, z1, xh=LABEL_XH, anchor="center"):
+def lip_ring(x0, y0, x1, y1, z0, z1, r, w):
+    """A rounded rectangular wall of width w. Its outer face is the given box."""
+    return rbox(x0, y0, z0, x1, y1, z1, r) - rbox(x0 + w, y0 + w, z0 - 1, x1 - w, y1 - w, z1 + 1, max(r - w, 0.2))
+
+
+def snaps(xs, length, y_front, y_back, z, r):
+    """Round bars along x beside the front and the back inner wall face, one pair per x.
+
+    With r = SNAP_R they are the bumps on a lip. With a slightly larger r they are the grooves
+    in the walls. The centre sits inside the lip, so a bump stands SNAP past the lip face.
+    """
+    inset = LIP_CLR + SNAP_R - SNAP
+    return union([rod_x(x - length / 2, x + length / 2, y, z, r)
+                  for x in xs for y in (y_front + inset, y_back - inset)])
+
+
+def clamp_rod(x, y, pcb_top, z_top, d, hole_d):
+    """A rod from under a lid down to just above a board, with a hole in its end for the pin."""
+    z0 = pcb_top + CLAMP_GAP
+    return cyl(x, y, z0, z_top, d, 40) - cyl(x, y, z0 - 0.1, z0 + BORE, hole_d - PIN_CLR + 0.4, 32)
+
+
+def locating_pin(x, y, z0, pcb_top, hole_d):
+    return cyl(x, y, z0 - 0.01, pcb_top + PIN_ABOVE, hole_d - PIN_CLR, 32)
+
+
+_FONTS = {}
+LABEL_FONT = ("DIN Alternate", "DejaVu Sans")
+NAME_FONT = HERE / "fonts" / "Borel-Regular.ttf"   # cursive with one stroke width, SIL Open Font License
+
+
+def text(s, x, y, z0, z1, xh=LABEL_XH, anchor="center", family=LABEL_FONT):
     """Extruded lowercase label. xh is the x-height in mm, y is the baseline."""
-    global _FONT
     from matplotlib.font_manager import FontProperties
     from matplotlib.textpath import TextPath
-    if _FONT is None:
-        _FONT = FontProperties(family=["DIN Alternate", "DejaVu Sans"], weight="bold")
-    k = xh / TextPath((0, 0), "x", size=10, prop=_FONT).get_extents().height
-    polys = [np.asarray(p[:-1]) * k for p in TextPath((0, 0), s, size=10, prop=_FONT).to_polygons()
+    if family not in _FONTS:
+        _FONTS[family] = (FontProperties(fname=str(family)) if isinstance(family, Path)
+                          else FontProperties(family=list(family), weight="bold"))
+    font = _FONTS[family]
+    k = xh / TextPath((0, 0), "x", size=10, prop=font).get_extents().height
+    polys = [np.asarray(p[:-1]) * k for p in TextPath((0, 0), s, size=10, prop=font).to_polygons()
              if len(p) > 3]
     cs = CrossSection(polys, FillRule.EvenOdd)
     bx0, _, bx1, _ = cs.bounds()
@@ -179,37 +257,40 @@ def text(s, x, y, z0, z1, xh=LABEL_XH, anchor="center"):
 
 
 # ------------------------------------------------------------------ base ----
+def boards_held():
+    """Each board of the main case: its origin, holes, PCB top, standoff and hold-down rod diameter."""
+    return [(UNO_O, UNO_HOLES, UNO_TOP, STANDOFF_D, UNO_ROD_D),
+            (KNOB_O, MOD_HOLES, KNOB_O[2] + MOD_T, STANDOFF_D + 1.0, MOD_ROD_D),
+            (BUZZ_O, MOD_HOLES, BUZZ_O[2] + MOD_T, STANDOFF_D + 1.0, MOD_ROD_D)]
+
+
 def make_base():
     shell = cbox(0, 0, 0, OX, OY, Z_LID, CORNER_R, bottom=CHAMFER)
     cavity = rbox(WALL, WALL, Z_IN, OX - WALL, OY - WALL, Z_LID + 1, CORNER_R - WALL)
     add, cut = [], []
-
-    for hx, hy in UNO_HOLES:
-        x, y = UNO_O[0] + hx, UNO_O[1] + hy
-        add.append(cyl(x, y, Z_IN - 0.01, UNO_O[2], STANDOFF_D))
-        cut.append(cyl(x, y, Z_IN - 0.8, UNO_O[2] + 0.1, PILOT_D))
-    for origin in (KNOB_O, BUZZ_O):
-        for hx, hy in MOD_HOLES:
+    for origin, holes, pcb_top, standoff_d, _ in boards_held():
+        for hx, hy in holes:
             x, y = origin[0] + hx, origin[1] + hy
-            add.append(cyl(x, y, Z_IN - 0.01, origin[2], STANDOFF_D + 1.0))
-            cut.append(cyl(x, y, Z_IN - 0.8, origin[2] + 0.1, PILOT_D))
-    # Lid screw posts, one in each corner, merged into the walls.
-    for x, y in POSTS:
-        cx, cy = (0.5 if x < OX / 2 else OX - 0.5), (0.5 if y < OY / 2 else OY - 0.5)
-        add.append(cyl(x, y, Z_IN - 0.01, Z_LID, POST_D))
-        add.append(box(min(x, cx), min(y, cy), Z_IN - 0.01, max(x, cx), max(y, cy), Z_LID))
-        cut.append(cyl(x, y, Z_LID - 11, Z_LID + 0.1, PILOT_D))
-    base = ((shell - cavity) + union(add)) ^ shell
+            add.append(cyl(x, y, Z_IN - 0.01, origin[2], standoff_d))
+            add.append(locating_pin(x, y, origin[2], pcb_top, HOLE_D))
+    base = (shell - cavity) + union(add)
 
     # USB-C port.
     cut.append(port_x(-1, WALL + 1, UNO_O[1] + UNO_USB_Y, UNO_TOP + UNO_USB_Z, 13.0, 7.5, 2.0))
-    # Thermo cable notch in the back wall. The lid closes it from above.
-    cut.append(box(CABLE_NOTCH[0], OY - WALL - 1, Z_LID - CABLE_NOTCH[2], CABLE_NOTCH[1], OY + 1, Z_LID + 1))
+    # Cable opening for the outside sensors, open at the top. The lid tongue closes it to a gap.
+    cut.append(box(CABLE_X[0], OY - WALL - 1, Z_LID - CABLE_DEPTH, CABLE_X[1], OY + 1, Z_LID + 1))
     # One row of vent dots low on the front and back walls, in line with the lid vent.
     for i in range(VENT_NX):
         x = WIN_CX + (i - (VENT_NX - 1) / 2) * DOT_PITCH
         for y0, y1 in ((-1, WALL + 1), (OY - WALL - 1, OY + 1)):
             cut.append(wall_dot(x, y0, y1, Z_IN + 3.0, 1.8))
+    # Grooves for the lid bumps, and a finger notch at the top of each end wall.
+    cut.append(snaps(SNAP_XS, SNAP_LEN + 1.0, WALL, OY - WALL, Z_LID - LIP_H / 2, SNAP_R + 0.05))
+    for x0, x1 in ((-1, PRY_D), (OX - PRY_D, OX + 1)):
+        cut.append(box(x0, OY / 2 - PRY_W / 2, Z_LID - PRY_H, x1, OY / 2 + PRY_W / 2, Z_LID + 1))
+    # The second half of the name, engraved in the front wall under the name on the lid.
+    cut.append(text(NAME_BASE, 8.0, 0, 0, ENGRAVE + 1, xh=NAME_BASE_XH, anchor="left", family=NAME_FONT)
+               .rotate((90, 0, 0)).translate((0, ENGRAVE, NAME_BASE_Z)))
     # Recesses for four 10 mm rubber feet.
     for x in (10, OX - 10):
         for y in (10, OY - 10):
@@ -221,28 +302,26 @@ def make_base():
 def make_lid():
     lid = cbox(0, 0, Z_LID, OX, OY, Z_TOP, CORNER_R, top=CHAMFER)
 
-    # Locating lip: four straight runs inside the walls, clear of the corner posts.
-    lo, c = WALL + LIP_CLR, SCREW_INSET + POST_D / 2 + 0.6
-    ring = (box(lo, lo, Z_LID - LIP_H, OX - lo, OY - lo, Z_LID + 0.01)
-            - box(lo + LIP_W, lo + LIP_W, Z_LID - LIP_H - 1, OX - lo - LIP_W, OY - lo - LIP_W, Z_LID + 1))
-    gaps = [box(x - c, y - c, Z_LID - LIP_H - 1, x + c, y + c, Z_LID)
-            for x in (0, OX) for y in (0, OY)]
-    gaps.append(box(CABLE_NOTCH[0] - 0.5, OY - WALL - 3, Z_LID - LIP_H - 1, CABLE_NOTCH[1] + 0.5, OY, Z_LID))
-    lid = lid + (ring - union(gaps))
+    # Snap lip: one closed ring inside the walls, open only at the cable opening.
+    lo = WALL + LIP_CLR
+    ring = lip_ring(lo, lo, OX - lo, OY - lo, Z_LID - LIP_H, Z_LID + 0.01, CORNER_R - WALL - LIP_CLR, LIP_W)
+    ring += snaps(SNAP_XS, SNAP_LEN, WALL, OY - WALL, Z_LID - LIP_H / 2, SNAP_R) ^ box(
+        lo - 1, lo - 1, Z_LID - LIP_H, OX - lo + 1, OY - lo + 1, Z_LID)
+    ring -= box(CABLE_X[0] - 0.5, OY - WALL - LIP_W - 1, Z_LID - LIP_H - 1, CABLE_X[1] + 0.5, OY, Z_LID)
+    tongue = box(CABLE_X[0] + 0.15, OY - WALL, Z_LID - CABLE_DEPTH + CABLE_GAP, CABLE_X[1] - 0.15, OY, Z_LID + 0.01)
+    rods = [clamp_rod(origin[0] + hx, origin[1] + hy, pcb_top, Z_LID + 0.01, rod_d, HOLE_D)
+            for origin, holes, pcb_top, _, rod_d in boards_held() for hx, hy in holes]
+    lid = lid + ring + tongue + union(rods)
 
-    zc0, zc1 = Z_LID - 1, Z_TOP + 1                 # through-cut range
+    zc0, zc1 = Z_LID - 0.5, Z_TOP + 1               # through-cut range
     ze = Z_TOP - ENGRAVE                            # engraving floor
     cut = []
-    for x, y in POSTS:
-        cut.append(cyl(x, y, zc0, zc1, SCREW_CLR_D))
-        cut.append(cyl(x, y, Z_TOP - SCREW_HEAD_H, zc1, SCREW_HEAD_D))
 
     # Front row: name, LED matrix window, knob.
     cut.append(rbox(WIN[0], WIN[1], zc0, WIN[2], WIN[3], zc1, 0.6))
     cut.append(rbox(WIN[0] - 1.5, WIN[1] - 1.5, Z_TOP - 0.5, WIN[2] + 1.5, WIN[3] + 1.5, zc1, 1.2))
     cut.append(cyl(*KNOB_XY, zc0, zc1, ENC_BUSH_D + 0.7))
-    for i, word in enumerate(("safe", "kitchen", "agent")):
-        cut.append(text(word, 8.0, ROW_FRONT + 4.0 - i * 5.5, ze, zc1, xh=3.0, anchor="left"))
+    cut.append(text(NAME, 8.0, ROW_FRONT - NAME_XH / 2, ze, zc1, xh=NAME_XH, anchor="left", family=NAME_FONT))
     cut.append(text("limit", KNOB_XY[0], 4.6, ze, zc1))
 
     # Back row: power button, vent, status LEDs, speaker.
@@ -257,47 +336,72 @@ def make_lid():
     return lid - union(cut)
 
 
-# ------------------------------------------------------------ thermo pod ----
-def make_pod_base():
-    pod = cbox(0, 0, 0, P_OX, P_OY, P_H, P_R, bottom=0.5) - rbox(
-        P_WALL, P_WALL, P_FLOOR, P_OX - P_WALL, P_OY - P_WALL, P_H + 1, P_R - P_WALL)
-    cy = P_O[1] + MOD_C[1]
-    tab = (rbox(P_OX - 6, cy - 5.5, 0, P_OX + 8, cy + 5.5, P_FLOOR, 5.4)
-           - cyl(P_OX + 3.2, cy, -1, P_FLOOR + 1, 4.0))
+# ------------------------------------------------------------- sensor pods ----
+def tof_window(cx, cy, z_chip_top, z0, z1):
+    """The window over the VL53L5CX. It widens upward at TOF_VIEW, so its edge stays out of the view."""
+    k = math.tan(math.radians(TOF_VIEW))
+
+    def outline(z):
+        d = (z - z_chip_top) * k
+        return box(cx - TOF_CHIP[0] / 2 - d, cy - TOF_CHIP[1] / 2 - d, z,
+                   cx + TOF_CHIP[0] / 2 + d, cy + TOF_CHIP[1] / 2 + d, z + 0.001)
+    return Manifold.batch_hull([outline(z0), outline(z1)])
+
+
+def make_pod_base(kind):
+    s = PODS[kind]
+    ox, oy, o, top, h, r = pod_geom(s)
+    pod = cbox(0, 0, 0, ox, oy, h, r, bottom=0.5) - rbox(P_WALL, P_WALL, P_FLOOR, ox - P_WALL, oy - P_WALL, h + 1, r - P_WALL)
+    cx, cy = ox / 2, o[1] + s["centre"][1]
+    tab = rbox(cx - 5.5, oy - 6, 0, cx + 5.5, oy + 8, P_FLOOR, 5.4) - cyl(cx, oy + 3.2, -1, P_FLOOR + 1, 4.0)
     add, cut = [tab], []
-    for hx, hy in MOD_HOLES:
-        add.append(cyl(P_O[0] + hx, P_O[1] + hy, P_FLOOR - 0.01, P_O[2], STANDOFF_D + 0.6))
-        cut.append(cyl(P_O[0] + hx, P_O[1] + hy, -1, P_O[2] + 0.1, PILOT_D))
-    # Cable slot at the left Qwiic socket, open at the top.
-    cut.append(box(-1, cy - 3.6, P_PCB_TOP - 0.2, P_WALL + 1, cy + 3.6, P_H + 1))
-    # One row of air dots on each long wall, above the PCB.
-    for i in range(7):
-        x = P_OX / 2 + (i - 3) * 2 * DOT_PITCH
-        for y0, y1 in ((-1, P_WALL + 1), (P_OY - P_WALL - 1, P_OY + 1)):
-            cut.append(wall_dot(x, y0, y1, P_PCB_TOP + 1.7, 1.8))
+    for hx, hy in s["holes"]:
+        add.append(cyl(o[0] + hx, o[1] + hy, P_FLOOR - 0.01, o[2], STANDOFF_D + 0.6))
+        add.append(locating_pin(o[0] + hx, o[1] + hy, o[2], top, s["hole_d"]))
+    # A cable slot in each end wall, at the Qwiic sockets, open at the top. The cover closes it.
+    for x0, x1 in ((-1, P_WALL + 1), (ox - P_WALL - 1, ox + 1)):
+        cut.append(box(x0, cy - 3.6, top - 0.2, x1, cy + 3.6, h + 1))
+    if kind == "thermo":  # air comes in low on the long walls and leaves through the cover grille
+        for i in range(7):
+            x = ox / 2 + (i - 3) * 2 * DOT_PITCH
+            for y0, y1 in ((-1, P_WALL + 1), (oy - P_WALL - 1, oy + 1)):
+                cut.append(wall_dot(x, y0, y1, P_FLOOR + 1.3, 1.8))
+    cut.append(snaps((ox / 2,), P_SNAP_LEN + 1.0, P_WALL, oy - P_WALL, h - P_LIP_H / 2, SNAP_R + 0.05))
+    cut.append(box(ox / 2 - 5, -1, h - 1.2, ox / 2 + 5, 0.8, h + 1))   # finger notch in the front wall
     return (pod + union(add)) - union(cut)
 
 
-def make_pod_cover():
-    z0, z1 = P_H, P_H + P_COVER
-    cover = cbox(0, 0, z0, P_OX, P_OY, z1, P_R, top=0.5)
-    add, cut = [], []
-    for hx, hy in MOD_HOLES:
-        x, y = P_O[0] + hx, P_O[1] + hy
-        add.append(cyl(x, y, P_PCB_TOP + 0.1, z0 + 0.01, STANDOFF_D + 0.2))   # spacer down to the PCB
-        cut.append(cyl(x, y, P_PCB_TOP - 1, z1 + 1, SCREW_CLR_D))
-        cut.append(cyl(x, y, z1 - 1.0, z1 + 1, SCREW_HEAD_D))
-    cx, cy = P_O[0] + MOD_C[0], P_O[1] + MOD_C[1]
-    cut.append(dots(cx, cy, 9, 5, z0 - 1, z1 + 1))
-    cut.append(text("temperature", cx, P_OY - 5.9, z1 - ENGRAVE, z1 + 1, xh=2.0))
-    return (cover + union(add)) - union(cut)
+def make_pod_cover(kind):
+    s = PODS[kind]
+    ox, oy, o, top, h, r = pod_geom(s)
+    z0, z1 = h, h + P_COVER
+    cover = cbox(0, 0, z0, ox, oy, z1, r, top=0.5)
+    cx, cy = o[0] + s["centre"][0], o[1] + s["centre"][1]
+    lo = P_WALL + LIP_CLR
+    ring = lip_ring(lo, lo, ox - lo, oy - lo, z0 - P_LIP_H, z0 + 0.01, max(r - P_WALL - LIP_CLR, 0.3), P_LIP_W)
+    ring += snaps((ox / 2,), P_SNAP_LEN, P_WALL, oy - P_WALL, z0 - P_LIP_H / 2, SNAP_R) ^ box(
+        lo - 1, lo - 1, z0 - P_LIP_H, ox - lo + 1, oy - lo + 1, z0)
+    for x0, x1 in ((-1, lo + P_LIP_W + 0.5), (ox - lo - P_LIP_W - 0.5, ox + 1)):
+        ring -= box(x0, cy - 4.1, z0 - P_LIP_H - 1, x1, cy + 4.1, z0)
+    rods = [clamp_rod(o[0] + hx, o[1] + hy, top, z0 + 0.01, s["rod_d"], s["hole_d"]) for hx, hy in s["holes"]]
+    cover = cover + ring + union(rods)
+
+    cut = []
+    if kind == "thermo":
+        cut.append(dots(cx, cy, 9, 5, z0 - 1, z1 + 1))
+        cut.append(text(s["label"], cx, oy - 5.9, z1 - ENGRAVE, z1 + 1, xh=2.0))
+    else:
+        cut.append(tof_window(cx, cy, top + TOF_CHIP[2], z0 - 0.5, z1 + 0.5))
+        cut.append(text(s["label"], cx, 3.4, z1 - ENGRAVE, z1 + 1, xh=2.0))
+    return cover - union(cut)
 
 
 # ------------------------------------------------------ board stand-ins ----
 def modulino(origin, kind):
     ox, oy, oz = origin
     top = oz + MOD_T
-    parts = [rbox(ox, oy, oz, ox + MOD_X, oy + MOD_Y, top, MOD_R)]
+    pcb = rbox(ox, oy, oz, ox + MOD_X, oy + MOD_Y, top, MOD_R)
+    parts = [pcb - union([cyl(ox + hx, oy + hy, oz - 1, top + 1, HOLE_D, 32) for hx, hy in MOD_HOLES])]
     parts += [box(ox + a, oy + b, top, ox + c, oy + d, top + MOD_QWIIC_H) for a, b, c, d in MOD_QWIIC]
     cx, cy = ox + MOD_C[0], oy + MOD_C[1]
     if kind == "knob":
@@ -324,9 +428,31 @@ def uno_q_connectors():
 
 
 def uno_q():
-    """The UNO Q as one solid for the fit: the board with its low parts as a block, and the connectors."""
+    """The UNO Q as one solid for the fit: the board with its low parts as a block, and the connectors.
+
+    The block leaves free each mounting hole and a ring around it, where a screw head stood in
+    the first version of the case. The hold-down rods of the lid stand in that ring.
+    """
     ox, oy, oz = UNO_O
-    return union([box(ox, oy, oz, ox + UNO_X, oy + UNO_Y, UNO_TOP + 4.0)] + uno_q_connectors())
+    block = box(ox, oy, oz, ox + UNO_X, oy + UNO_Y, UNO_TOP + 4.0)
+    for hx, hy in UNO_HOLES:
+        block -= cyl(ox + hx, oy + hy, oz - 1, UNO_TOP + 0.001, HOLE_D, 32)
+        block -= cyl(ox + hx, oy + hy, UNO_TOP, UNO_TOP + 5, UNO_ROD_D + 0.4, 40)
+    return union([block] + uno_q_connectors())
+
+
+def tof_look(origin):
+    """The SparkFun VL53L5CX board as two solids: the PCB with its holes, and the parts on it."""
+    ox, oy, oz = origin
+    top = oz + TOF_T
+    pcb = box(ox, oy, oz, ox + TOF_X, oy + TOF_Y, top)
+    for hx, hy in TOF_HOLES:
+        pcb -= cyl(ox + hx, oy + hy, oz - 1, top + 1, TOF_HOLE_D, 32)
+    cx, cy = ox + TOF_C[0], oy + TOF_C[1]
+    parts = [box(ox + a, oy + b, top, ox + c, oy + d, top + TOF_QWIIC_H) for a, b, c, d in TOF_QWIIC]
+    parts.append(box(cx - TOF_CHIP[0] / 2, cy - TOF_CHIP[1] / 2, top, cx + TOF_CHIP[0] / 2, cy + TOF_CHIP[1] / 2,
+                     top + TOF_CHIP[2]))
+    return pcb, union(parts)
 
 
 def modulino_look(origin, kind):
@@ -362,16 +488,38 @@ def boards():
     return {"UNO Q": uno_q(), "Knob": modulino(KNOB_O, "knob"), "Buzzer": modulino(BUZZ_O, "buzzer")}
 
 
-def check(base, lid, pod, cover):
+def pod_board(kind):
+    o = pod_geom(PODS[kind])[2]
+    return modulino(o, "thermo") if kind == "thermo" else union(tof_look(o))
+
+
+def check(base, lid, pods):
+    """Every board against every printed part, each lid against its base, and the view of the ToF."""
     bad = []
-    shell = base + lid
     for name, g in boards().items():
-        v = (shell ^ g).volume()
+        v = ((base + lid) ^ g).volume()
         if v > 0.05:
             bad.append(f"{name} in case: {v:.2f} mm3")
-    v = ((pod + cover) ^ modulino(P_O, "thermo")).volume()
+    pairs = [("lid in base", base, lid)] + [(f"{k} cover in pod", pod, cover) for k, (pod, cover) in pods.items()]
+    for kind, (pod, cover) in pods.items():
+        v = ((pod + cover) ^ pod_board(kind)).volume()
+        if v > 0.05:
+            bad.append(f"{kind} board in pod: {v:.2f} mm3")
+    for name, a, b in pairs:
+        v = (a ^ b).volume()
+        if v > 0.05:
+            bad.append(f"{name}: {v:.2f} mm3")
+    # Nothing printed may stand in the 63 deg diagonal view of the VL53L5CX, up to 30 mm out.
+    ox, oy, o, top, h, r = pod_geom(PODS["tof"])
+    cx, cy, z = o[0] + TOF_C[0], o[1] + TOF_C[1], top + TOF_CHIP[2]
+    far = 30.0
+    ends = [(dx * TOF_CHIP[0] / 2, dy * TOF_CHIP[1] / 2) for dx in (-1, 1) for dy in (-1, 1)]
+    k = math.tan(math.radians(31.5))
+    cone = Manifold.batch_hull([box(cx + a - 0.01, cy + b - 0.01, z + 0.05, cx + a + 0.01, cy + b + 0.01, z + 0.06)
+                                for a, b in ends] + [cyl(cx, cy, z + far, z + far + 0.01, 2 * far * k, 64)])
+    v = (cone ^ (pods["tof"][0] + pods["tof"][1])).volume()
     if v > 0.05:
-        bad.append(f"Thermo in pod: {v:.2f} mm3")
+        bad.append(f"ToF view blocked: {v:.2f} mm3")
     return bad
 
 
@@ -458,56 +606,53 @@ def render(items, path):
     fig.savefig(path, dpi=120)
 
 
-def screw(x, y, z_head_top, length, head_d=5.6, head_h=2.0):
-    """A plain stand-in for an M3 screw, head up. z_head_top is the top of the head."""
-    return union([cyl(x, y, z_head_top - head_h, z_head_top, head_d, 32),
-                  cyl(x, y, z_head_top - head_h - length, z_head_top - head_h + 0.01, 3.0, 24)])
-
-
-def write_assembly(base, lid, pod, cover):
+def write_assembly(base, lid, pods):
     """Every part in its assembled place, for the FreeCAD file and the exploded picture.
 
     Writes assembly/*.stl and assembly/assembly.json. Each entry of the JSON names a part, its
-    colour, and how far it moves in the exploded view (mm, as x, y, z). The pod sits to the
-    right of the case.
+    colour, and how far it moves in the exploded view (mm, as x, y, z). The two pods sit to the
+    right of the case, the distance pod at the far right.
     """
     import json
 
     folder = HERE / "assembly"
     folder.mkdir(exist_ok=True)
-    shift = (OX + 26, (OY - P_OY) / 2, 0)  # the pod sits to the right of the case
-    move = lambda part: part.translate(shift)
-    board_screws = lambda origin, top: union([screw(origin[0] + hx, origin[1] + hy, top + 2.0, 6.0) for hx, hy in MOD_HOLES])
-    pod_top = P_H + P_COVER
-    grey, white, dark, steel = "#cfd0cc", "#e4e4e0", "#2b2b2b", "#b9bcc0"
-    teal, blue = "#00878f", "#1d3f8f"  # the UNO Q board and the Modulino boards
+    for old in folder.glob("*.stl"):
+        old.unlink()
+    grey, white, dark = "#cfd0cc", "#e4e4e0", "#2b2b2b"
+    teal, blue, red = "#00878f", "#1d3f8f", "#c8102e"  # UNO Q, Modulinos, SparkFun
     uno_pcb, uno_parts = uno_q_look()
     knob_pcb, knob_parts = modulino_look(KNOB_O, "knob")
     buzz_pcb, buzz_parts = modulino_look(BUZZ_O, "buzzer")
-    thermo_pcb, thermo_parts = modulino_look(P_O, "thermo")
-    up, screws_up, lid_up, lid_screws_up = (0, 0, 34), (0, 0, 58), (0, 0, 98), (0, 0, 128)
+    up, lid_up = (0, 0, 34), (0, 0, 70)
     parts = [
         # name, solid, colour, exploded move, what it is, kind of surface
         ("base", base, grey, (0, 0, 0), "Printed base", "print"),
         ("uno_q", uno_pcb, teal, up, "Arduino UNO Q", "board"),
         ("uno_q_parts", uno_parts, dark, up, "Arduino UNO Q, headers and connectors", "part"),
-        ("uno_q_screws", union([screw(UNO_O[0] + hx, UNO_O[1] + hy, UNO_TOP + 2.0, 6.0) for hx, hy in UNO_HOLES]),
-         steel, screws_up, "4 screws M3 x 6", "metal"),
         ("knob", knob_pcb, blue, up, "Modulino Knob", "board"),
-        ("knob_parts", knob_parts, steel, up, "Modulino Knob, encoder", "metal"),
-        ("knob_screws", board_screws(KNOB_O, KNOB_O[2] + MOD_T), steel, screws_up, "4 screws M3 x 6", "metal"),
+        ("knob_parts", knob_parts, "#b9bcc0", up, "Modulino Knob, encoder", "metal"),
         ("buzzer", buzz_pcb, blue, up, "Modulino Buzzer", "board"),
         ("buzzer_parts", buzz_parts, dark, up, "Modulino Buzzer, buzzer", "part"),
-        ("buzzer_screws", board_screws(BUZZ_O, BUZZ_O[2] + MOD_T), steel, screws_up, "4 screws M3 x 6", "metal"),
         ("lid", lid, white, lid_up, "Printed lid", "print"),
-        ("lid_screws", union([screw(x, y, Z_TOP, 10.0) for x, y in POSTS]), steel, lid_screws_up, "4 screws M3 x 10", "metal"),
-        ("pod_base", move(pod), grey, (0, 0, 0), "Printed Thermo pod base", "print"),
-        ("thermo", move(thermo_pcb), blue, (0, 0, 18), "Modulino Thermo", "board"),
-        ("thermo_parts", move(thermo_parts), dark, (0, 0, 18), "Modulino Thermo, sensor", "part"),
-        ("pod_cover", move(cover), white, (0, 0, 40), "Printed Thermo pod cover", "print"),
-        ("pod_screws", move(union([screw(P_O[0] + hx, P_O[1] + hy, pod_top, 10.0) for hx, hy in MOD_HOLES])),
-         steel, (0, 0, 62), "4 screws M3 x 10", "metal"),
     ]
+    for kind, x in (("thermo", OX + 26), ("tof", OX + 26 + pod_geom(PODS["thermo"])[0] + 16)):
+        y = (OY - pod_geom(PODS[kind])[1]) / 2
+        pod, cover = pods[kind]
+        ox, oy, o, top, h, r = pod_geom(PODS[kind])
+        def move(part, k=(x, y, 0)):
+            return part.translate(k)
+        if kind == "thermo":
+            pcb, on = modulino_look(o, "thermo")
+            colour, name = blue, "Modulino Thermo"
+        else:
+            pcb, on = tof_look(o)
+            colour, name = red, "SparkFun ToF Imager VL53L5CX"
+        title = "Thermo pod" if kind == "thermo" else "Distance pod"
+        parts += [(f"{kind}_pod_base", move(pod), grey, (0, 0, 0), f"Printed {title} base", "print"),
+                  (kind, move(pcb), colour, (0, 0, 16), name, "board"),
+                  (f"{kind}_parts", move(on), dark, (0, 0, 16), f"{name}, parts", "part"),
+                  (f"{kind}_pod_cover", move(cover), white, (0, 0, 34), f"Printed {title} cover", "print")]
     manifest = []
     for name, solid, colour, explode, label, surface in parts:
         write_stl(solid, folder / f"{name}.stl")
@@ -520,30 +665,38 @@ def write_assembly(base, lid, pod, cover):
 def main():
     OUT.mkdir(exist_ok=True)
     base, lid = make_base(), make_lid()
-    pod, cover = make_pod_base(), make_pod_cover()
+    pods = {kind: (make_pod_base(kind), make_pod_cover(kind)) for kind in PODS}
 
-    bad = check(base, lid, pod, cover)
+    bad = check(base, lid, pods)
     print("clash check:", "OK" if not bad else bad)
 
     write_stl(base, OUT / "base.stl")
     write_stl(flip(lid, Z_TOP, OY), OUT / "lid.stl")
-    write_stl(pod, OUT / "thermo_pod_base.stl")
-    write_stl(flip(cover, P_H + P_COVER, P_OY), OUT / "thermo_pod_cover.stl")
+    for kind, (pod, cover) in pods.items():
+        ox, oy, o, top, h, r = pod_geom(PODS[kind])
+        write_stl(pod, OUT / f"{kind}_pod_base.stl")
+        write_stl(flip(cover, h + P_COVER, oy), OUT / f"{kind}_pod_cover.stl")
+        print(f"{kind} pod: {ox:.1f} x {oy:.1f} x {h + P_COVER:.1f} mm")
     write_template(HERE / "uno_q_template.svg")
 
-    print(f"case: {OX:.1f} x {OY:.1f} x {Z_TOP:.1f} mm, pod: {P_OX:.1f} x {P_OY:.1f} x {P_H + P_COVER:.1f} mm")
+    print(f"case: {OX:.1f} x {OY:.1f} x {Z_TOP:.1f} mm")
     print(f"standoffs: UNO Q {STANDOFF_UNO:.2f}, Knob {KNOB_O[2] - Z_IN:.2f}, Buzzer {BUZZ_O[2] - Z_IN:.2f} mm")
-    for name, p in (("base", base), ("lid", lid), ("pod", pod), ("cover", cover)):
-        print(f"{name}: {p.status().name}, {p.volume() / 1000:.1f} cm3")
+    solids = [("base", base), ("lid", lid)] + [(f"{k} {n}", s) for k, pc in pods.items() for n, s in zip(("pod", "cover"), pc)]
+    for name, s in solids:
+        print(f"{name}: {s.status().name}, {s.volume() / 1000:.1f} cm3")
 
     if "--assembly" in sys.argv:
-        write_assembly(base, lid, pod, cover)
+        write_assembly(base, lid, pods)
 
     if "--preview" in sys.argv:
         grey, metal = "#d6d7d3", "#8a8d8f"
-        shift = (OX / 2 - P_OX / 2 - 4, -P_OY - 12, 0)
-        render([(base, grey), (lid, grey), (modulino(KNOB_O, "knob"), metal),
-                (pod.translate(shift), grey), (cover.translate(shift), grey)], OUT / "preview.png")
+        items = [(base, grey), (lid, grey), (modulino(KNOB_O, "knob"), metal)]
+        x = 4.0
+        for kind, (pod, cover) in pods.items():
+            ox, oy = pod_geom(PODS[kind])[:2]
+            items += [(pod.translate((x, -oy - 12, 0)), grey), (cover.translate((x, -oy - 12, 0)), grey)]
+            x += ox + 10
+        render(items, OUT / "preview.png")
 
 
 if __name__ == "__main__":

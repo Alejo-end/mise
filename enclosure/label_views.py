@@ -22,17 +22,17 @@ GROUND, INK, INK2, LINE = (252, 252, 251), (11, 11, 11), (82, 81, 78), (137, 135
 
 # number, name, part in assembly.json, which end of the part the balloon points at, balloon offset in pixels
 LABELS = [
-    (1, "4 screws M3 x 10, lid", "lid_screws", "left", (-70, 0)),
-    (2, "Lid, printed", "lid", "left", (-70, 0)),
-    (3, "12 screws M3 x 6, boards", "uno_q_screws", "left", (-70, 0)),
-    (4, "Arduino UNO Q", "uno_q", "left", (-70, 0)),
-    (5, "Base, printed", "base", "left", (-70, 0)),
-    (6, "Modulino Buzzer", "buzzer", "right", (85, 5)),
-    (7, "Modulino Knob", "knob_parts", "right", (75, 20)),
-    (8, "4 screws M3 x 10, pod", "pod_screws", "right", (70, 0)),
-    (9, "Thermo pod cover, printed", "pod_cover", "right", (70, 0)),
+    (1, "Lid, printed, snaps on", "lid", "left", (-70, 0)),
+    (2, "Arduino UNO Q", "uno_q", "left", (-70, 0)),
+    (3, "Base, printed", "base", "left", (-70, 0)),
+    (4, "Modulino Buzzer", "buzzer", "right", (85, 5)),
+    (5, "Modulino Knob", "knob_parts", "right", (75, 20)),
+    (6, "Distance pod cover, printed", "tof_pod_cover", "right", (70, 0)),
+    (7, "SparkFun ToF Imager VL53L5CX", "tof", "right", (70, 0)),
+    (8, "Distance pod base, printed", "tof_pod_base", "right", (70, 0)),
+    (9, "Thermo pod cover, printed", "thermo_pod_cover", "right", (70, 0)),
     (10, "Modulino Thermo", "thermo", "right", (70, 0)),
-    (11, "Thermo pod base, printed", "pod_base", "right", (70, 10)),
+    (11, "Thermo pod base, printed", "thermo_pod_base", "right", (70, 10)),
 ]
 
 
