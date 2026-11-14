@@ -131,10 +131,10 @@
   #recogList { margin:10px 0 0; padding-left:1.2em } #recogList li { margin:2px 0 }
   /* Local model (board, experimental): classes are numbers because the model file has no names; dashed = score below 0.5 */
   .lbox { position:absolute; border:3px solid #62a0ea; pointer-events:none } .lbox.c1 { border-color:#f6d32d } .lbox.c2 { border-color:#dc8add }
-  .lbox.low { border-style:dashed } .kbox { position:absolute; border:2px dotted #fff; pointer-events:none }
-  .kcrop { position:absolute; border:2px dashed #ff00ff; pointer-events:none }
+  .lbox.low { border-style:dashed } .kbox { position:absolute; border:2px dotted #fff; box-shadow:0 0 0 1px #000; pointer-events:none }
+  .kcrop { position:absolute; border:4px double #fff; box-shadow:0 0 0 1px #000; pointer-events:none }
   .lbox b, .kbox b { position:absolute; left:-3px; top:-25px; background:#000; color:#fff; font-size:.9rem; font-weight:700; padding:1px 6px; white-space:nowrap }
-  .kbox b { top:auto; bottom:-25px }
+  .lbox.inside b { top:0; left:0 } .kbox b { top:auto; bottom:0; left:0; font-size:.8rem; opacity:.9 }
   #localList, #regionList { margin:10px 0 0; padding-left:1.2em } #localList li, #regionList li { margin:4px 0 }
   #localList button { margin-left:8px }
 </style>
@@ -605,7 +605,7 @@ function showLocal(r) {
   const list = $("localList"); list.innerHTML = "";
   r.detections.forEach((d, i) => {
     const low = d.score < 0.5;
-    const el = document.createElement("div"); el.className = `lbox c${d.class_id}${low ? " low" : ""}`; placeBox(el, d.box);
+    const el = document.createElement("div"); el.className = `lbox c${d.class_id}${low ? " low" : ""}${d.box[1] < 0.08 ? " inside" : ""}`; placeBox(el, d.box);
     const tag = document.createElement("b"); tag.textContent = `L${i + 1} ${d.label} ${d.score.toFixed(2)}`; el.appendChild(tag); cam.appendChild(el);
     const li = document.createElement("li");
     li.textContent = `L${i + 1}: ${d.label}, score ${d.score.toFixed(2)} (objectness ${d.objectness.toFixed(2)})${low ? ", low score" : ""}, box ${d.box_px.map(Math.round).join(", ")} px`;
@@ -679,7 +679,7 @@ function showRegion(k, i, ms) {
   if (!(k.objects || []).length) { const li = document.createElement("li"); li.textContent = "Kimi saw no package in this region (this says nothing about the rest of the shelf)."; list.appendChild(li); }
   const units = Object.entries(k.visible_units || {}).map(([id, n]) => `${rname(id)} ${n}`).join(", ") || "none identified";
   const t = k.timing_ms || {};
-  $("regionMeta").textContent = `Region L${i + 1} (the dashed magenta frame is what Kimi saw enlarged). Identified in this region: ${units}. ` +
+  $("regionMeta").textContent = `Region L${i + 1} (the double white frame is what Kimi saw enlarged; dotted boxes K1… are its items). Identified in this region: ${units}. ` +
     `${k.uncertain ? "Uncertain: " + (k.reasons || []).join("; ") + ". " : ""}${k.counting_note} ` +
     `Captured ${clock(k.captured_at)}; ${(k.model || {}).name || "model"}: ${t.total != null ? (t.total / 1000).toFixed(1) + " s" : "?"} in the service, ${(ms / 1000).toFixed(1)} s round trip.`;
 }
