@@ -515,24 +515,36 @@ socket.on("recognition_status_response", (r) => {
     `${rname(k)} ${(v.reference ?? v.photos?.reference ?? 0)} reference / ${(v.heldout ?? v.photos?.heldout ?? 0)} held-out`).join(", ");
 });
 socket.on("recognize_response", (r) => {
-  if (!r.ok) { $("recogMeta").textContent = `Not recognized: ${r.error || r.detail || "service error"}`; return; }
+  if (!r.ok) { $("recogMeta").textContent = `Not recognized: ${r.error || r.detail || "service error"} (${r.round_trip_ms ?? "?"} ms)`; return; }
   const cam = $("recogCam"); cam.hidden = false; $("recogFrame").src = `data:image/jpeg;base64,${r.frame}`;
   cam.querySelectorAll(".rbox,.rsurf").forEach((e) => e.remove());
-  const surf = document.createElement("div"); surf.className = "rsurf"; placeBox(surf, r.surface); cam.appendChild(surf);
+  if (r.mode !== "vision-model") { const surf = document.createElement("div"); surf.className = "rsurf"; placeBox(surf, r.surface); cam.appendChild(surf); }
   const list = $("recogList"); list.innerHTML = "";
   (r.objects || []).forEach((o, i) => {
     const top = (o.candidates || [])[0];
-    const text = o.status === "known" ? rname(o.identity) : o.status === "ambiguous" && top ? `ambiguous (${rname(top.identity)}?)` : o.status;
-    const d = document.createElement("div"); d.className = `rbox ${o.status}`; placeBox(d, o.box);
-    const tag = document.createElement("b"); tag.textContent = `${i + 1} ${text}`; d.appendChild(tag); cam.appendChild(d);
+    const match = o.status === "known" ? rname(o.identity) : o.status === "ambiguous" ? "ambiguous" : o.status === "obstructed" ? "obstructed" : "unknown";
+    const what = o.description || (top ? `nearest ${rname(top.identity)}` : "object");
+    if (o.box) {
+      const d = document.createElement("div"); d.className = `rbox ${o.status}`; placeBox(d, o.box);
+      const tag = document.createElement("b"); tag.textContent = `${i + 1} ${match}${o.visible_count > 1 ? " ×" + o.visible_count : ""}`; d.appendChild(tag); cam.appendChild(d);
+    }
     const li = document.createElement("li");
-    li.textContent = `${i + 1}: ${text}` + (top ? ` (nearest ${rname(top.identity)}, score ${Number(top.similarity).toFixed(2)})` : "");
+    const read = [o.brand, o.variant, o.size].filter(Boolean).join(" · ");
+    li.textContent = `${i + 1}: ${what}` + (o.visible_count != null ? ` (${o.visible_count} visible)` : "") + ` → ${match}` +
+      (read ? `. Readable: ${read}` : "") + (o.readable_text ? `. Text: "${o.readable_text}"` : "") +
+      (o.evidence ? `. Evidence: ${o.evidence}` : "") + (o.obstruction ? `. Obstruction: ${o.obstruction}` : "") +
+      (o.match_reason ? `. Match: ${o.match_reason}` : "") + (o.box ? "" : " (no location given)") +
+      (top && !o.description ? ` (score ${Number(top.similarity).toFixed(2)})` : "");
     list.appendChild(li);
   });
-  const counts = Object.entries(r.visible_units || {}).map(([k, n]) => `${rname(k)} ${n}`).join(", ") || "none";
-  const t = r.timing_ms || {};
-  $("recogMeta").textContent = `Visible units: ${counts}. ${r.uncertain ? "Uncertain: " + (r.reasons || []).join("; ") + ". " : ""}` +
-    `Captured ${String(r.captured_at).slice(11, 23)}; ${t.total != null ? Math.round(t.total) : "?"} ms in the service (${(r.model || {}).name || "model"} on ${(r.model || {}).device || "?"}), ${r.round_trip_ms} ms round trip. Scores are model similarities, not measured accuracy. Observes only: no stock events, no orders.`;
+  if (!(r.objects || []).length) { const li = document.createElement("li"); li.textContent = "No packages seen on the surface."; list.appendChild(li); }
+  const counts = Object.entries(r.visible_units || {}).filter(([, n]) => n > 0).map(([k, n]) => `${rname(k)} ${n}`).join(", ") || "none from the inventory";
+  const t = r.timing_ms || {}; const m = r.model || {};
+  const steps = ["describe_api", "match_api"].filter((k) => t[k] != null).map((k) => `${k.replace("_api", "")} ${(t[k] / 1000).toFixed(1)} s`).join(", ");
+  $("recogMeta").textContent = `Visible units: ${counts}. ${r.uncertain ? "Uncertain: " + (r.reasons || []).join("; ") + ". " : (r.reasons || []).length ? (r.reasons || []).join("; ") + ". " : ""}` +
+    `Captured ${String(r.captured_at).slice(11, 23)}. ${r.provider ? r.provider + ", " : ""}${m.name || "model"} (${m.device || "?"}${m.reasoning_effort ? ", reasoning " + m.reasoning_effort : ""}): ` +
+    `${t.total != null ? (t.total / 1000).toFixed(1) + " s" : "?"} in the service${steps ? " (" + steps + ")" : ""}, ${(r.round_trip_ms / 1000).toFixed(1)} s round trip. ` +
+    (r.note || "Scores are model similarities, not measured accuracy. Observes only: no stock events, no orders.");
 });
 socket.on("connect", () => socket.emit("recognition_status", {}));
 
