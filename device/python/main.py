@@ -540,6 +540,10 @@ ui.on_message("update", on_update)
 #   loop           checks the shelf once every frame_interval_s and talks to the agent
 
 last_status = 0.0
+# A frame older than this counts as no frame. camera_worker also reports the camera missing after this
+# long without frames; the loop checks the age itself, because a capture() that hangs never reports.
+# tests/device/replay.py models the same grace (CAMERA_GRACE_S).
+CAMERA_GRACE_S = 2.0
 
 
 def camera_worker():
@@ -560,7 +564,7 @@ def camera_worker():
                 # capture() gives None whenever no new frame arrived in time (the WebSocket camera
                 # waits only 0.1 s). Report the camera as missing only after 2 s without any frame,
                 # so the page does not flicker between the picture and "No camera picture".
-                if time.time() - last_frame_at > 2.0:
+                if time.time() - last_frame_at > CAMERA_GRACE_S:
                     state["camera_ok"] = False
                     state["camera_error"] = "waiting for frames on port 8080" if remote else "camera gave no picture"
                 time.sleep(0.05)
@@ -606,7 +610,7 @@ def loop():
             logger.warning(f"modulino_status failed: {e}")
     with lock:
         img, frame_id, t = state["last_frame"], state["frame_id"], state["frame_time"]
-    if img is not None and state["camera_ok"]:
+    if img is not None and state["camera_ok"] and t is not None and time.time() - t <= CAMERA_GRACE_S:
         if frame_id != state["last_checked_frame"]:  # a frame is checked at most once
             state["last_checked_frame"] = frame_id
             process_frame(img, frame_id, t)

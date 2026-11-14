@@ -20,6 +20,7 @@ the shelf or stock from a back room also passes it.
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import asdict, dataclass, fields
 
@@ -38,19 +39,25 @@ class Settings:
     # A health report older than this counts as unknown, and a gap this long between two readings
     # breaks a stocked hold (the hold starts again from the next reading).
     health_stale_s: float = 30.0
+    # A health report whose newest camera frame is older than this is no evidence of stock: the board
+    # may be repeating its last reading while the camera hangs. The board itself allows 2 s.
+    frame_stale_s: float = 10.0
 
     @classmethod
     def from_env(cls, env=None) -> "Settings":
-        """Defaults, overridden by RESTOCK_MIN_S, RESTOCK_CONFIRM_S, OFFLINE_AFTER_S, HEALTH_STALE_S."""
+        """Defaults, overridden by the upper-case field names (RESTOCK_MIN_S, ..., FRAME_STALE_S)."""
         env = os.environ if env is None else env
         values = {}
         for f in fields(cls):
             raw = env.get(f.name.upper(), "")
             if str(raw).strip() == "":
                 continue
-            value = float(raw)
-            if value < 0:
-                raise ValueError(f"{f.name.upper()} must be 0 or more, not {raw!r}")
+            try:
+                value = float(raw)
+            except ValueError:
+                value = math.nan
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{f.name.upper()} must be a number of seconds, 0 or more, not {raw!r}")
             values[f.name] = value
         return cls(**values)
 

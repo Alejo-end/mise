@@ -103,16 +103,27 @@ class Agent:
         a restart the slot must read stocked for RESTOCK_CONFIRM_S again.
         """
         last: dict[int, dict] = {}
+        triggered: set[str] = set()
+
+        def record(slot: int, e: dict, product_id=None, known=False) -> dict:
+            if not known and e["rule_set_version"] == self.rules["version"]:
+                product_id = (R.target_for_slot(self.rules, slot) or {}).get("product_id")  # logs before 14 Nov
+            return {"run_id": e["run_id"], "product_id": product_id, "rule_set_version": e["rule_set_version"],
+                    "since": e["time"], "ended": False}
+
         for e in entries:
             d, step = e["detail"], e["step"]
             ev = d.get("event") if step == "trigger" else None
             if isinstance(ev, dict) and ev.get("type") in ("slot_state", "manual_low") and ev.get("slot") is not None:
-                slot = int(ev["slot"])
-                product_id = d.get("product_id")
-                if "product_id" not in d and e["rule_set_version"] == self.rules["version"]:
-                    product_id = (R.target_for_slot(self.rules, slot) or {}).get("product_id")  # logs before 14 Nov
-                last[slot] = {"run_id": e["run_id"], "product_id": product_id, "rule_set_version": e["rule_set_version"],
-                              "since": e["time"], "ended": False}
+                last[int(ev["slot"])] = record(int(ev["slot"]), e, d.get("product_id"), "product_id" in d)
+                triggered.add(e["run_id"])
+            elif step in ("order", "approval") and e.get("run_id") and e["run_id"] not in triggered:
+                # The trigger is older than the entries read (restore reads the newest 100,000): the order or the
+                # request stands in for it, so its slot is not left free.
+                slot = d.get("slot") if step == "order" else (d.get("full") or {}).get("slot")
+                if slot is not None:
+                    last[int(slot)] = record(int(slot), e)
+                    triggered.add(e["run_id"])
             elif step == "restock" and d.get("slot") in last:
                 r = last[d["slot"]]
                 r["ended"] |= e.get("run_id") in (None, r["run_id"])  # restocks before 14 Nov name no run
@@ -161,6 +172,7 @@ class Agent:
             return {"status": "ignored", "reason": f"slot {slot} has no target in the rule set"}
         state = "low" if kind == "manual_low" else ev.get("state")
         units = int(ev.get("estimated_units") or 0) if state != "empty" else 0
+        self.open_approvals()  # an approval past its expiry ends here and frees its slot
         now = datetime.now(R.TZ)
         # The check and the add below must be one step, or two events at once could both order.
         with self.trigger_lock:
@@ -221,7 +233,10 @@ class Agent:
         now = datetime.now(R.TZ)
         self.last_health = {"report": health, "received": now}
         slots = health.get("slots") if isinstance(health.get("slots"), dict) else {}
+        age = health.get("frame_age_s")
         box = ("the camera gives no picture" if health.get("camera_ok") is False else
+               "the camera sent no recent frame" if not isinstance(age, (int, float))
+               or age > self.settings.frame_stale_s else
                "the box configuration is not valid" if health.get("config_valid") is False else None)
         with self.trigger_lock:
             for slot in sorted(self.pending_slots):
@@ -243,7 +258,8 @@ class Agent:
             return None
         if r["run_id"] in self.placed_runs:
             return "ordered"
-        if any(a["run_id"] == r["run_id"] and a["status"] in ("open", "deciding") for a in self.approvals.values()):
+        # A snapshot: _ask adds approvals under self.lock from the buying path, not under trigger_lock.
+        if any(a["run_id"] == r["run_id"] and a["status"] in ("open", "deciding") for a in list(self.approvals.values())):
             return "approval"
         return None  # the pipeline is still running
 

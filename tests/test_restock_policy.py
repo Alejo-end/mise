@@ -231,6 +231,22 @@ def test_an_unsure_or_short_report_starts_the_hold_again(clock, db, bad):
     assert agent.pending_for_slot(2) is None
 
 
+@pytest.mark.parametrize("age", [45.0, None])
+def test_reports_from_a_stalled_camera_never_complete_the_hold(clock, db, age):
+    """Codex review: a hung capture() keeps camera_ok true while the board repeats its last reading."""
+    stalled = health({2: "full"})
+    if age is None:
+        del stalled["health"]["frame_age_s"]
+    else:
+        stalled["health"]["frame_age_s"] = age
+    agent = make(db)
+    agent.handle_event(dict(YOGURT_EMPTY))
+    clock.advance(200)
+    agent.handle_event(dict(YOGURT_FULL))
+    report(agent, clock, 300, stalled)
+    assert agent.pending_for_slot(2)["status"] == "ordered"
+
+
 def test_a_gap_in_the_reports_starts_the_hold_again(clock, db):
     agent = make(db)
     agent.handle_event(dict(YOGURT_EMPTY))
@@ -279,6 +295,14 @@ def test_the_hold_starts_only_when_the_order_is_placed(clock, db):
     assert agent.pending_for_slot(3) is None
 
 
+def test_an_expired_request_frees_the_slot_for_the_next_reading(clock, db):
+    agent = make(db)
+    agent.handle_event(dict(MILK_EMPTY))
+    clock.advance(2 * 3600 + 1)
+    assert agent.handle_event(dict(MILK_EMPTY))["status"] == "needs_approval"
+    assert len(agent.open_approvals()) == 1
+
+
 def test_skipping_the_request_frees_the_slot(clock, db):
     agent = make(db)
     agent.handle_event(dict(MILK_EMPTY))
@@ -301,6 +325,43 @@ def test_health_never_orders(clock, db):
     agent = make(db)
     report(agent, clock, 120, health({1: "empty", 2: "empty", 3: "empty"}))
     assert agent.orders == {} and agent.open_approvals() == []
+
+
+def test_requests_added_by_another_thread_do_not_break_a_reading(db):
+    """Codex review: _ask adds approvals under self.lock while a reading checks them under trigger_lock."""
+    import sys
+    import threading
+
+    agent = make(db)
+    # Slot 2 pending while its pipeline runs: the check reads every approval to find none of its run.
+    agent.pending_slots.add(2)
+    agent.pending[2] = {"run_id": "running", "product_id": None, "rule_set_version": 3, "since": ""}
+    for i in range(3000):  # a long dict, so another thread can change it during one check
+        agent.approvals[f"old{i}"] = {"id": f"old{i}", "run_id": f"old{i}", "status": "closed", "slot": None}
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    stop, errors = threading.Event(), []
+
+    def add():
+        i = 0
+        while not stop.is_set():
+            i += 1
+            agent.approvals[f"x{i}"] = {"id": f"x{i}", "run_id": f"r{i}", "status": "closed", "slot": None}
+            agent.approvals.pop(f"x{i - 1}", None)
+
+    t = threading.Thread(target=add)
+    t.start()
+    try:
+        for _ in range(300):
+            try:
+                assert agent._pending_status(2) is None
+            except RuntimeError as e:
+                errors.append(e)
+    finally:
+        stop.set()
+        t.join()
+        sys.setswitchinterval(interval)
+    assert errors == []
 
 
 # Repeated observations ---------------------------------------------------------------------------
@@ -420,6 +481,31 @@ def test_restart_after_a_failed_pipeline(clock, db):
     assert 2 not in again.pending_slots
 
 
+def copy_log(src, dst, skip_step: str):
+    """dst holds src's entries without those of one step, as if they were older than the entries restore reads."""
+    out = AuditLog(dst)
+    for e in AuditLog(src).entries(100000):
+        if e["step"] != skip_step:
+            out.write(e["step"], e["detail"], e["actor"], e["rule_set_version"], e["order_id"], e["run_id"])
+
+
+def test_restart_when_the_trigger_of_an_order_is_beyond_the_entries_read(clock, db, tmp_path):
+    """Codex review: restore reads the newest 100,000 entries; the order alone must keep its slot pending."""
+    make(db).handle_event(dict(YOGURT_EMPTY))
+    copy_log(db, tmp_path / "b.sqlite", "trigger")
+    again = make(tmp_path / "b.sqlite")
+    assert again.pending_for_slot(2)["status"] == "ordered"
+    assert again.handle_event(dict(YOGURT_EMPTY))["status"] == "ignored"
+
+
+def test_restart_when_the_trigger_of_a_request_is_beyond_the_entries_read(clock, db, tmp_path):
+    make(db).handle_event(dict(MILK_EMPTY))
+    copy_log(db, tmp_path / "b.sqlite", "trigger")
+    again = make(tmp_path / "b.sqlite")
+    assert again.pending_for_slot(3)["status"] == "approval"
+    assert again.handle_event(dict(MILK_EMPTY))["status"] == "ignored"
+
+
 def test_restart_restores_a_log_written_before_this_change(clock, db):
     """Trigger and restock entries from before 14 Nov carry no product_id, and a restock no run_id."""
     log = AuditLog(db)
@@ -435,7 +521,8 @@ def test_restart_restores_a_log_written_before_this_change(clock, db):
 # Configuration: the code default is the live configuration -------------------------------------
 
 def test_the_committed_defaults():
-    assert DEFAULTS == Settings(restock_min_s=120.0, restock_confirm_s=60.0, offline_after_s=30.0, health_stale_s=30.0)
+    assert DEFAULTS == Settings(restock_min_s=120.0, restock_confirm_s=60.0, offline_after_s=30.0, health_stale_s=30.0,
+                                frame_stale_s=10.0)
 
 
 def test_an_agent_without_settings_ignores_the_environment(monkeypatch, db):
@@ -450,8 +537,9 @@ def test_settings_from_the_environment():
     s = Settings.from_env({"RESTOCK_MIN_S": "0", "RESTOCK_CONFIRM_S": "0"})
     assert (s.restock_min_s, s.restock_confirm_s) == (0, 0) and s.overrides() == {"RESTOCK_MIN_S": 0, "RESTOCK_CONFIRM_S": 0}
     assert Settings.from_env({"RESTOCK_MIN_S": "120"}).overrides() == {}
-    with pytest.raises(ValueError):
-        Settings.from_env({"RESTOCK_MIN_S": "-1"})
+    for bad in ("-1", "two minutes", "nan", "inf"):
+        with pytest.raises(ValueError, match="RESTOCK_MIN_S"):
+            Settings.from_env({"RESTOCK_MIN_S": bad})
 
 
 def test_explicit_values_override_single_settings(db):

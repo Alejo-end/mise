@@ -15,7 +15,6 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "device" / "python"))
 import shelf_detect as sd  # noqa: E402
 
-POLICY_KEYS = ("RESTOCK_MIN_S", "RESTOCK_CONFIRM_S", "OFFLINE_AFTER_S", "HEALTH_STALE_S")
 
 
 def load_app(tmp_path, monkeypatch, **env):
@@ -25,7 +24,7 @@ def load_app(tmp_path, monkeypatch, **env):
     monkeypatch.setenv("GATEWAY_KEY", str(tmp_path / "key.pem"))
     # Policy values set to the committed defaults, so a local .env cannot change them for this test.
     for key, value in {"RESTOCK_MIN_S": "120", "RESTOCK_CONFIRM_S": "60", "OFFLINE_AFTER_S": "30",
-                       "HEALTH_STALE_S": "30", **env}.items():
+                       "HEALTH_STALE_S": "30", "FRAME_STALE_S": "10", **env}.items():
         monkeypatch.setenv(key, value)
     import backend.app as m
     return importlib.reload(m)
