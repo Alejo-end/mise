@@ -1,4 +1,4 @@
-"""Allergens of a product in the real Valio Aimo data, in the names our rule sets use.
+"""Allergens of a product in the Valio Aimo challenge data, in the names our rule sets use.
 
 The product file holds GS1 allergen codes in `synkkaData.classifications`, in two groups:
 `allergen` (each code with CONTAINS, MAY_CONTAIN or UNDECLARED) and `nonAllergen` (FREE_FROM).
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 
-# The tree nut kinds. 69 real products list a kind (for example almond) without the general code AN.
+# The tree nut kinds. 69 products of the Valio file list a kind (for example almond) without the general code AN.
 NUT_KINDS = ("SA", "SH", "SW", "SC", "SP", "SM", "SR", "ST", "SQ")
 
 CODES = {

@@ -1,4 +1,4 @@
-"""Count the real Valio catalog under a kitchen's banned allergens.
+"""Count the Valio challenge catalog under a kitchen's banned allergens.
 
     uv run python -m backend.dirty_data [rules file]
 
@@ -7,7 +7,8 @@ counts show the allergen rules alone. "Missed" cannot be counted: that needs a s
 person checked by hand. The last lines print 20 "clear" products to check by hand.
 
 The count also says where the products with no allergen data sit: in which category groups and
-with how many suppliers. A wholesaler closes that gap with its suppliers, not with the chef.
+with how many suppliers. The challenge file is synthetic, so these counts describe the file,
+not Valio's real suppliers.
 """
 
 from __future__ import annotations

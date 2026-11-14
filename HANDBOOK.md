@@ -66,9 +66,11 @@ One order goes through these steps, and each step goes into the audit log:
 
 Two cases always go to the chef. The first is a product that the wholesaler cannot count, because the supplier ships it. The second is a product whose label a person must read, for example a product with no allergen data. The chef reads that label once. The agent keeps the answer for the product. If the product data or the rule set changes, the agent asks again.
 
-## What the real data looks like
+## What the Valio catalog looks like
 
-![The real catalog under the kitchen's allergen rules](../docs/handbook/valio-allergen-data.svg)
+The Valio product file and the two API calls are synthetic. Valio built them for the challenge, and the brief says so (`CHALLENGE_BRIEFS.md`, lines 107, 108 and 121). So every count below describes the challenge file, not Valio's real suppliers. It shows what our rules do to a catalog with gaps. It does not show how large the gap is in Valio's real data.
+
+![The Valio catalog under the kitchen's allergen rules](../docs/handbook/valio-allergen-data.svg)
 
 | Result under the bans (nuts, peanuts, sesame) | Products | Share of 17,546 |
 |---|---|---|
@@ -78,13 +80,13 @@ Two cases always go to the chef. The first is a product that the wholesaler cann
 | To a person: only the ingredient text names it | 17 | under 1% |
 | Clear | 7,435 | 42% |
 
-Almost half of the catalog has no allergen data. So on the real catalog, "unknown" must go to a person, not to "forbidden". The rule-set key `unknown_allergens` sets this. The stand-in rule set keeps the strict value.
+Almost half of the catalog has no allergen data. So on the Valio catalog, "unknown" must go to a person, not to "forbidden". The rule-set key `unknown_allergens` sets this. The stand-in rule set keeps the strict value.
 
 About half of that gap is not food. Of the 8,110 products with no allergen data, 3,974 are in category groups that we read as not food: kitchen equipment, cleaning goods, disposables and office supplies. The other 4,136 are food, which is 24% of the catalog. The data has no category names, so this is our reading of the product names. Ask the Valio mentors.
 
 A rule set can name such groups with the key `non_food_groups`. A product in a named group needs no allergen data, so nobody reads the label of a paper towel. Rule set version 4 does not use the key yet, because Valio did not confirm the category meanings.
 
-The gap sits with few suppliers. The 8,110 products come from 459 of the 648 suppliers, and 29 suppliers hold half of them. 264 suppliers give no allergen data on any product. A wholesaler closes this gap with its suppliers, not with the chef.
+In the challenge file the gap sits with few suppliers: the 8,110 products come from 459 of the 648 simulated suppliers, and 29 of them hold half. This describes how the file was made, not Valio's real suppliers. Do not pitch it as a finding about Valio. Whether a real catalog has a gap of this size is a question for the Valio mentors.
 
 To count again, run `uv run python -m backend.dirty_data`. A test holds the same numbers. The command also prints 20 clear products for a hand check.
 
@@ -96,7 +98,7 @@ The ingredient text scan knows nuts, peanuts and sesame only. If a rule set bans
 
 We reviewed the entry as the manager of a large retailer reads it. Four findings are fixed: the price guard, the limits on what a quote shows, the PIN for a licence and the end of a licence. The rest are limits of the prototype.
 
-Why a wholesaler wants this: under the allergen rules alone, an agent can order 7,435 products with no person. 4,136 food products need a person only because their data is missing. Each product with clean data is a product that an agent can buy alone. So the data quality of a supplier becomes sales.
+Why a wholesaler wants this: a product with complete allergen data is a product that an agent can buy with no person. A product with missing data needs a person. So under agent buying, the data quality of a supplier turns into sales. In the synthetic challenge file, the allergen rules alone let an agent order 7,435 of 17,546 products with no person. That number shows the mechanism, not Valio's real share.
 
 What the prototype does not have:
 
@@ -120,12 +122,12 @@ The gateway adds one new call and fits standards that buyers already use for the
 
 Run every command from `valio-challenge/`. You need `uv`.
 
-1. Put the approver PINs in `.env`, for example `APPROVER_PINS=4821:Head chef`.
+1. Copy `.env.example` to `.env` and put the approver PINs in it. The team shares the real PINs in person. Never commit `.env`.
 2. Start the backend: `uv run uvicorn backend.app:app --host 0.0.0.0 --port 8000`.
 3. Open `http://localhost:8000/approve`. On a phone, use the laptop's address on the same hotspot. The page has three roles: the head chef approves, the kitchen asks, and the wholesaler admits agents. A phone opens as the head chef. Add `?as=kitchen` or `?as=valio` to the address to open another role.
 4. Run the tests: `uv run pytest`. 156 tests pass.
 
-To run on the real Valio catalog, add three lines to `.env` and start the backend again:
+To run on the Valio catalog, add three lines to `.env` and start the backend again:
 
 ```
 VALIO_API_KEY=<the key from the challenge page>
@@ -133,7 +135,7 @@ CATALOG=valio
 RULES_FILE=rules/school_kitchen_valio.yaml
 ```
 
-The product file must be in `data/valio/`. The tests always run on the stand-in catalog, whatever `.env` says. Rule set version 4 names real product codes. If the rule set and the catalog do not match, the app refuses to start.
+The product file must be in `data/valio/`. The tests always run on the stand-in catalog, whatever `.env` says. Rule set version 4 names product codes of the Valio file. If the rule set and the catalog do not match, the app refuses to start.
 
 To let a real language model take the Driving Test, add `ANTHROPIC_API_KEY=<key>` to `.env`. Then send `{"agent": "claude"}` to `POST /sandbox/test`. The model gets the tool descriptions, the request and the kitchen's rules, and no hint about the scenarios. One run makes about 30 model calls.
 
@@ -155,7 +157,7 @@ In a warm room, the cold room alarm is on. Then the buzzer plays the alarm, and 
 1. Start with the gateway. Run the Agent Driving Test on the naive agent and on our agent. Only our agent passes. Enter the PIN to grant its licence.
 2. With that licence, an outside agent asks for a quote for "1,000 litres of lactose-free milk by Monday". Show the price, the time of the price and the signature. Change one digit of the answer, and the signature fails.
 3. The agent orders the quote. The order is over its limit, so it waits for the chef. Approve it on the phone with the PIN.
-4. Show the real catalog under the school's bans: 11% forbidden, 46% to a person, 42% clear. Say that half of the 46% is not food. Then order one product with no allergen data. The chef reads the label once, and the second order goes through alone.
+4. Show the synthetic Valio catalog under the school's bans: 11% forbidden, 46% to a person, 42% clear. Say that the file is synthetic, so the count shows the rules, not Valio's data. Say that half of the 46% is not food. Then order one product with no allergen data. The chef reads the label once, and the second order goes through alone.
 5. Now the kitchen as one client. Take the milk off the shelf. The camera triggers the agent, and the box beeps. Stock is short, so a safe substitute needs approval.
 6. Show the audit log as a story and as data.
 
@@ -163,7 +165,7 @@ In a warm room, the cold room alarm is on. Then the buzzer plays the alarm, and 
 
 | Criterion | Weight | What it means for us |
 |---|---|---|
-| Working end-to-end demo in the mocked environment | 30% | The demo must run on Valio's real data and API, not on our stand-in catalog. This is the first job |
+| Working end-to-end demo in the mocked environment | 30% | The demo must run on Valio's synthetic catalog and mock API, not on our stand-in catalog. This is the first job |
 | Solving the problem and user need | 20% | The order must match what the buyer asked for: the right product, pack size and amount |
 | Autonomy and controls | 20% | The three results of the rule check, the approval on the phone and the audit log |
 | Exception situations | 15% | Partial stock, substitutes, late delivery, a price that changes before the order |
@@ -176,8 +178,8 @@ In a warm room, the cold room alarm is on. Then the buzzer plays the alarm, and 
 | Rule check, buying pipeline, approvals, audit log | Work on the stand-in catalog, with tests |
 | Shelf box app and enclosure | Built, and the version of 14 November runs on the board. The camera count is a rough estimate from two photos, not a real count |
 | Shelf box on 14 November at 02:40 | The app talks to the backend. No Modulino answered on the Qwiic port, and no camera was plugged in. So the knob, the Thermo, the buzzer and the camera are not tested with this version |
-| Real catalog adapter (`backend/valio.py`, `backend/allergens.py`) | Built and tested on the real product file. The two live calls answer: price and stock for one product came back in under a second |
-| Buying pipeline on the real catalog | Works on the real product file with rule set version 4. Tests use a stand-in for the two live calls. On 14 November at 09:12 the gateway ran on the live API with the script of the demo: price and stock, a signed quote, an order, and the request for 1,000 litres with an approval. The shelf box and the phone page were not part of that run |
+| Valio catalog adapter (`backend/valio.py`, `backend/allergens.py`) | Built and tested on the Valio product file. The two live calls answer: price and stock for one product came back in under a second |
+| Buying pipeline on the Valio catalog | Works on the Valio product file with rule set version 4. Tests use a stand-in for the two live calls. On 14 November at 09:12 the gateway ran on the live API with the script of the demo: price and stock, a signed quote, an order, and the request for 1,000 litres with an approval. The shelf box and the phone page were not part of that run |
 | Gateway calls for an outside agent | Built, with tests: lookup, quote, order, order state and audit under `/gateway`. Each call needs the licence of the Driving Test. Quotes and order answers are signed. Licences and orders survive a restart. An order never goes above the quoted price. One licence gets 60 lookups per minute, and an approver can end it |
 | Agent Driving Test | Works. The "naive agent" is a script, not a language model. An agent that does nothing fails. A pass gives a licence only with the PIN of an approver. An agent of another company takes the test over the network, and a test agent in our test suite does so. No agent of a real company took it yet. A real model can take the test (`backend/model_agent.py`), but nobody ran it yet: no model key is on this laptop |
 | Delivery check (Cold Chain Proof) | Works on the stand-in catalog. The Thermo measures air, not food |
@@ -198,6 +200,7 @@ In a warm room, the cold room alarm is on. Then the buzzer plays the alarm, and 
 12. The signature shows what the gateway said and when. The allergen data inside comes from the supplier, and the signature does not make it true.
 13. The lookup limit lives in the memory of one backend process.
 14. "Not food" is our reading of the product names in five category groups. Valio did not confirm it.
+15. The Valio product file and API are synthetic. Every count on them describes the challenge file. None describes Valio's real catalog or suppliers.
 
 ## Where things are
 
@@ -205,13 +208,13 @@ In a warm room, the cold room alarm is on. Then the buzzer plays the alarm, and 
 |---|---|
 | `backend/rules.py` | The rule check and the rule-set signature |
 | `backend/agent.py` | The buying pipeline, approvals, delivery check |
-| `backend/valio.py` | The stand-in catalog and the real catalog adapter |
+| `backend/valio.py` | The stand-in catalog and the Valio catalog adapter |
 | `backend/allergens.py` | GS1 allergen codes to our names, and the ingredient text scan |
 | `backend/audit.py` | The append-only log |
 | `backend/gateway.py`, `backend/signing.py` | The calls for an outside agent, and the signature on their answers |
 | `docs/valio-api/gateway-openapi.json` | The published description of those calls. `uv run python -m backend.export_openapi` writes it |
 | `backend/sandbox.py`, `backend/model_agent.py` | The Agent Driving Test, and a real language model as the agent under test |
-| `backend/dirty_data.py` | The count of the real catalog under a rule set |
+| `backend/dirty_data.py` | The count of the Valio catalog under a rule set |
 | `backend/app.py`, `web/approve.html` | Endpoints and the phone page |
 | `device/` | The shelf box app for the UNO Q |
 | `enclosure/` | The printed case. See `enclosure/README.md` |

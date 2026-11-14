@@ -363,7 +363,7 @@ The Valio judges come from marketplace, online sales, IT integration and data go
 
 1. The gateway is the entry. It covers the three core requirements: lookup, quote to order at fixed prices, and permission with human approval. Its description is one OpenAPI file: `docs/valio-api/gateway-openapi.json`.
 2. Valio keeps control. Every agent has a mandate, every quote and order answer has a signature that the agent can check, and every decision is in an audit trail that both sides can read.
-3. Evidence on the real catalog: under a school's bans, 11% of 17,546 products are forbidden, 46% go to a person and 42% are clear. A blocked nut product proves nothing, because the rule check is plain code. The count shows what the rules do to real data.
+3. Evidence on Valio's synthetic catalog: under a school's bans, 11% of 17,546 products are forbidden, 46% go to a person and 42% are clear. A blocked nut product proves nothing, because the rule check is plain code. The count shows what the rules do to a catalog with gaps. The file is synthetic, so it says nothing about the size of the gap in Valio's real data.
 4. The chef reads the label of an unknown product once. After that, the same product orders alone.
 5. The Agent Driving Test, which an external agent must pass before it reaches the real interface. If we have a real model's result, show it.
 6. One client as proof: a shelf camera in a kitchen triggers an order through the gateway.
@@ -377,7 +377,7 @@ The demo length is not known yet. Each step works without live input from a judg
 1. The Driving Test: the naive agent fails, and our agent passes. Enter the PIN to grant its licence.
 2. With the licence, an outside agent asks the gateway for a quote for "1,000 litres of lactose-free milk by Monday". Show the price, its time and the signature. Change one digit, and the signature fails.
 3. The agent orders the quote. The order is over its limit, so the chef approves on the phone.
-4. The real catalog count: 11% forbidden, 46% to a person, 42% clear. Then a product with no allergen data: the chef reads the label once, and the second order goes through alone.
+4. The Valio catalog count, and say that the file is synthetic: 11% forbidden, 46% to a person, 42% clear. Then a product with no allergen data: the chef reads the label once, and the second order goes through alone.
 5. The kitchen as one client: take the milk off the shelf. The camera triggers the agent, and the box beeps. Stock is partial, so a safe substitute needs approval.
 6. The audit trail as a story and as data.
 
