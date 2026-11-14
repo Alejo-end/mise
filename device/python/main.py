@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 import requests
-from PIL import Image, ImageOps
+from PIL import Image
 
 from arduino.app_bricks.web_ui import WebUI
 # USBCamera was removed from the Arduino bricks on 25 Sep 2026 (app-bricks-py #499).
@@ -28,6 +28,9 @@ from arduino.app_bricks.web_ui import WebUI
 from arduino.app_peripherals.camera import Camera, WebSocketCamera
 from arduino.app_utils import App, Bridge, Logger
 from arduino.app_utils.image import numpy_to_pil
+
+import shelf_detect
+from shelf_detect import crop
 
 logger = Logger("safe-kitchen")
 TZ = ZoneInfo("Europe/Helsinki")
@@ -246,38 +249,20 @@ Bridge.provide("thermo", on_thermo)
 
 # Shelf detection -----------------------------------------------------------
 
-def crop(img: Image.Image, rect) -> np.ndarray:
-    w, h = img.size
-    x, y, cw, ch = rect
-    box = (int(x * w), int(y * h), int((x + cw) * w), int((y + ch) * h))
-    g = ImageOps.grayscale(img.crop(box)).resize((48, 48))
-    a = np.asarray(g, dtype=np.float32) / 255.0
-    return a - a.mean()  # remove overall brightness so room light matters less
-
+# The algorithm lives in shelf_detect.py, so laptop replay tests run the same code.
 
 def ref_path(slot: int, kind: str) -> Path:
     return DATA / f"slot{slot}_{kind}.npy"
 
 
-def diff(a: np.ndarray, b: np.ndarray) -> float:
-    return float(np.abs(a - b).mean())
+def load_ref(slot: int, kind: str):
+    p = ref_path(slot, kind)
+    return np.load(p) if p.exists() else None
 
 
 def classify(slot_cfg: dict, patch: np.ndarray):
-    empty_p, full_p = ref_path(slot_cfg["slot"], "empty"), ref_path(slot_cfg["slot"], "full")
-    if not empty_p.exists():
-        return None, None
-    d_empty = diff(patch, np.load(empty_p))
-    if full_p.exists():
-        d_full = diff(patch, np.load(full_p))
-        fill = d_empty / (d_empty + d_full + 1e-6)
-    else:
-        fill = 1.0 if d_empty > config["present_diff"] else 0.0
-    if fill >= config["full_at"]:
-        return "full", fill
-    if fill < config["empty_below"]:
-        return "empty", fill
-    return "low", fill
+    slot = slot_cfg["slot"]
+    return shelf_detect.classify(patch, load_ref(slot, "empty"), load_ref(slot, "full"), config)
 
 
 def process_frame(img: Image.Image):
@@ -286,19 +271,8 @@ def process_frame(img: Image.Image):
         st, fill = classify(s, patch)
         slot = s["slot"]
         with lock:
-            cur = state["slots"].setdefault(slot, {"state": None, "fill": None, "units": None, "candidate": None, "count": 0})
-            cur["fill"] = None if fill is None else round(fill, 2)
-            if st is None:
-                continue
-            # A new state must show in two frames in a row before it counts.
-            if st == cur["candidate"]:
-                cur["count"] += 1
-            else:
-                cur["candidate"], cur["count"] = st, 1
-            changed = cur["count"] >= 2 and st != cur["state"]
-            if changed:
-                cur["state"] = st
-                cur["units"] = 0 if st == "empty" else round(fill * s["target_units"])
+            cur = state["slots"].setdefault(slot, shelf_detect.new_tracker())
+            changed = shelf_detect.observe(cur, st, fill, s["target_units"])
         if changed:
             post_async({"type": "slot_state", "slot": slot, "product_hint": s["product_hint"], "state": st,
                         "estimated_units": cur["units"]})
