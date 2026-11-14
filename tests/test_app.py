@@ -66,3 +66,11 @@ def test_a_recording_session_isolates_purchasing(tmp_path, monkeypatch):
     assert [e for e in c.get("/log?format=json").json() if e["step"] in ("trigger", "order", "approval")] == []
     monkeypatch.delenv("RECORDING_SESSION")
     importlib.reload(m)  # leave a normal app for later tests
+
+
+def test_the_page_gets_the_pins_only_when_the_demo_switch_is_on(client, monkeypatch):
+    assert client.get("/device").json()["demo_pins"] == []
+    monkeypatch.setenv("SHOW_PINS", "1")
+    import backend.app as m
+    shown = TestClient(importlib.reload(m).app).get("/device").json()["demo_pins"]
+    assert shown == [{"pin": "4821", "name": "Head chef"}]

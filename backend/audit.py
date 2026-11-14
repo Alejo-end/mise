@@ -96,8 +96,8 @@ def story(entries: list[dict]) -> list[str]:
                 lines.append(f"{t} Cold room alarm: {d['temperature_c']:.1f} °C. Auto-orders wait for the chef.")
             else:
                 lines.append(f"{t} Cold room back to {d['temperature_c']:.1f} °C.")
-        elif s in ("restock", "error", "delivery_check", "driving_test", "device", "licence_revoked"):
-            prefix = {"error": "Error: ", "driving_test": "Driving test: "}.get(s, "")
+        elif s in ("restock", "error", "delivery_check", "driving_test", "device", "licence_revoked", "cold_breach", "scan"):
+            prefix = {"error": "Error: ", "driving_test": "Driving test: ", "cold_breach": "Cold alert: "}.get(s, "")
             lines.append(f"{t} {prefix}{d.get('summary', '')}")
         else:
             lines.append(f"{t} {s}: {d.get('summary', '')}")

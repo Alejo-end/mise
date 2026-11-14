@@ -156,6 +156,16 @@ The gateway adds one new call and fits standards that buyers already use for the
 | Change and cancel, not built | Order Change (T114), Order Cancellation (T115) |
 | Delivery check | Despatch Advice (T16) |
 
+## What Valio told us on 14 November
+
+1. The challenge has no order API. An order that waits for a person is enough.
+2. Valio's own systems enforce no spending limit and no approval. A customer handles that with instructions, or only the manager orders. For an agent, a human approval is needed today, and it can go later if the agent proves reliable.
+3. A stock of 999999 or more means "not known". The mock API gives 9999999999 for every stock product, so on live data the stock is always unknown, and every order goes to a person.
+4. A lot size of 0.01 means 1.
+5. A 429 answer blocks the caller for 30 seconds.
+
+So the live demo, where every order waits for the head chef, is what Valio expects today. The rule check, the approval and the Driving Test are the parts that Valio does not have. The Driving Test and the audit log are also the way to show, later, that an agent is reliable enough to order alone.
+
 ## Run it
 
 Run every command from `valio-challenge/`. You need `uv`.

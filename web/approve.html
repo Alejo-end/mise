@@ -3,119 +3,181 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Safe Kitchen</title>
+<title>mise</title>
 <style>
-  /* Berry and leaf on warm cream, with frosted glass cards. System fonts only: the page needs no network.
-     Every size is in rem, so "Larger text" scales the whole page evenly. */
-  :root { --bg:#f3f5fc; --ink:#0d1b45; --muted:#55608a; --line:rgba(20,40,110,0.13);
-          --glass:rgba(255,255,255,0.66); --edge:rgba(255,255,255,0.9); --field:rgba(255,255,255,0.78);
-          --shadow:0 1px 1px rgba(15,30,90,0.04), 0 12px 32px -14px rgba(20,50,150,0.28);
-          --accent:#1238b4; --accent2:#2f62ea; --on-accent:#fff; --pink:#d81b72; --pink-soft:#ff8fc0;
-          --ok:#12725a; --warn:#8a5200; --bad:#b3202c;
-          --blob1:rgba(255,120,180,0.34); --blob2:rgba(60,110,240,0.26); --blob3:rgba(255,170,205,0.30);
-          font-size:100% }
-  @media (prefers-color-scheme: dark) { :root { --bg:#080f2a; --ink:#eef1fc; --muted:#a6b0d6; --line:rgba(255,255,255,0.12);
-          --glass:rgba(255,255,255,0.07); --edge:rgba(255,255,255,0.14); --field:rgba(255,255,255,0.08);
-          --shadow:0 14px 34px -14px rgba(0,0,0,0.65);
-          --accent:#8fb0ff; --accent2:#6f95ff; --on-accent:#08133a; --pink:#ff8fc0; --pink-soft:#ff8fc0;
-          --ok:#6fd6b6; --warn:#f0b35a; --bad:#ff8f95;
-          --blob1:rgba(216,27,114,0.30); --blob2:rgba(47,98,234,0.34); --blob3:rgba(120,60,160,0.24); } }
+  /* The look comes from the kitchen itself: an order is a paper ticket on the pass, the shelf has edge labels,
+     and the log is a till roll. Milk white, one deep blue, one berry pink. System fonts only: no network needed.
+     Every size is in rem, so "Larger text" scales the whole page. */
+  :root { --milk:#f4f7fd; --paper:#ffffff; --ink:#0b1e4f; --soft:#4d5d8c; --rule:#d5def3;
+          --blue:#1640c9; --blue-ink:#ffffff; --sky:#e3ebff; --pink:#d91c66; --blush:#ffe3ee;
+          --ok:#0d7458; --ok-bg:#dcf4ec; --warn:#8f5200; --warn-bg:#ffeed2; --bad:#b0202d;
+          --glass:rgba(255,255,255,0.72); --lift:0 1px 0 rgba(11,30,79,0.04), 0 18px 40px -22px rgba(22,64,201,0.45);
+          --round: ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", system-ui, sans-serif; font-size:100% }
+  @media (prefers-color-scheme: dark) { :root { --milk:#060e27; --paper:#101b42; --ink:#edf1ff; --soft:#a9b4dc; --rule:#26346a;
+          --blue:#8eaeff; --blue-ink:#06112e; --sky:#182759; --pink:#ff86b6; --blush:#3a1730;
+          --ok:#74d8b9; --ok-bg:#0f3a30; --warn:#f2b660; --warn-bg:#3d2b0c; --bad:#ff8f97;
+          --glass:rgba(16,27,66,0.72); --lift:0 20px 44px -22px rgba(0,0,0,0.8) } }
   html.large { font-size:120% }
   * { box-sizing:border-box }
-  body { margin:0; font:1rem/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); min-height:100vh }
-  body::before { content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; background:
-      radial-gradient(34rem 26rem at 108% -6%, var(--blob1), transparent 62%),
-      radial-gradient(30rem 26rem at -12% 34%, var(--blob2), transparent 60%),
-      radial-gradient(32rem 24rem at 96% 92%, var(--blob3), transparent 62%) }
-  .app { max-width:40rem; margin:0 auto; padding:1rem 0.875rem 3.5rem }
-  header { display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:0.25rem 0.125rem 0 }
+  body { margin:0; font:1rem/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--milk); color:var(--ink); min-height:100vh }
+  /* One shape behind everything: a pour of blue with a pink edge, top right. */
+  body::before { content:""; position:fixed; z-index:-1; pointer-events:none; width:46rem; height:46rem; right:-20rem; top:-26rem; border-radius:50%;
+      background:radial-gradient(closest-side, var(--sky) 62%, var(--blush) 63% 78%, transparent 79%) }
+  @font-face { font-family:"Mise Name"; src:url("/fonts/name.ttf") format("truetype"); font-display:swap }
+  h1, h2, h3, .num { font-family:var(--round) }
+  /* The name, in the cursive of the engraving on the box. It is the same font file. */
+  .wordmark { font-family:"Mise Name", "Snell Roundhand", cursive; font-weight:400; color:var(--blue); letter-spacing:0 }
+  h1.wordmark { font-size:2.75rem; line-height:1.35; margin:-0.25rem 0 -0.75rem }
+  .foot { max-width:34rem; margin:0 auto; padding:0 1rem 6.5rem; display:flex; align-items:baseline; gap:0.75rem; flex-wrap:wrap }
+  .foot .wordmark { font-size:1.75rem; line-height:1.5 }
+  h1 { font-size:1.375rem; font-weight:700; letter-spacing:-0.01em; margin:0; line-height:1.15 }
+  h2 { font-size:1.375rem; font-weight:700; letter-spacing:-0.015em; margin:1.75rem 0 0.75rem; line-height:1.15 }
+  h3 { font-size:1.25rem; font-weight:700; margin:0; line-height:1.2 }
+  .meta { color:var(--soft); font-size:0.875rem }
+  .app { max-width:34rem; margin:0 auto; padding:0.875rem 1rem 1.5rem }
+  .side header { display:flex; justify-content:space-between; align-items:center; gap:0.75rem }
+  #ruleset { display:flex; flex-wrap:wrap; gap:0.375rem; margin-top:0.375rem }
+  .chip { display:inline-flex; align-items:center; gap:0.3125rem; font-size:0.8125rem; font-weight:600; padding:0.125rem 0.5625rem; border-radius:99px; background:var(--sky); color:var(--ink) }
+  .chip.live { background:var(--ok-bg); color:var(--ok) } .chip.live::before { content:""; width:0.4375rem; height:0.4375rem; border-radius:50%; background:currentColor }
   .sidenote { display:none }
-  /* A wide screen: the roles sit in a panel on the left, and the work area has two columns. */
-  @media (min-width:64rem) {
-    .app { max-width:84rem; display:grid; grid-template-columns:17rem minmax(0,1fr); gap:2rem; padding:1.75rem 2rem 3rem; align-items:start }
-    .side { position:sticky; top:1.75rem; padding:1.125rem; border-radius:1.5rem; background:var(--glass); border:1px solid var(--edge); box-shadow:var(--shadow);
-        -webkit-backdrop-filter:blur(22px) saturate(170%); backdrop-filter:blur(22px) saturate(170%) }
-    .side header { flex-direction:column; align-items:flex-start; gap:0.75rem; padding:0 }
-    .side .roles { flex-direction:column; border-radius:1.125rem; background:transparent; border:0; box-shadow:none; padding:0; margin:1.25rem 0 0;
-        -webkit-backdrop-filter:none; backdrop-filter:none }
-    .side .roles button { text-align:left; padding:0.625rem 0.875rem; border-radius:0.875rem; flex:none }
-    .side .roles small { font-size:0.8125rem }
-    .sidenote { display:block; margin:1.25rem 0.25rem 0; font-size:0.8125rem }
-    main { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); gap:0 1.75rem; align-items:start }
-    main > section { grid-column:2 }
-    main > section.lead { grid-column:1; grid-row:1 / span 8 }
-    main h2 { margin-top:0.25rem }
-    main > section:not(.lead) + section:not(.lead) h2 { margin-top:1.25rem }
-  }
-  h1 { font-size:1.5rem; font-weight:750; line-height:1.1; letter-spacing:-0.025em; margin:0 } h1 span { color:var(--pink) }
-  #ruleset { display:flex; align-items:center; gap:0.375rem; margin-top:0.25rem }
-  #ruleset::before { content:""; width:0.5rem; height:0.5rem; border-radius:50%; background:var(--ok); box-shadow:0 0 0 0.1875rem color-mix(in srgb, var(--ok) 22%, transparent) }
-  h2 { font-size:0.75rem; font-weight:650; letter-spacing:0.09em; text-transform:uppercase; color:var(--pink); margin:1.625rem 0.25rem 0.5rem }
-  .meta { color:var(--muted); font-size:0.875rem }
-  .card, details { background:var(--glass); border:1px solid var(--edge); border-radius:1.25rem; box-shadow:var(--shadow);
-      -webkit-backdrop-filter:blur(22px) saturate(170%); backdrop-filter:blur(22px) saturate(170%); margin-bottom:0.625rem }
-  .card { padding:0.875rem }
-  @media (prefers-reduced-transparency: reduce) { .card, details { -webkit-backdrop-filter:none; backdrop-filter:none; background:color-mix(in srgb, var(--bg) 60%, #fff) } }
-  .opt { border-top:1px solid var(--line); padding-top:0.625rem; margin-top:0.625rem }
-  .opt b { display:block }
-  .tag { display:inline-block; font-size:0.75rem; font-weight:650; padding:0.0625rem 0.5625rem; border-radius:99px; margin:0 0.25rem 0.3125rem 0;
-      background:color-mix(in srgb, currentColor 13%, transparent) }
-  .allowed { color:var(--ok) } .needs_approval { color:var(--warn) } .forbidden { color:var(--bad) }
-  .reasons { color:var(--muted); font-size:0.875rem; margin:0.375rem 0 0 }
-  .lines { font-size:0.9375rem; margin:0.375rem 0 0; padding-left:1.125rem }
-  button { font:inherit; font-weight:600; border-radius:99px; border:1px solid var(--line); background:var(--field); color:var(--ink);
-      padding:0.5rem 1rem; min-height:2.75rem; cursor:pointer; transition:transform 0.12s ease, filter 0.12s ease }
-  button:active { transform:scale(0.98) }
-  @media (prefers-reduced-motion: reduce) { button { transition:none } button:active { transform:none } }
-  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline:3px solid var(--accent); outline-offset:2px }
-  button.primary { border-color:transparent; color:var(--on-accent); background:linear-gradient(135deg, var(--accent2), var(--accent));
-      box-shadow:0 8px 18px -10px var(--accent), inset 0 1px 0 rgba(255,255,255,0.28) }
-  button.small { min-height:2.25rem; padding:0.25rem 0.75rem; font-size:0.875rem; font-weight:550 }
-  button:disabled { opacity:0.55 }
-  .row { display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.625rem }
-  .row > button { flex:1 1 auto }
-  .empty { color:var(--muted); margin:0 }
-  .stats { margin:0 }
-  .stats div { display:flex; justify-content:space-between; gap:0.5rem; padding:0.375rem 0; border-bottom:1px solid var(--line); font-size:0.9375rem }
-  .stats dt { color:var(--muted) } .stats dd { margin:0; font-weight:650; text-align:right; font-variant-numeric:tabular-nums }
-  input, select { font:inherit; padding:0.5rem 0.875rem; border-radius:0.875rem; border:1px solid var(--line); background:var(--field); color:var(--ink); width:100%; min-height:2.75rem }
-  .pin { display:flex; gap:0.25rem 0.5rem; align-items:center; flex-wrap:wrap; margin:0 0.25rem 0.625rem }
-  .pin label { white-space:nowrap; font-weight:550 } .pin input { width:7rem; flex:none } .pin .meta { flex:1 1 9rem }
-  summary { cursor:pointer; padding:0.875rem; font-weight:600; list-style:none; display:flex; justify-content:space-between; align-items:center; gap:0.5rem; border-radius:1.25rem }
-  summary::-webkit-details-marker { display:none }
-  summary::after { content:"+"; color:var(--accent); font-weight:400; font-size:1.25rem; line-height:1 }
-  details[open] > summary::after { content:"\2212" }
-  summary .meta { font-weight:400; margin-left:auto; text-align:right }
-  .inside { padding:0 0.875rem 0.875rem }
-  ul.plain { list-style:none; margin:0; padding:0 }
-  .log li { display:flex; gap:0.75rem; padding:0.375rem 0; border-top:1px solid var(--line); font-size:0.9375rem }
-  .log li:first-child { border-top:0 } .log time { color:var(--pink); font-variant-numeric:tabular-nums; font-size:0.8125rem; padding-top:0.125rem; flex:none }
-  .check li { display:flex; gap:0.625rem; align-items:flex-start; padding:0.4375rem 0; border-top:1px solid var(--line); font-size:0.9375rem }
-  .check .mark { flex:none; min-width:2.75rem; text-align:center; font-weight:700; font-size:0.75rem; padding:0.0625rem 0.375rem; border-radius:99px;
-      background:color-mix(in srgb, currentColor 13%, transparent); margin-top:0.125rem }
-  .check small { display:block; color:var(--muted); font-size:0.8125rem }
-  pre { white-space:pre-wrap; word-break:break-word; font-size:0.75rem; max-height:20rem; overflow:auto; margin:0; background:var(--field); border:1px solid var(--line); border-radius:0.875rem; padding:0.625rem }
-  .alarm { color:var(--bad); font-weight:700 }
-  .stock { margin-top:0.5rem; padding:0.5rem 0.75rem; border-radius:0.875rem; background:var(--field); border:1px solid var(--line); font-size:0.9375rem }
-  .slots li { padding:0.5rem 0; border-top:1px solid var(--line); font-size:0.9375rem } .slots li:first-child { border-top:0 }
-  .slots .head { display:flex; justify-content:space-between; gap:0.5rem; align-items:baseline }
-  .slots .count { display:flex; gap:0.5rem; margin-top:0.375rem } .slots .count input { width:5.5rem; flex:none; min-height:2.25rem }
-  .bar { height:0.375rem; border-radius:99px; background:var(--line); margin-top:0.375rem; overflow:hidden }
-  .bar i { display:block; height:100%; border-radius:99px; background:linear-gradient(90deg, var(--accent2), var(--accent)) }
-  .bar i.lowbar { background:var(--pink) }
-  .roles { display:flex; gap:0.25rem; padding:0.25rem; margin:0.875rem 0 0.25rem; border-radius:99px; background:var(--glass); border:1px solid var(--edge);
-      box-shadow:var(--shadow); -webkit-backdrop-filter:blur(22px) saturate(170%); backdrop-filter:blur(22px) saturate(170%) }
-  .roles button { flex:1 1 0; min-width:0; border:0; background:transparent; padding:0.3125rem 0.25rem; line-height:1.15; min-height:2.75rem }
-  .roles small { display:block; font-weight:400; font-size:0.6875rem; color:var(--muted) }
-  .roles button[aria-selected="true"] { color:var(--on-accent); background:linear-gradient(135deg, var(--accent2), var(--accent)) }
-  .roles button[aria-selected="true"] small { color:inherit; opacity:0.85 }
+
+  /* Who you are: a bar under the thumb on a phone, a rail on a wide screen. This is the one piece of glass. */
+  .roles { position:fixed; z-index:6; left:0.75rem; right:0.75rem; bottom:0.75rem; display:flex; gap:0.25rem; padding:0.3125rem; border-radius:1.5rem;
+      background:var(--glass); border:1px solid var(--rule); box-shadow:var(--lift);
+      -webkit-backdrop-filter:blur(20px) saturate(180%); backdrop-filter:blur(20px) saturate(180%) }
+  .roles button { flex:1 1 0; min-width:0; border:0; background:transparent; color:var(--ink); padding:0.4375rem 0.25rem; border-radius:1.1875rem;
+      font:700 0.9375rem/1.15 var(--round); min-height:3rem; cursor:pointer }
+  .roles small { display:block; font:400 0.6875rem/1.2 system-ui, sans-serif; color:var(--soft) }
+  .roles button[aria-selected="true"] { background:var(--blue); color:var(--blue-ink) } .roles button[aria-selected="true"] small { color:inherit; opacity:0.85 }
   section[data-role] { display:none }
   html[data-as="chef"] section[data-role~="chef"], html[data-as="kitchen"] section[data-role~="kitchen"],
   html[data-as="valio"] section[data-role~="valio"] { display:block }
+
+  button { font:inherit; font-weight:650; border-radius:0.875rem; border:1.5px solid var(--rule); background:var(--paper); color:var(--ink);
+      padding:0.5rem 1rem; min-height:2.875rem; cursor:pointer }
+  button:active { transform:translateY(1px) }
+  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline:3px solid var(--pink); outline-offset:2px }
+  button.primary { background:var(--blue); border-color:var(--blue); color:var(--blue-ink) }
+  button.small { min-height:2.25rem; padding:0.25rem 0.75rem; font-size:0.875rem; font-weight:600 }
+  button:disabled { opacity:0.5 }
+  .row { display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem } .row > button { flex:1 1 auto }
+  input, select { font:inherit; padding:0.5rem 0.75rem; border-radius:0.75rem; border:1.5px solid var(--rule); background:var(--paper); color:var(--ink); width:100%; min-height:2.875rem }
+  label.meta { display:block; margin-bottom:0.25rem }
+  .pin { display:flex; gap:0.25rem 0.625rem; align-items:center; flex-wrap:wrap; margin-bottom:0.875rem }
+  .pin label { white-space:nowrap; font-weight:650 } .pin input { width:7rem; flex:none } .pin .meta { flex:1 1 9rem }
+  .empty { color:var(--soft); margin:0 }
+  .demopins { margin:-0.25rem 0 0.875rem; font-size:0.875rem; color:var(--soft) } .demopins button { margin-left:0.25rem }
+  .sheet { background:var(--paper); border-radius:1rem; padding:1rem; box-shadow:var(--lift) }
+  .reasons { color:var(--soft); font-size:0.875rem; margin:0.375rem 0 0 }
+  .allowed { color:var(--ok) } .needs_approval { color:var(--warn) } .forbidden { color:var(--bad) }
+  .alarm { color:var(--bad); font-weight:700 }
+
+  /* The ticket: one request to the head chef. Paper, with the holes of the ticket rail along the top. */
+  .ticket { background:var(--paper); border-radius:0.375rem 0.375rem 1rem 1rem; box-shadow:var(--lift); margin-bottom:1.25rem; position:relative; padding-top:0.875rem }
+  .ticket::before { content:""; position:absolute; left:0; right:0; top:0; height:0.875rem; border-radius:0.375rem 0.375rem 0 0; background:
+      radial-gradient(circle at 0.75rem 0.4375rem, var(--milk) 0.1875rem, transparent 0.21875rem) 0 0 / 1.5rem 100% repeat-x, var(--blue) }
+  .ticket > header { padding:0.875rem 1rem 0.75rem }
+  .ticket .quote { margin:0.375rem 0 0; font-size:0.9375rem; color:var(--soft) }
+  .shelfnow { margin:0 1rem; padding:0.75rem 0 0.875rem; border-top:1.5px dashed var(--rule) }
+  .shelfnow .big { display:flex; align-items:baseline; gap:0.5rem; flex-wrap:wrap }
+  .shelfnow .num { font-size:2.25rem; font-weight:700; line-height:1; letter-spacing:-0.02em }
+  .gap { margin-top:0.75rem }
+  .gap .track { position:relative; height:0.625rem; border-radius:99px; background:var(--sky) }
+  .gap .dry { position:absolute; top:0; bottom:0; border-radius:99px; background:var(--pink) }
+  .gap .dot { position:absolute; top:50%; width:1rem; height:1rem; margin:-0.5rem 0 0 -0.5rem; border-radius:50%; border:0.1875rem solid var(--paper) }
+  .gap .dot.out { background:var(--pink) } .gap .dot.in { background:var(--blue) }
+  .gap .ends { display:flex; justify-content:space-between; gap:0.75rem; margin-top:0.375rem; font-size:0.8125rem; color:var(--soft) }
+  .gap .ends b { display:block; color:var(--ink); font-size:0.875rem }
+  .gap .verdict { margin:0.5rem 0 0; font-weight:650 }
+  .options { list-style:none; margin:0; padding:0 }
+  .options > li { padding:0.875rem 1rem 1rem; border-top:1.5px dashed var(--rule) }
+  .options .top { display:flex; justify-content:space-between; align-items:baseline; gap:0.75rem }
+  .options .name { font-weight:700; font-family:var(--round); font-size:1.0625rem }
+  .options .price { font-family:var(--round); font-weight:700; font-size:1.375rem; font-variant-numeric:tabular-nums; white-space:nowrap }
+  .lines { font-size:0.9375rem; margin:0.375rem 0 0; padding-left:1.125rem }
+  .ticket > footer { padding:0 1rem 1rem }
+
+  /* The shelf: one edge label for each slot, with the level and the reorder mark. */
+  .slots { list-style:none; margin:0; padding:0; display:grid; gap:0.75rem }
+  .slots li { background:var(--paper); border-radius:0.375rem; border-left:0.375rem solid var(--blue); padding:0.75rem 0.875rem; box-shadow:var(--lift) }
+  .slots li.lowslot { border-left-color:var(--pink) }
+  .slots .head { display:flex; justify-content:space-between; gap:0.75rem; align-items:baseline }
+  .slots .num { font-size:1.5rem; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap } .slots .num small { font-size:0.875rem; font-weight:600; color:var(--soft) }
+  .level { position:relative; height:0.625rem; border-radius:99px; background:var(--sky); margin:0.5rem 0 0.375rem }
+  .level i { position:absolute; left:0; top:0; bottom:0; border-radius:99px; background:var(--blue) } .lowslot .level i { background:var(--pink) }
+  .level b { position:absolute; top:-0.1875rem; bottom:-0.1875rem; width:0.125rem; background:var(--ink); opacity:0.55 }
+  .slots .count { display:flex; gap:0.5rem; margin-top:0.5rem } .slots .count input { width:5.5rem; flex:none; min-height:2.25rem }
+
+  /* The cold room: one large reading, then each product against its own limit. */
+  .therm { display:flex; align-items:baseline; gap:0.625rem; flex-wrap:wrap }
+  .therm .num { font-size:2.5rem; font-weight:700; line-height:1; letter-spacing:-0.02em }
+  .coldlist li { display:flex; justify-content:space-between; gap:0.75rem; align-items:baseline; padding:0.4375rem 0; border-top:1.5px dashed var(--rule) }
+  .coldlist li:first-child { margin-top:0.625rem }
+  .state { font-weight:700; font-size:0.8125rem; padding:0.125rem 0.5rem; border-radius:99px; white-space:nowrap }
+  .state.ok { background:var(--ok-bg); color:var(--ok) } .state.warm { background:var(--warn-bg); color:var(--warn) }
+  .state.breach { background:var(--pink); color:#fff } .state.unknown { background:var(--sky); color:var(--soft) }
+  .sheet .count { display:flex; gap:0.5rem; margin-top:0.75rem } .sheet .count input { width:5.5rem; flex:none; min-height:2.25rem }
+  .alert { background:var(--pink); color:#fff; border-radius:0.375rem 0.375rem 1rem 1rem; padding:0.875rem 1rem; margin-bottom:1.25rem; box-shadow:var(--lift) }
+  .alert h3 { color:inherit } .alert p { margin:0.375rem 0 0 }
+  /* The way of one order: five steps on a line. A step that happened is filled. */
+  .way { background:var(--paper); border-radius:1rem; padding:0.875rem 1rem; box-shadow:var(--lift); margin-bottom:0.75rem }
+  .way ol { list-style:none; margin:0.625rem 0 0; padding:0; display:grid; gap:0 }
+  .way li { position:relative; padding:0 0 0.625rem 1.5rem; font-size:0.9375rem }
+  .way li::before { content:""; position:absolute; left:0.25rem; top:0.3125rem; width:0.625rem; height:0.625rem; border-radius:50%; border:0.125rem solid var(--blue); background:var(--paper) }
+  .way li.done::before { background:var(--blue) } .way li.bad::before { background:var(--pink); border-color:var(--pink) }
+  .way li::after { content:""; position:absolute; left:0.5rem; top:1.0625rem; bottom:0; width:0.125rem; background:var(--rule) } .way li:last-child::after { display:none }
+  .way li b { font-family:var(--round) } .way li:not(.done) { color:var(--soft) }
+
+  /* A scanned product: what the catalog says, and what this kitchen may do with it. */
+  .found { margin-top:0.875rem; padding-top:0.875rem; border-top:1.5px dashed var(--rule) }
+  .found h3 { font-size:1.0625rem } .found .state { display:inline-block; margin:0.5rem 0 0.25rem }
+  .state.allowed { background:var(--ok-bg); color:var(--ok) } .state.read_label { background:var(--warn-bg); color:var(--warn) }
+  .state.forbidden { background:var(--pink); color:#fff }
+
+  /* Folded parts and the facts list. */
+  details { background:var(--paper); border-radius:1rem; box-shadow:var(--lift); margin-top:0.75rem }
+  summary { cursor:pointer; padding:0.875rem 1rem; font-weight:650; list-style:none; display:flex; justify-content:space-between; align-items:center; gap:0.5rem }
+  summary::-webkit-details-marker { display:none }
+  summary::after { content:"+"; color:var(--blue); font-size:1.25rem; line-height:1 } details[open] > summary::after { content:"\2212" }
+  summary .meta { font-weight:400; margin-left:auto }
+  .inside { padding:0 1rem 1rem }
+  .stats { margin:0 }
+  .stats div { display:flex; justify-content:space-between; gap:0.75rem; padding:0.4375rem 0; border-bottom:1.5px dashed var(--rule) } .stats div:last-child { border-bottom:0 }
+  .stats dt { color:var(--soft) } .stats dd { margin:0; font-weight:700; font-family:var(--round); font-variant-numeric:tabular-nums }
+  ul.plain { list-style:none; margin:0; padding:0 }
+  .check li { display:flex; gap:0.625rem; align-items:flex-start; padding:0.5rem 0; border-top:1.5px dashed var(--rule) } .check li:first-child { border-top:0 }
+  .check .mark { flex:none; min-width:3rem; text-align:center; font-weight:700; font-size:0.8125rem; padding:0.125rem 0.375rem; border-radius:99px; margin-top:0.0625rem }
+  .check .mark.allowed { background:var(--ok-bg) } .check .mark.forbidden { background:var(--blush); color:var(--pink) }
+  .check small { display:block; color:var(--soft); font-size:0.8125rem }
+
+  /* The log: a till roll. Narrow, dashed, newest at the top, torn at the bottom. */
+  .roll { background:var(--paper); padding:0.75rem 1rem 1.25rem; box-shadow:var(--lift); max-width:26rem;
+      -webkit-mask:conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / 0.75rem 51% repeat-x, linear-gradient(#000 0 0) top / 100% 51% no-repeat;
+      mask:conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / 0.75rem 51% repeat-x, linear-gradient(#000 0 0) top / 100% 51% no-repeat }
+  .log li { display:flex; gap:0.75rem; padding:0.4375rem 0; border-top:1.5px dashed var(--rule); font-size:0.9375rem } .log li:first-child { border-top:0 }
+  .log time { color:var(--pink); font-weight:700; font-variant-numeric:tabular-nums; font-size:0.8125rem; padding-top:0.125rem; flex:none }
+  pre { white-space:pre-wrap; word-break:break-word; font-size:0.75rem; max-height:20rem; overflow:auto; margin:0; background:var(--milk); border-radius:0.5rem; padding:0.625rem }
+
   #result:empty { display:none }
-  #result { position:fixed; left:50%; bottom:1rem; transform:translateX(-50%); z-index:5; margin:0; width:max-content; max-width:calc(100vw - 2rem);
-      padding:0.625rem 1rem; border-radius:1.25rem; color:var(--ink); font-size:0.9375rem; background:var(--glass); border:1px solid var(--edge);
-      box-shadow:var(--shadow); -webkit-backdrop-filter:blur(22px) saturate(170%); backdrop-filter:blur(22px) saturate(170%) }
+  #result { position:fixed; left:50%; bottom:5.25rem; transform:translateX(-50%); z-index:7; margin:0; width:max-content; max-width:calc(100vw - 2rem);
+      padding:0.625rem 1rem; border-radius:0.875rem; background:var(--ink); color:var(--milk); font-size:0.9375rem; box-shadow:var(--lift) }
+
+  /* A wide screen: the roles become a rail on the left, and the work sits in two columns. */
+  @media (min-width:64rem) {
+    .app { max-width:82rem; display:grid; grid-template-columns:15rem minmax(0,1fr); gap:3rem; padding:2rem 2.5rem 2rem; align-items:start }
+    .side { position:sticky; top:2rem }
+    .side header { flex-direction:column; align-items:flex-start }
+    .roles { position:static; flex-direction:column; margin-top:1.5rem; padding:0.375rem; border-radius:1.25rem }
+    .roles button { text-align:left; padding:0.625rem 0.875rem; border-radius:0.9375rem; flex:none }
+    .roles small { font-size:0.8125rem }
+    .sidenote { display:block; margin:1.25rem 0.25rem 0; font-size:0.8125rem }
+    main { display:grid; grid-template-columns:minmax(0,34rem) minmax(0,26rem); gap:0 3rem; align-items:start }
+    main > section { grid-column:2 } main > section.lead { grid-column:1; grid-row:1 / span 8 }
+    main h2 { margin-top:0 } main > section:not(.lead) + section:not(.lead) h2 { margin-top:1.75rem }
+    #result { bottom:1.5rem }
+    .foot { max-width:82rem; padding:0 2.5rem 2.5rem }
+  }
+  @media (prefers-reduced-motion: reduce) { button:active { transform:none } }
 </style>
 </head>
 <body>
@@ -123,35 +185,62 @@
 <aside class="side">
   <header>
     <div>
-      <h1>Safe Kitchen <span>Agent</span></h1>
+      <h1 class="wordmark" aria-label="mise">mise</h1>
       <div class="meta" id="ruleset"></div>
     </div>
     <button id="size" class="small" aria-pressed="false">Larger text</button>
   </header>
   <!-- Three people use this system. Each one sees only the own part. -->
-  <div class="roles" role="tablist" aria-label="Who you are">
+  <nav class="roles" role="tablist" aria-label="Who you are">
     <button role="tab" data-pick="chef">Head chef<small>approves orders</small></button>
     <button role="tab" data-pick="kitchen">Kitchen<small>asks for products</small></button>
     <button role="tab" data-pick="valio">Wholesaler<small>admits agents</small></button>
-  </div>
+  </nav>
   <p class="meta sidenote">One system, three people. The head chef uses a phone. The kitchen and the wholesaler use a screen.</p>
 </aside>
 <main>
   <p class="reasons" id="result" role="status" aria-live="polite"></p>
 
   <section data-role="chef" class="lead">
-    <h2>Waiting for your approval</h2>
+    <h2>Waiting for you</h2>
     <div class="pin">
       <label for="pin">Your PIN</label>
       <input id="pin" type="password" inputmode="numeric" autocomplete="off" aria-describedby="pinHelp">
       <span class="meta" id="pinHelp">Your name in the log comes from it.</span>
     </div>
-    <div id="approvals" aria-live="polite"><div class="card"><p class="empty">Nothing to approve.</p></div></div>
+    <p class="demopins" data-pins-for="pin" hidden></p>
+    <div id="coldAlert" aria-live="assertive"></div>
+    <div id="approvals" aria-live="polite"><p class="empty">Nothing waits for you.</p></div>
+  </section>
+
+  <section data-role="chef kitchen">
+    <h2>Cold room</h2>
+    <div class="sheet">
+      <div class="therm"><span class="num" id="coldNow">–</span><span id="coldWhen" class="meta">No reading yet.</span></div>
+      <ul class="plain coldlist" id="coldProducts"></ul>
+      <div class="count">
+        <input id="tempIn" type="number" step="0.1" inputmode="decimal" placeholder="°C" aria-label="Temperature that you measured">
+        <button class="small" id="tempSave">Save a measured temperature</button>
+      </div>
+      <p class="meta" style="margin:0.5rem 0 0">The sensor measures the air, not the food. A limit is the storage temperature that the manufacturer gave.</p>
+    </div>
+  </section>
+
+  <section data-role="kitchen valio">
+    <h2>Each order, step by step</h2>
+    <div id="chains"><p class="empty">No order yet.</p></div>
   </section>
 
   <section data-role="chef">
+    <h2>The knob on the box</h2>
+    <div class="sheet">
+      <div class="therm"><span class="num" id="knobNow">–</span><span class="meta">the most that the agent may order alone</span></div>
+      <p style="margin:0.5rem 0 0">Turn the knob to change this limit, in steps of €10. An order above it waits for your approval. At €0 every order waits.</p>
+      <p class="meta" style="margin:0.5rem 0 0">Hold the knob for 2 seconds when a delivery arrives. The box then checks the delivery: the count and the temperature at the door.</p>
+      <p class="meta" id="knobNote" style="margin:0.5rem 0 0"></p>
+    </div>
     <h2>Your kitchen</h2>
-    <div class="card">
+    <div class="sheet">
       <dl class="stats" id="stats"></dl>
       <p class="meta" id="shelf" style="margin:0.5rem 0 0"></p>
     </div>
@@ -159,7 +248,7 @@
 
   <section data-role="kitchen" class="lead">
     <h2>Ask the agent to order</h2>
-    <div class="card">
+    <div class="sheet">
       <label class="meta" for="who">Your name</label>
       <input id="who" placeholder="For example: Aino, morning shift" autocomplete="off" style="margin:0.25rem 0 0.625rem">
       <label class="meta" for="text">What the kitchen needs</label>
@@ -178,8 +267,21 @@
   </section>
 
   <section data-role="kitchen">
+    <h2>Scan a product</h2>
+    <div class="sheet">
+      <label class="meta" for="code">The number under the barcode of the pack</label>
+      <input id="code" inputmode="numeric" autocomplete="off" placeholder="For example 6408430000296">
+      <div class="row">
+        <button class="primary" data-scan="door">It arrived at the door</button>
+        <button data-scan="shelf">It is on the shelf</button>
+      </div>
+      <div id="scanOut" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <section data-role="kitchen">
     <h2>On the shelf</h2>
-    <div class="card"><ul class="plain slots" id="slots"><li class="empty">No shelf data yet.</li></ul></div>
+    <ul class="slots" id="slots"><li class="empty">No shelf data yet.</li></ul>
   </section>
 
   <section data-role="kitchen">
@@ -195,7 +297,7 @@
 
   <section data-role="valio" class="lead">
     <h2>Admit an outside agent</h2>
-    <div class="card">
+    <div class="sheet">
       <p class="meta" style="margin:0">Step 1. The wholesaler tests the agent: six scenarios on a copy of the catalog.</p>
       <div class="row">
         <button class="primary" data-test="safe-kitchen">Test our agent</button>
@@ -209,6 +311,7 @@
           <input id="grantPin" type="password" inputmode="numeric" autocomplete="off">
           <button class="primary" id="grantBtn" style="flex:1 1 8rem">Grant licence</button>
         </div>
+        <p class="demopins" data-pins-for="grantPin" hidden></p>
       </div>
     </div>
   </section>
@@ -222,8 +325,8 @@
   </section>
 
   <section data-role="chef valio">
-    <h2>Audit log</h2>
-    <div class="card">
+    <h2>What happened</h2>
+    <div class="roll">
       <ul class="plain log" id="story"></ul>
       <div class="row"><button class="small" id="more" aria-expanded="false">Show more</button></div>
     </div>
@@ -236,6 +339,8 @@
   </section>
 </main>
 </div>
+<!-- The name is "mise" on the lid of the box and "en place" on its base. The page follows the box. -->
+<footer class="foot"><span class="wordmark">en place</span> <span class="meta">Everything in its place before service: the stock, the rules and the orders.</span></footer>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -251,22 +356,39 @@ async function api(path, opts) {
 const post = (path, body) => api(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
 
 const SOURCE = {camera: "camera estimate", sensor: "distance sensor", person: "counted by a person"};
-const day = (iso) => new Date(iso).toLocaleString("en-GB", {weekday: "short", hour: "2-digit", minute: "2-digit"});
-function stockLine(s) {
-  // One sentence each: what is there, how fast it goes, when it is gone. No rate means too little history.
-  let t = `<b>On the shelf: ${s.units}</b> <span class="meta">(${SOURCE[s.source] || esc(s.source)}, ${esc(s.counted_at.slice(11, 16))})</span>`;
-  if (s.stale) t += ` <span class="needs_approval">This count is ${Math.round(s.age_hours)} hours old.</span>`;
-  t += s.use_per_day ? `<br>Use: about ${s.use_per_day} a day, from ${s.readings} counts over ${s.span_hours} hours.`
-                     : `<br><span class="meta">No use rate yet: the counts cover too little time.</span>`;
-  if (s.runs_out_at) t += `<br>At this rate the shelf is empty on ${esc(day(s.runs_out_at))}.`;
-  return t;
+const NAMES = {best: "Best match", better: "Better price or date", good: "Good enough", usual: "The usual product", partial: "What is in stock",
+               requested: "The product you asked for", "after recheck": "Changed since you looked"};
+const when = (iso) => iso.length === 10
+  ? new Date(iso + "T00:00").toLocaleDateString("en-GB", {weekday: "short", day: "numeric", month: "short"})
+  : new Date(iso).toLocaleString("en-GB", {weekday: "short", hour: "2-digit", minute: "2-digit"});
+const euro = (n) => "€" + n.toFixed(2);
+const cap = (t) => t ? t[0].toUpperCase() + t.slice(1) : t;
+
+// The gap: a line from now to the later of "shelf empty" and "delivery". The pink part is time with an empty shelf.
+function gapLine(s, delivery) {
+  if (!s.runs_out_at || !delivery) return "";
+  const now = Date.now(), out = new Date(s.runs_out_at).getTime(), arrive = new Date(delivery.length === 10 ? delivery + "T00:00" : delivery).getTime();
+  const end = Math.max(out, arrive, now + 36e5), span = (end - now) * 1.08;
+  const at = (t) => Math.max(0, Math.min(100, 100 * (t - now) / span));
+  const hours = Math.round(Math.abs(arrive - out) / 36e5), late = arrive > out;
+  return `<div class="gap">
+      <div class="track">${late ? `<span class="dry" style="left:${at(out)}%;width:${at(arrive) - at(out)}%"></span>` : ""}
+        <i class="dot out" style="left:${at(out)}%"></i><i class="dot in" style="left:${at(arrive)}%"></i></div>
+      <div class="ends"><span><b>Shelf empty</b>${esc(when(s.runs_out_at))}</span><span style="text-align:right"><b>Delivery</b>${esc(when(delivery))}</span></div>
+      <p class="verdict ${late ? "forbidden" : "allowed"}">${late ? `About ${hours} hours with an empty shelf.` : `The delivery comes about ${hours} hours before the shelf is empty.`}</p>
+    </div>`;
+}
+function shelfNow(s, delivery) {
+  return `<div class="shelfnow">
+      <div class="big"><span class="num">${s.units}</span><span>on the shelf now</span>
+        <span class="meta">${SOURCE[s.source] || esc(s.source)}, ${esc(s.counted_at.slice(11, 16))}${s.stale ? `, ${Math.round(s.age_hours)} hours old` : ""}</span></div>
+      <p class="reasons">${s.use_per_day ? `The kitchen uses about ${s.use_per_day} a day (${s.readings} counts over ${s.span_hours} hours).`
+                                         : "No use rate yet: the counts cover too little time."}</p>
+      ${gapLine(s, delivery)}
+    </div>`;
 }
 function optionStock(o) {
-  const parts = [];
-  if (o.runs_out_before_delivery === true) parts.push('<span class="needs_approval">The shelf runs out before this delivery.</span>');
-  if (o.runs_out_before_delivery === false) parts.push('<span class="allowed">Arrives before the shelf runs out.</span>');
-  if (o.order_lasts_days != null) parts.push(`This order lasts about ${o.order_lasts_days} days.`);
-  return parts.length ? `<p class="reasons">${parts.join(" ")}</p>` : "";
+  return o.order_lasts_days != null ? `<p class="reasons">This order lasts about ${o.order_lasts_days} days.</p>` : "";
 }
 
 let shownApprovals = null;
@@ -276,30 +398,31 @@ function renderApprovals(list) {
   const key = JSON.stringify(list.map(a => [a.id, a.options.map(o => o.total_eur), a.stock && [a.stock.units, a.stock.use_per_day]]));
   if (key === shownApprovals) return;
   shownApprovals = key;
-  if (!list.length) { $("approvals").innerHTML = '<div class="card"><p class="empty">Nothing to approve.</p></div>'; return; }
-  $("approvals").innerHTML = list.map(a => `
-    <div class="card">
-      <b>${esc(a.what)}${a.slot ? " · slot " + a.slot : ""}</b>
-      <div class="meta">${a.asked_by ? `Asked by ${esc(WHO[a.asked_by] || a.asked_by)}` : "Asked"} at ${esc(a.created.slice(11,16))}</div>
-      ${a.request ? `<div class="meta">“${esc(a.request)}”</div>` : ""}
-      ${a.stock ? `<div class="stock">${stockLine(a.stock)}</div>` : ""}
-      ${a.options.map((o, i) => `
-        <div class="opt">
-          <span class="tag ${o.result}">${esc(o.label)}</span><span class="tag ${o.result}">${label(o.result)}</span>
-          <b>€${o.total_eur.toFixed(2)} · ${esc(o.trade_off)}</b>
-          <ul class="lines">${o.lines.map(l => `<li>${l.quantity} × ${esc(l.name)} at €${l.unit_price_eur.toFixed(2)}
-            <span class="meta">(price checked ${esc(l.price_checked_at.slice(11,16))})</span></li>`).join("")}</ul>
-          <p class="reasons">${o.reasons.map(esc).join("; ")}</p>
-          ${a.stock && a.stock.options[i] ? optionStock(a.stock.options[i]) : ""}
-          ${o.reasons.some(r => r.includes("check the label")) ? `<p class="reasons"><b>Read the label before you approve.</b>
+  if (!list.length) { $("approvals").innerHTML = '<p class="empty">Nothing waits for you.</p>'; return; }
+  $("approvals").innerHTML = list.map(a => {
+    const first = a.options[0] && a.options[0].lines[0];
+    return `<article class="ticket">
+      <header>
+        <div class="meta">${a.asked_by ? `${esc(cap(WHO[a.asked_by] || a.asked_by))} asked` : "Asked"} at ${esc(a.created.slice(11,16))}${a.slot ? `, shelf slot ${a.slot}` : ""}</div>
+        <h3>${esc(a.what[0].toUpperCase() + a.what.slice(1))}</h3>
+        ${a.request ? `<p class="quote">“${esc(a.request)}”</p>` : ""}
+      </header>
+      ${a.stock ? shelfNow(a.stock, first && first.delivery) : ""}
+      <ol class="options">${a.options.map((o, i) => `
+        <li>
+          <div class="top"><span class="name">${esc(NAMES[o.label] || o.label)}</span><span class="price">${euro(o.total_eur)}</span></div>
+          <ul class="lines">${o.lines.map(l => `<li>${l.quantity} × ${esc(l.name)} at ${euro(l.unit_price_eur)}</li>`).join("")}</ul>
+          <p class="reasons">${esc(o.trade_off)} Price checked at ${esc(o.lines[0].price_checked_at.slice(11,16))}.</p>
+          <p class="reasons">Why you decide: ${o.reasons.map(esc).join("; ")}.</p>
+          ${o.reasons.some(x => x.includes("check the label")) ? `<p class="reasons"><b>Read the label before you approve.</b>
             The agent keeps your answer and does not ask again for this product.</p>` : ""}
-          <div class="row"><button class="${i===0?"primary":""}" data-a="${a.id}" data-o="${i}">${i===0?"Approve":"Choose this"}</button>
-            ${i===a.options.length-1 ? `<button data-a="${a.id}" data-skip="1">Skip</button>` : ""}</div>
-        </div>`).join("")}
-      ${a.options.length ? "" : `<p class="reasons"><b class="needs_approval">The agent found nothing that it may order.</b>
-        The kitchen still needs this product. Order it another way, or change the rules.</p>
-        <div class="row"><button data-a="${a.id}" data-skip="1">I have seen this</button></div>`}
-    </div>`).join("");
+          ${a.stock && a.stock.options[i] ? optionStock(a.stock.options[i]) : ""}
+          <div class="row"><button class="${i===0?"primary":""}" data-a="${a.id}" data-o="${i}">${i===0?"Approve this order":"Choose this one"}</button></div>
+        </li>`).join("")}</ol>
+      ${a.options.length ? "" : `<div class="shelfnow"><p style="margin:0"><b class="forbidden">The agent found nothing that it may order.</b>
+        The kitchen still needs this product. Order it another way, or change the rules.</p></div>`}
+      <footer><div class="row"><button data-a="${a.id}" data-skip="1">${a.options.length ? "Order nothing" : "I have seen this"}</button></div></footer>
+    </article>`; }).join("");
 }
 
 $("approvals").addEventListener("click", async (e) => {
@@ -368,15 +491,16 @@ function drawStock(slots) {
   shownStock = key;
   $("slots").innerHTML = slots.map(s => {
     const share = s.units == null || !s.target_units ? 0 : Math.min(100, Math.round(100 * s.units / s.target_units));
+    const mark = s.reorder_below && s.target_units ? Math.min(100, 100 * s.reorder_below / s.target_units) : null;
     const low = s.units != null && s.reorder_below != null && s.units < s.reorder_below;
-    return `<li><div class="head"><b>${esc(s.product || "Slot " + s.slot)}</b>
-        <span>${s.units == null ? "not counted" : `${s.units} of ${s.target_units}`}</span></div>
-      <div class="bar"><i class="${low ? "lowbar" : ""}" style="width:${share}%"></i></div>
-      <div class="meta">${s.units == null ? "Nobody counted this slot yet." : `${SOURCE[s.source] || esc(s.source)}, ${esc(s.counted_at.slice(11, 16))}.`}
-        ${s.stale ? ` <span class="needs_approval">${Math.round(s.age_hours)} hours old.</span>` : ""}
+    const name = s.product ? s.product[0].toUpperCase() + s.product.slice(1) : "Slot " + s.slot;
+    return `<li class="${low ? "lowslot" : ""}"><div class="head"><b>${esc(name)}</b>
+        <span class="num">${s.units == null ? "?" : s.units}<small> of ${s.target_units}</small></span></div>
+      <div class="level"><i style="width:${share}%"></i>${mark == null ? "" : `<b style="left:${mark}%" title="Reorder below ${s.reorder_below}"></b>`}</div>
+      <div class="meta">${s.units == null ? "Nobody counted this slot yet." : `${cap(SOURCE[s.source] || esc(s.source))}, ${esc(s.counted_at.slice(11, 16))}${s.stale ? `, ${Math.round(s.age_hours)} hours old` : ""}.`}
         ${s.on_order ? ` <b>${s.on_order} on order.</b>` : s.request_open ? " <b>A request waits for the head chef.</b>" : ""}
-        ${s.use_per_day ? ` About ${s.use_per_day} a day. Empty on ${esc(day(s.runs_out_at))}. A full shelf lasts ${s.days_of_use_when_full} days.` : ""}</div>
-      <div class="count"><input type="number" min="0" inputmode="numeric" placeholder="Count" aria-label="Count for ${esc(s.product || "slot " + s.slot)}" data-count="${s.slot}">
+        ${s.use_per_day ? ` About ${s.use_per_day} a day, so empty ${esc(when(s.runs_out_at))}. A full shelf lasts ${s.days_of_use_when_full} days.` : ""}</div>
+      <div class="count"><input type="number" min="0" inputmode="numeric" placeholder="Count" aria-label="Count for ${esc(name)}" data-count="${s.slot}">
         <button class="small" data-save="${s.slot}">Save count</button></div></li>`; }).join("") || '<li class="empty">No shelf slots in the rule set.</li>';
 }
 $("slots").addEventListener("click", async (e) => {
@@ -385,6 +509,78 @@ $("slots").addEventListener("click", async (e) => {
   if (field.value === "") { field.focus(); return; }
   await post(`/stock/${b.dataset.save}/count`, {units: Number(field.value), counted_by: $("who").value.trim() || null});
   $("result").textContent = "Count saved. It starts no order."; shownStock = null; tick();
+});
+
+const STATE = {ok: "Cold enough", warm: "Too warm", breach: "Check before use", unknown: "No limit known"};
+const STEP = {asked: "Asked", checked: "Checked", ordered: "Ordered", delivered: "Delivered", stored: "Stored"};
+function drawCold(c) {
+  $("coldNow").textContent = c.temperature_c == null ? "–" : `${c.temperature_c.toFixed(1)} °C`;
+  $("coldWhen").textContent = c.measured_at ? `${c.source === "person" ? "Measured by a person" : "Sensor"} at ${c.measured_at.slice(11, 16)}` : "No reading yet.";
+  $("coldProducts").innerHTML = c.products.map(p => `<li><span>${esc(cap(p.product || "Slot " + p.slot))}
+      <span class="meta">${p.limit_c == null ? "" : `keep at ${p.limit_c} °C or colder`}${p.minutes_above_now ? `, above it for ${p.minutes_above_now} min` : ""}</span></span>
+      <span class="state ${p.state}">${STATE[p.state]}</span></li>`).join("");
+  const bad = c.products.filter(p => p.state === "breach");
+  $("coldAlert").innerHTML = bad.length ? `<div class="alert"><h3>Check ${bad.map(p => esc(p.product)).join(" and ")} before use</h3>
+      <p>The cold room is at ${c.temperature_c.toFixed(1)} °C. It was above the limit for ${Math.max(...bad.map(p => p.minutes_above_now))} minutes,
+      and this kitchen allows ${c.allowed_minutes}. The sensor measures the air, so measure the product itself.</p></div>` : "";
+}
+$("tempSave").onclick = async () => {
+  if ($("tempIn").value === "") { $("tempIn").focus(); return; }
+  await post("/cold/reading", {temperature_c: Number($("tempIn").value), measured_by: $("who").value.trim() || null});
+  $("tempIn").value = ""; $("result").textContent = "Temperature saved in the cold log."; tick();
+};
+let shownChains = null;
+async function drawChains(orders) {
+  const last = orders.slice(-3).reverse();
+  const ways = await Promise.all(last.map(o => api(`/orders/${o.order_id}/chain`)));
+  const key = JSON.stringify(ways);
+  if (key === shownChains) return;
+  shownChains = key;
+  $("chains").innerHTML = ways.map((w, i) => `<div class="way"><b>${esc(last[i].lines.map(l => `${l.quantity} × ${l.name}`).join(", "))}</b>
+      <div class="meta">Order ${esc(w.order_id)}, €${last[i].total_eur.toFixed(2)}</div>
+      <ol>${w.steps.map(x => `<li class="${x.done ? "done" : ""} ${x.state === "breach" || (x.step === "delivered" && x.done && /above|missing|after/.test(x.text)) ? "bad" : ""}">
+        <b>${STEP[x.step]}</b>${x.time ? ` <span class="meta">${esc(x.time.slice(11, 16))}${x.who ? ", " + esc(WHO[x.who] || x.who) : ""}</span>` : ""}<br>${esc(x.text)}</li>`).join("")}</ol></div>`).join("")
+    || '<p class="empty">No order yet.</p>';
+}
+
+const VERDICT = {allowed: "Allowed in this kitchen", read_label: "Read the label first", forbidden: "Not for this kitchen"};
+document.querySelectorAll("[data-scan]").forEach(b => b.onclick = async () => {
+  const code = $("code").value.trim();
+  if (!code) { $("code").focus(); return; }
+  const resp = await fetch("/scan", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({code, where: b.dataset.scan, scanned_by: $("who").value.trim() || null})});
+  const r = await resp.json();
+  $("scanOut").innerHTML = !resp.ok ? `<div class="found"><b class="forbidden">${esc(r.detail || "Not found.")}</b>
+      <p class="reasons">The scan is in the log. Check the number, or ask the wholesaler about this pack.</p></div>`
+    : r.matches.map(m => { const p = m.product, c = m.cold_room; return `<div class="found">
+      <h3>${esc(p.name)}</h3>
+      <div class="meta">${esc(p.supplier || "Supplier not named")}${p.origin ? ", from " + esc(p.origin) : ""}. Code ${esc(p.gtin || r.code)}.</div>
+      <span class="state ${m.verdict}">${VERDICT[m.verdict]}</span>
+      ${m.reasons.length ? `<p class="reasons">${m.reasons.map(esc).join("; ")}.</p>` : ""}
+      <p class="reasons">Allergens in the catalog: ${p.allergens == null ? "no data" : p.allergens.length ? p.allergens.map(esc).join(", ") : "none listed"}.</p>
+      <p class="reasons">${m.keep_at_or_below_c == null ? "The catalog gives no storage temperature for it."
+        : `Keep it at ${m.keep_at_or_below_c} °C or colder. ` + (c.temperature_c == null ? "The cold room has no reading yet."
+          : `The cold room is at ${c.temperature_c.toFixed(1)} °C: ${STATE[c.state].toLowerCase()}.`)}</p>
+      ${m.shelf_slot ? `<p class="reasons">It belongs in shelf slot ${m.shelf_slot}.</p>` : ""}
+    </div>`; }).join("");
+  tick();
+});
+
+let shownPins = null;
+function drawPins(pins) {
+  // Demo only: the backend sends the PINs when SHOW_PINS=1. A tap puts one into the field next to it.
+  const key = JSON.stringify(pins);
+  if (key === shownPins) return;
+  shownPins = key;
+  document.querySelectorAll(".demopins").forEach(box => {
+    box.hidden = !pins.length;
+    box.innerHTML = pins.length ? "For this demo: " + pins.map(p =>
+      `<button class="small" data-fill="${box.dataset.pinsFor}" data-pin="${esc(p.pin)}">${esc(p.name)}: <b>${esc(p.pin)}</b></button>`).join(" ") : "";
+  });
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-fill]"); if (!b) return;
+  const field = $(b.dataset.fill); field.value = b.dataset.pin; field.dispatchEvent(new Event("change"));
 });
 
 function setRole(role) {
@@ -423,6 +619,8 @@ async function tick() {
       api("/approvals/open"), api("/device"), api("/log?format=story&limit=60"),
       api("/deliveries"), api("/suppliers/reliability")]);
     drawStock(await api("/stock"));
+    drawCold(await api("/cold"));
+    drawChains(await api("/orders"));
     const lics = await api("/sandbox/licences");
     const live = lics.filter(l => !l.revoked && new Date(l.expires) > new Date());
     $("licCount").textContent = live.length ? `${live.length} in force` : "none in force";
@@ -435,16 +633,20 @@ async function tick() {
       `<li class="${d.problems.length ? "forbidden" : "allowed"}">${esc(d.summary)}</li>`).join("")}</ul>`;
     $("reliability").innerHTML = rel.length ? `<p class="meta">Supplier record: ${rel.map(r =>
       `${esc(r.supplier)} ${Math.round(r.score * 100)}% good (${r.good} of ${r.deliveries})`).join(" · ")}</p>` : "";
+    drawPins(dev.demo_pins || []);
     if (!dev.pins_set) $("pinHelp").textContent = "No PIN is set. Put APPROVER_PINS in valio-challenge/.env.";
     renderApprovals(approvals);
-    $("ruleset").textContent = `Rule set v${dev.rule_set_version} · ${dev.catalog.includes("stand-in") ? "stand-in catalog" : "live Valio catalog"}`;
+    $("ruleset").innerHTML = `<span class="chip ${dev.catalog.includes("stand-in") ? "" : "live"}">${dev.catalog.includes("stand-in") ? "Stand-in catalog" : "Live Valio catalog"}</span>
+      <span class="chip">Rule set ${dev.rule_set_version}</span>`;
     forceOptions(dev.catalog);
     $("stats").innerHTML = [
       ["Cold room", dev.temperature_c == null ? "–" : `<span class="${dev.alarm ? "alarm" : ""}">${dev.temperature_c.toFixed(1)} °C</span>`],
-      ["Limit (knob)", dev.auto_limit_eur == null ? "–" : `€${dev.auto_limit_eur}`],
       ["Spent this week", `€${dev.weekly_spent_eur.toFixed(2)}`],
       ["Shelf box", dev.online ? "online" : (dev.last_seen ? `<span class="alarm">offline ${esc(dev.last_seen.slice(11,16))}</span>` : "never seen")],
     ].map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+    $("knobNow").textContent = dev.auto_limit_eur == null ? "–" : `€${dev.auto_limit_eur}`;
+    $("knobNote").textContent = dev.auto_limit_eur == null ? "The box did not send its limit yet, so the limit of the rule set counts."
+      : dev.online ? "" : "The box is offline. This is the last limit that it sent.";
     const slots = Object.entries(dev.slots).map(([k, v]) => `slot ${k} ${v.state}`).join(" · ");
     $("shelf").textContent = slots ? `Shelf: ${slots}` : "Shelf: no data from the camera yet.";
     const lines = log.story.slice().reverse();
