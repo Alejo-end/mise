@@ -226,3 +226,71 @@ def test_other_pack_sizes_and_missing_prices_are_left_out(agent):
     assert "MOCK-MILK-LF-1L-B" not in ids and "MOCK-MILK-LF-1L-C" in ids
     left_out = next(e for e in agent.log.entries() if e["step"] == "candidates")["detail"]["left_out"]
     assert left_out["other_pack_size"] == ["MOCK-MILK-LF-1L-B"]
+
+
+def test_unknown_stock_goes_to_a_person(agent):
+    """A product that ships from the supplier has no known stock. The agent must not order it alone."""
+    real = agent.catalog.availability
+
+    def supplier_ships_it(product_id, quantity, needed_by):
+        claim = real(product_id, quantity, needed_by)
+        claim.value.update(available_units=quantity, quantity_known=False)
+        return claim
+
+    agent.catalog.availability = supplier_ships_it
+    r = agent.handle_event({"type": "slot_state", "slot": 2, "state": "empty", "estimated_units": 0})
+    assert r["status"] == "needs_approval"
+    assert any("does not know the stock" in x for x in agent.open_approvals()[0]["options"][0]["reasons"])
+
+
+def test_the_ranking_and_the_rule_check_agree_on_approved_product_codes(agent):
+    """A product code written as a number in the rule file is approved by both."""
+    agent.rules["approved_substitute_groups"]["rye_bread"] = [123]
+    twin = dict(agent.catalog.products["MOCK-BREAD-RYE-500"], id="123", name="Rye bread 500 g, twin",
+                substitute_group="other", stock=100)
+    agent.catalog.products["123"] = twin
+    agent.catalog.products["MOCK-BREAD-RYE-500"]["stock"] = 5
+    agent.auto_limit_eur = 10
+    agent.handle_event({"type": "slot_state", "slot": 1, "state": "empty", "estimated_units": 0})
+    best = agent.open_approvals()[0]["options"][0]
+    assert best["label"] == "best" and best["lines"][1]["product_id"] == "123"
+    assert not any("outside the approved groups" in r for r in best["reasons"])
+
+
+def test_a_label_check_is_asked_once_per_product(agent):
+    """The chef approves a product with no allergen data once. The same product then orders alone."""
+    agent.rules["unknown_allergens"] = "needs_approval"
+    first = agent.order_exact("MOCK-MILK-LF-1L-X", 10, "run-1")
+    assert first["status"] == "needs_approval"
+    ordered = agent.decide(agent.open_approvals()[0]["id"], "approve", 0, "Head chef")
+    assert ordered["status"] == "ordered"
+    assert [e["detail"]["product_id"] for e in agent.log.entries() if e["step"] == "label_check"] == ["MOCK-MILK-LF-1L-X"]
+
+    again = agent.quote_exact("MOCK-MILK-LF-1L-X", 10)
+    assert again["decision"].result == "allowed"
+    assert any("Head chef checked the label" in r for r in again["decision"].reasons)
+
+    from backend.agent import Agent
+    restarted = Agent(agent.catalog, agent.rules, agent.log)  # the memory comes back from the audit log
+    assert restarted.quote_exact("MOCK-MILK-LF-1L-X", 10)["decision"].result == "allowed"
+
+
+def test_a_label_check_ends_when_the_data_or_the_rule_set_changes(agent):
+    from backend.agent import Agent
+    agent.rules["unknown_allergens"] = "needs_approval"
+    agent.order_exact("MOCK-MILK-LF-1L-X", 10, "run-1")
+    agent.decide(agent.open_approvals()[0]["id"], "approve", 0, "Head chef")
+
+    newer = Agent(agent.catalog, agent.rules | {"version": agent.rules["version"] + 1}, agent.log)
+    assert newer.quote_exact("MOCK-MILK-LF-1L-X", 10)["decision"].result == "needs_approval"
+
+    agent.catalog.products["MOCK-MILK-LF-1L-X"]["name"] = "Lactose-free milk drink 1 L, new recipe"
+    assert agent.quote_exact("MOCK-MILK-LF-1L-X", 10)["decision"].result == "needs_approval"
+
+
+def test_a_label_check_never_opens_a_forbidden_product(agent):
+    from backend import rules as R
+    nuts = agent.catalog.products["MOCK-ALMOND-1L"]
+    ctx = R.Context("plant_drink", R.needed_by(agent.rules, __import__("datetime").datetime.now(R.TZ)),
+                    label_checks={R.label_key(nuts): "Head chef checked the label"})
+    assert R.check_line(R.Line(nuts, 1, 1.0, ctx.needed_by), agent.rules, ctx).result == "forbidden"

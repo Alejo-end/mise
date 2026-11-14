@@ -233,3 +233,40 @@ def test_real_catalog_a_nut_product_is_refused_and_an_unknown_one_goes_to_a_pers
     assert agent.handle_request("20 forced item", "460835")["status"] == "forbidden"  # almonds, no general nut code
     unknown = next(p["id"] for p in agent.catalog.products.values() if p["allergens"] is None)
     assert agent.handle_request("20 forced item", unknown)["status"] == "needs_approval"
+
+
+# ---------- the ingredient text scan ----------
+
+def texts(*lines):
+    return {"synkkaData": {"keyIngredients": [{"value": line, "language": "en"} for line in lines]}}
+
+
+@pytest.mark.parametrize("text,found", [
+    ("May contain traces of nuts.", ["nuts"]),
+    ("Saattaa sisältää pähkinää ja seesamia", ["nuts", "sesame"]),
+    ("hasselnötter, jordnötter", ["nuts", "peanuts"]),
+    ("pine nuts, tahini", ["nuts", "sesame"]),
+    ("coconut, nutmeg, peanut oil", ["peanuts"]),  # coconut and nutmeg are not tree nuts
+    ("Nut free. Without sesame.", []),             # the simplest denials
+    ("ei sisällä pähkinää", []),
+    ("pähkinätön", []),
+    ("MILK, cream", []),                           # the scan knows nuts, peanuts and sesame only
+])
+def test_text_scan(text, found):
+    from backend.allergens import text_allergens
+    assert text_allergens(texts(text)) == found
+
+
+def test_the_scan_says_which_banned_allergens_it_cannot_find():
+    from backend.allergens import unscanned
+    assert unscanned(["Nuts", "sesame"]) == [] and unscanned(["milk", "nuts"]) == ["milk"]
+
+
+@pytest.mark.skipif(not REAL.exists(), reason="the Valio product file is not on this machine")
+def test_real_catalog_counts_under_the_school_bans():
+    """The numbers in the handbook. They change only when the data, the code map or the scan changes."""
+    from backend.dirty_data import count
+    c = count(V.ValioCatalog(REAL.parent, "https://example.test", "k"), load_rules(VALIO_RULES))
+    assert c["products"] == 17546
+    assert c["results"] == {"forbidden": 1962, "needs_approval": 8149, "allowed": 7435}
+    assert c["to_a_person"] == {"no allergen data": 8110, "undeclared": 22, "only the ingredient text names it": 17}

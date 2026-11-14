@@ -131,6 +131,8 @@ function renderApprovals(list) {
           <ul class="lines">${o.lines.map(l => `<li>${l.quantity} × ${esc(l.name)} at €${l.unit_price_eur.toFixed(2)}
             <span class="meta">(price checked ${esc(l.price_checked_at.slice(11,16))})</span></li>`).join("")}</ul>
           <p class="reasons">${o.reasons.map(esc).join("; ")}</p>
+          ${o.reasons.some(r => r.includes("check the label")) ? `<p class="reasons"><b>Read the label before you approve.</b>
+            The agent keeps your answer and does not ask again for this product.</p>` : ""}
           <div class="row"><button class="${i===0?"primary":""}" data-a="${a.id}" data-o="${i}">${i===0?"Approve":"Choose this"}</button></div>
         </div>`).join("")}
       <div class="row"><button data-a="${a.id}" data-skip="1">Skip</button></div>

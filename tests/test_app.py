@@ -1,7 +1,6 @@
 """HTTP checks: PIN on approvals and event validation."""
 
 import importlib
-import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,6 +11,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("AUDIT_DB", str(tmp_path / "a.sqlite"))
     monkeypatch.setenv("APPROVER_PINS", "4821:Head chef")
     monkeypatch.setenv("CATALOG", "local")  # never the real catalog or the live API in tests
+    monkeypatch.setenv("GATEWAY_KEY", str(tmp_path / "key.pem"))
     import backend.app as m
     m = importlib.reload(m)
     m.agent.auto_limit_eur = 40

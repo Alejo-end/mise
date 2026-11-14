@@ -48,14 +48,13 @@ def read_allergens(raw: dict) -> dict:
     allergens           names with CONTAINS, or None when both groups are empty (unknown)
     traces              names with MAY_CONTAIN, or None when both groups are empty
     undeclared          names the manufacturer marked UNDECLARED
-    free_from           names in the nonAllergen group
     allergen_conflicts  names where two fields disagree: declared and free-from at the same time,
                         or a "free from" diet claim for an allergen the product contains
     """
     groups = _groups(raw)
     declared, free = groups.get("allergen", []), groups.get("nonAllergen", [])
     if not declared and not free:
-        return {"allergens": None, "traces": None, "undeclared": [], "free_from": [], "allergen_conflicts": []}
+        return {"allergens": None, "traces": None, "undeclared": [], "allergen_conflicts": []}
 
     contains, traces, undeclared = set(), set(), set()
     for v in declared:
@@ -75,7 +74,7 @@ def read_allergens(raw: dict) -> dict:
     claims = {v.get("id") for v in groups.get("nutritionalClaim", [])}
     conflicts |= {name for claim, name in CLAIM_CONTRADICTS.items() if claim in claims and name in contains}
     return {"allergens": sorted(contains), "traces": sorted(traces), "undeclared": sorted(undeclared),
-            "free_from": sorted(free_from), "allergen_conflicts": sorted(conflicts)}
+            "allergen_conflicts": sorted(conflicts)}
 
 
 # Text scan -----------------------------------------------------------------
@@ -136,6 +135,11 @@ def _texts(raw: dict) -> list[str]:
     for ingredient in s.get("ingredients") or []:
         out += [n.get("value") or "" for n in ingredient.get("names") or []]
     return out
+
+
+def unscanned(banned: list[str]) -> list[str]:
+    """The banned allergens that the text scan cannot find. For those, only the allergen codes protect."""
+    return sorted({a.lower() for a in banned} - set(TEXT_SCAN_NAMES))
 
 
 def text_allergens(raw: dict, names=TEXT_SCAN_NAMES) -> list[str]:

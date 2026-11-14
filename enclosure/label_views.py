@@ -6,6 +6,10 @@ Run render_views.py first. Then, from this folder:
 
 It reads renders/*_raw.png and renders/exploded_labels.json, and writes renders/assembled.png
 and renders/exploded.png.
+
+The place of each part comes from the render. The offset of each balloon is set by hand for the
+camera in render_views.py. If you move the camera or a part, the script stops when two balloons
+touch or a balloon leaves the picture. Then change the offsets in LABELS.
 """
 
 import json
@@ -59,9 +63,16 @@ def main():
     draw = ImageDraw.Draw(img)
     name_font, num_font = font(30), font(26, bold=True)
     r = 22
+    placed = []
     for n, _, part, side, (dx, dy) in LABELS:
         px, py = at[part][side][0] * w, at[part][side][1] * h
         cx, cy = px + dx, py + dy
+        if not (r <= cx <= w - r and r <= cy <= h - r):
+            raise SystemExit(f"Balloon {n} is outside the picture. Change its offset in LABELS.")
+        for m, ox, oy in placed:
+            if (cx - ox) ** 2 + (cy - oy) ** 2 < (2 * r + 4) ** 2:
+                raise SystemExit(f"Balloons {m} and {n} touch. Change an offset in LABELS.")
+        placed.append((n, cx, cy))
         draw.line([(cx, cy), (px, py)], fill=LINE, width=2)
         draw.ellipse([px - 5, py - 5, px + 5, py + 5], fill=INK)
         draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=INK)

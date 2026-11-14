@@ -11,6 +11,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("AUDIT_DB", str(tmp_path / "a.sqlite"))
     monkeypatch.setenv("APPROVER_PINS", "4821:Head chef")
     monkeypatch.setenv("CATALOG", "local")
+    monkeypatch.setenv("GATEWAY_KEY", str(tmp_path / "key.pem"))
     import backend.app as m
     return TestClient(importlib.reload(m).app)
 
@@ -79,3 +80,36 @@ def test_unknown_products_quotes_and_runs_are_not_found(client, auth):
     assert client.post("/gateway/quotes", json={"product_id": "NOPE", "quantity": 1}, headers=auth).status_code == 404
     assert client.post("/gateway/orders", json={"quote_id": "Q-NOPE", "idempotency_key": "x"}, headers=auth).status_code == 404
     assert client.get("/gateway/orders/nope", headers=auth).status_code == 404
+
+
+def test_a_product_outside_the_licence_groups_goes_to_a_person(client, auth):
+    quote = client.post("/gateway/quotes", json={"product_id": "MOCK-OAT-1L", "quantity": 2}, headers=auth).json()
+    assert quote["decision"]["result"] == "needs_approval"
+    assert any("outside the product groups" in r for r in quote["decision"]["reasons"])
+
+
+def test_quotes_and_order_answers_are_signed_and_a_changed_answer_fails(client, auth):
+    from backend.signing import verify
+    key = client.get("/gateway/key").json()["public_key"]  # public: no licence needed
+    quote, r = order(client, auth, "MOCK-YOG-NAT-1KG", 6)
+    assert verify(quote, key) and verify(r.json(), key)
+    assert not verify(quote | {"unit_price_eur": 0.01}, key)
+    assert not verify({k: v for k, v in quote.items() if k != "signature"}, key)
+
+
+def test_a_licence_and_its_order_survive_a_restart(client, auth):
+    import backend.app as m
+    quote, first = order(client, auth, "MOCK-YOG-NAT-1KG", 6, key="k")
+    after = TestClient(importlib.reload(m).app)  # same audit log, new process state
+    assert after.get("/gateway/products?q=milk", headers=auth).status_code == 200
+    again = after.post("/gateway/orders", json={"quote_id": quote["quote_id"], "idempotency_key": "k"}, headers=auth)
+    assert again.status_code == 201 and again.json()["order_id"] == first.json()["order_id"]
+    assert len(after.get("/orders").json()) == 1
+    run = first.json()["run_id"]
+    assert after.get(f"/gateway/orders/{run}", headers=auth).json()["status"] == "ordered"
+
+
+def test_the_published_gateway_description_is_current(client):
+    import backend.app as m
+    from backend.export_openapi import OUT, render
+    assert OUT.read_text() == render(m.app), "run: CATALOG=local uv run python -m backend.export_openapi"

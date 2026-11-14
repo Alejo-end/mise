@@ -72,13 +72,37 @@ def delivery_after(now: datetime, lead_days: int) -> datetime:
     return datetime.combine(day, time(6, 0), tzinfo=TZ)
 
 
+def words(text) -> list[str]:
+    """The words of a product phrase: lower case, no hyphens or punctuation. 'Lactose-free  Milk,' -> lactose, free, milk."""
+    return re.sub(r"[^a-z0-9äöåéü%]+", " ", str(text).lower()).split()
+
+
+class OrderBook:
+    """Orders by idempotency key. The same key always returns the first order made with it."""
+
+    def __init__(self):
+        self.orders: dict[str, dict] = {}
+        self.by_key: dict[str, str] = {}
+        self.lock = threading.Lock()
+
+    def place(self, lines: list[dict], key: str, status: str) -> tuple[dict, bool]:
+        """Returns the order, and whether this call made it."""
+        with self.lock:
+            new = key not in self.by_key
+            if new:
+                order_id = "ORD-" + uuid.uuid4().hex[:8].upper()
+                self.orders[order_id] = {"order_id": order_id, "lines": lines, "status": status}
+                self.by_key[key] = order_id
+            return self.orders[self.by_key[key]], new
+
+
 class LocalCatalog:
     name = "local stand-in catalog"
 
     def __init__(self, path: Path = ROOT / "fixtures" / "mock_catalog.json"):
         self.products = {p["id"]: p for p in json.loads(path.read_text())["products"]}
-        self.orders: dict[str, dict] = {}
-        self.orders_by_key: dict[str, str] = {}
+        self.book = OrderBook()
+        self.orders = self.book.orders
 
     def _answer(self, endpoint: str, value) -> Claim:
         raw = json.dumps({"endpoint": endpoint, "data": value}, sort_keys=True).encode()
@@ -102,22 +126,17 @@ class LocalCatalog:
             "unit_price_eur": p["price_eur"],
             "available_units": min(quantity, p["stock"]),
             "delivery": delivery_after(_now(), p["lead_days"]).isoformat(),
-            "order_by": None,
             "quantity_known": True,
-            "sales_unit": None,
         }
         return self._answer(f"POST /availability {product_id} x{quantity}", value)
 
     def place_order(self, lines: list[dict], idempotency_key: str) -> Claim:
         """The same key returns the same order and never books stock twice."""
-        if idempotency_key in self.orders_by_key:
-            return self._answer("POST /orders", self.orders[self.orders_by_key[idempotency_key]])
-        order_id = "ORD-" + uuid.uuid4().hex[:8].upper()
-        for l in lines:
-            self.products[l["product_id"]]["stock"] -= l["quantity"]
-        self.orders[order_id] = {"order_id": order_id, "lines": lines, "status": "confirmed"}
-        self.orders_by_key[idempotency_key] = order_id
-        return self._answer("POST /orders", self.orders[order_id])
+        order, new = self.book.place(lines, idempotency_key, "confirmed")
+        if new:
+            for l in lines:
+                self.products[l["product_id"]]["stock"] -= l["quantity"]
+        return self._answer("POST /orders", order)
 
 
 
@@ -140,8 +159,8 @@ _WEIGHT_TO_KG = {"KGM": 1.0, "GRM": 0.001}
 
 
 def _norm(text) -> str:
-    """Lower case, hyphens as spaces: 'Lactose-free  Milk' -> 'lactose free milk'."""
-    return re.sub(r"\s+", " ", str(text).lower().replace("-", " ")).strip()
+    """A name or a query as its words with single spaces: 'Lactose-free  Milk' -> 'lactose free milk'."""
+    return " ".join(words(text))
 
 
 def _text(entries, languages=("en", "fi"), any_language=True) -> str | None:
@@ -233,13 +252,12 @@ class ValioCatalog:
         self.retry_wait_s = 0.5
         self.http = httpx.Client(base_url=base_url, headers={"X-API-Key": api_key}, timeout=10, transport=transport)
         self.lock = threading.Lock()
-        self.orders: dict[str, dict] = {}
-        self.orders_by_key: dict[str, str] = {}
+        self.book = OrderBook()
+        self.orders = self.book.orders
         self._prefetched: dict[tuple[str, date], dict] = {}
         self.products: dict[str, dict] = {}
         self._names: dict[str, list[str]] = {}  # normalized names in every language, for search
         self._sha: dict[str, str] = {}  # SHA-256 of each raw record
-        self._sales_unit: dict[str, str | None] = {}
         self._load()
 
     def _load(self) -> None:
@@ -257,7 +275,6 @@ class ValioCatalog:
             self.products[pid] = map_product(raw, reliability.get(pid))
             self._names[pid] = [_norm(n["value"]) for n in (raw.get("synkkaData") or {}).get("names") or [] if n.get("value")]
             self._sha[pid] = hashlib.sha256(json.dumps(raw, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-            self._sales_unit[pid] = raw.get("salesUnit")
 
     # Product facts: from the file ------------------------------------------
 
@@ -338,9 +355,7 @@ class ValioCatalog:
             "unit_price_eur": unit_price,
             "available_units": 0 if blocked or not line else int(min(quantity, amount)),
             "delivery": delivery,
-            "order_by": (avail or {}).get("closingTime"),
             "quantity_known": bool(line) and amount != UNKNOWN_AMOUNT,
-            "sales_unit": (line or {}).get("salesUnit") or self._sales_unit.get(pid),
         }
 
     def prefetch(self, product_ids: list[str], needed_by: datetime) -> None:
@@ -380,12 +395,7 @@ class ValioCatalog:
         Valio's API has no order endpoint, so no Valio system receives the order.
         """
         endpoint = "gateway order book (Valio's API has no order endpoint, so the gateway records the order)"
-        with self.lock:
-            if idempotency_key not in self.orders_by_key:
-                order_id = "ORD-" + uuid.uuid4().hex[:8].upper()
-                self.orders[order_id] = {"order_id": order_id, "lines": lines, "status": "recorded by the gateway"}
-                self.orders_by_key[idempotency_key] = order_id
-            order = self.orders[self.orders_by_key[idempotency_key]]
+        order, _ = self.book.place(lines, idempotency_key, "recorded by the gateway")
         raw = json.dumps({"endpoint": endpoint, "data": order}, sort_keys=True).encode()
         return _claim(endpoint, raw, order)
 

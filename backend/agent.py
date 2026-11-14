@@ -14,7 +14,7 @@ from datetime import date, datetime, time, timedelta
 
 from . import rules as R
 from .audit import AuditLog
-from .valio import Claim
+from .valio import Claim, words
 
 APPROVAL_EXPIRY = timedelta(hours=2)
 
@@ -34,9 +34,9 @@ class Agent:
         self.last_order_qty: dict[int, int] = {}
         self.pending_slots: set[int] = set()
         self.auto_limit_eur: float | None = None
-        self.temperature_c: float | None = None
         self.cold_alarm_c: float | None = None
         self.deliveries: list[dict] = []  # delivery checks, for supplier reliability
+        self.label_checks: dict[str, str] = {}  # R.label_key of a product -> who checked its label, and when
         self.restore()
 
     # State ----------------------------------------------------------------
@@ -66,7 +66,7 @@ class Agent:
                 self.deliveries.append(d)
             elif step == "approval" and d.get("status") == "open" and "full" in d:
                 a = d["full"]
-                a["ctx"] = context_from_dict(a["ctx"])
+                a["ctx"] = context_from_dict(a["ctx"] | {"label_checks": self.label_checks})
                 self.approvals[a["id"]] = a
                 if a.get("slot") is not None:
                     self.pending_slots.add(a["slot"])
@@ -74,6 +74,8 @@ class Agent:
                 decided.add(d["approval_id"])
             elif step == "alarm":
                 self.cold_alarm_c = d["temperature_c"] if d.get("active", True) else None
+            elif step == "label_check" and e["rule_set_version"] == self.rules["version"]:
+                self.label_checks[d["label_key"]] = d["note"]  # a new rule set asks again
         for aid in decided:
             a = self.approvals.get(aid)
             if a:
@@ -87,8 +89,6 @@ class Agent:
         kind = ev.get("type")
         if ev.get("auto_limit_eur") is not None:
             self.auto_limit_eur = float(ev["auto_limit_eur"])
-        if ev.get("temperature_c") is not None:
-            self.temperature_c = float(ev["temperature_c"])
 
         if kind == "temperature_alarm":
             active = bool(ev.get("active", True))
@@ -155,8 +155,7 @@ class Agent:
                        self.rules["version"], run_id=run)
         if product_id:
             # The chef (or a judge) names one product. It still goes through the rule check.
-            group = target["group"] if target else "unknown"
-            return self._safely(run, None, lambda: self.buy_exact(product_id, qty, group, run))
+            return self.order_exact(product_id, qty, run)
         if target is None:
             self.log.write("blocked", {"summary": "No product in the rule set matches the request."}, "agent", run_id=run)
             return {"status": "no_match"}
@@ -196,7 +195,22 @@ class Agent:
         a["status"] = "approved"
         self.log.write("approval", {"status": "approved", "option": idx, "approval_id": approval_id,
                                     "result": result["status"]}, approver, self.rules["version"], run_id=a["run_id"])
+        if result["status"] == "ordered":
+            self._remember_labels(opt["lines"], approver, a["run_id"])
         return result
+
+    def _remember_labels(self, lines: list[dict], approver: str, run: str) -> None:
+        """The approver read the label of each product that needed it. Keep that, so the same product asks once."""
+        for l in lines:
+            p = self.catalog.product(l["product_id"]).value
+            if not p or not R.needs_label_check(p, self.rules) or R.label_key(p) in self.label_checks:
+                continue
+            note = f"{approver} checked the label on {datetime.now(R.TZ):%d.%m.%Y}"
+            self.label_checks[R.label_key(p)] = note
+            self.log.write("label_check", {
+                "summary": f"{approver} approved {p['name']} after a label check. The agent does not ask again about "
+                           "this label while the product data and the rule set stay the same.",
+                "product_id": p["id"], "label_key": R.label_key(p), "note": note}, approver, self.rules["version"], run_id=run)
 
     def _expired(self, a: dict) -> bool:
         return datetime.now(R.TZ) - datetime.fromisoformat(a["created"]) > APPROVAL_EXPIRY
@@ -225,6 +239,7 @@ class Agent:
             auto_limit_eur=self.auto_limit_eur,
             previous_standing_qty=self.last_order_qty.get(target["slot"]) if standing else None,
             cold_room_alarm_c=self.cold_alarm_c,
+            label_checks=self.label_checks,
         )
 
     def _quote(self, product_id: str, qty: int, ctx: R.Context, run: str) -> dict | None:
@@ -233,11 +248,12 @@ class Agent:
             return None
         a: Claim = self.catalog.availability(product_id, qty, ctx.needed_by)
         return {"product": p.value, "unit_price_eur": a.value["unit_price_eur"], "available": a.value["available_units"],
-                "delivery": a.value["delivery"], "claims": [p.to_dict(), a.to_dict()]}
+                "delivery": a.value["delivery"], "stock_known": a.value.get("quantity_known", True),
+                "claims": [p.to_dict(), a.to_dict()]}
 
     def _line(self, q: dict, qty: int, usual: bool) -> R.Line:
         delivery = datetime.fromisoformat(q["delivery"]) if q["delivery"] else None
-        return R.Line(q["product"], qty, q["unit_price_eur"], delivery, usual)
+        return R.Line(q["product"], qty, q["unit_price_eur"], delivery, usual, q["stock_known"])
 
     def _free(self, slot: int | None) -> None:
         if slot is not None:
@@ -264,6 +280,7 @@ class Agent:
         other_pack = [p["id"] for p in candidates
                       if p["id"] != usual_id and "pack" in p and want_pack and not same_pack(p["pack"], want_pack)]
         candidates = [p for p in candidates if p["id"] not in other_pack]
+        other_packs = f" {len(other_pack)} products of another pack size were not considered." if other_pack else ""
         if hasattr(self.catalog, "prefetch"):
             self.catalog.prefetch([p["id"] for p in candidates], ctx.needed_by)
 
@@ -300,8 +317,7 @@ class Agent:
             have = usual_q["available"] if usual_q else 0
             rest = need - have
             base = [(usual_q, have, True)] if have else []
-            approved = self.rules.get("approved_substitute_groups", {}).get(target["group"], [])
-            ranked = rank_substitutes(safe, target, ctx, approved, self.reliability())
+            ranked = rank_substitutes(safe, target, ctx, self.rules, self.reliability())
             seen = set()
             for label, lead in ranked:
                 # Fill the gap with the lead substitute first, then the others in rank order.
@@ -327,8 +343,8 @@ class Agent:
                     options.append(("partial", parts))
 
         if not options:
-            self.log.write("blocked", {"summary": f"No safe product can fill {need} units of {target['product']}."},
-                           "agent", v, run_id=run)
+            self.log.write("blocked", {"summary": f"No safe product can fill {need} units of {target['product']}."
+                                       + other_packs}, "agent", v, run_id=run)
             self._free(slot)
             return {"status": "blocked"}
 
@@ -339,7 +355,8 @@ class Agent:
             if label == "partial":
                 # A short order is a change to what was asked, so a person decides.
                 d.result = R.NEEDS_APPROVAL if d.result == R.ALLOWED else d.result
-                d.reasons.insert(0, f"only {need - shortfall} of {need} can be ordered safely; {shortfall} short")
+                d.reasons.insert(0, f"only {need - shortfall} of {need} can be ordered safely; {shortfall} short."
+                                 + other_packs)
             names = " + ".join(f"{n} × {q['product']['name']}" for q, n, u in parts)
             self.log.write("rule_check", {"subject": names, "option": label, **d.to_dict()}, "rule_check", v, run_id=run)
             checked.append({
@@ -351,6 +368,7 @@ class Agent:
                 "total_eur": round(sum(l.total_eur or 0 for l in lines), 2),
                 "lines": [{"product_id": q["product"]["id"], "name": q["product"]["name"], "quantity": n, "usual": u,
                            "unit_price_eur": q["unit_price_eur"], "delivery": q["delivery"],
+                           "stock_known": q["stock_known"],
                            "price_checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]}
                           for q, n, u in parts],
             })
@@ -370,51 +388,78 @@ class Agent:
                 return t["group"], False
         return "unknown", False
 
-    def buy_exact(self, product_id: str, qty: int, group: str | None, run: str, deadline: datetime | None = None,
-                  mandate_eur: float | None = None, actor: str = "agent", dry_run: bool = False) -> dict:
-        """Order one named product, through the same rule check as every other order.
+    def quote_exact(self, product_id: str, qty: int, deadline: datetime | None = None,
+                    mandate_eur: float | None = None, scope_groups: list[str] | None = None, run: str = "quote") -> dict:
+        """Price, stock and the rule decision for one named product. It orders nothing and logs nothing.
 
-        group None means: work out what the product is to this kitchen (an outside agent asks).
         mandate_eur is the spend limit of the one who asks. The lower of it and the knob counts.
-        dry_run returns the price, the stock and the rule decision, and orders and logs nothing.
+        scope_groups are the product groups of the asker's licence. A product outside them goes to a person.
+        The status is "quote", "no_match" (not in the catalog) or "not_orderable" (no price or no delivery date).
         """
-        v = self.rules["version"]
         limits = [x for x in (self.auto_limit_eur, mandate_eur) if x is not None]
-        ctx = R.Context(slot_group=group or "unknown", needed_by=deadline or R.needed_by(self.rules, datetime.now(R.TZ)),
+        ctx = R.Context(slot_group="unknown", needed_by=deadline or R.needed_by(self.rules, datetime.now(R.TZ)),
                         weekly_spent_eur=self.weekly_spent_eur, auto_limit_eur=min(limits) if limits else None,
-                        cold_room_alarm_c=self.cold_alarm_c)
-        say = (lambda *a, **k: None) if dry_run else self.log.write
+                        cold_room_alarm_c=self.cold_alarm_c, label_checks=self.label_checks)
         q = self._quote(product_id, qty, ctx, run)
         if q is None:
-            say("blocked", {"summary": f"Product {product_id} is not in the catalog."}, "agent", v, run_id=run)
             return {"status": "no_match"}
-        usual = False
-        if group is None:
-            ctx.slot_group, usual = self._role(q["product"])
+        name = q["product"]["name"]
         if q["unit_price_eur"] is None or q["delivery"] is None:
-            say("blocked", {"summary": f"{q['product']['name']} has no price or no delivery date now."},
-                "agent", v, run_id=run)
+            return {"status": "not_orderable", "name": name}
+        ctx.slot_group, usual = self._role(q["product"])
+        line = self._line(q, qty, usual)
+        d = R.check([line], self.rules, ctx)
+        if scope_groups is not None and ctx.slot_group not in scope_groups and d.result != R.FORBIDDEN:
+            d.result = R.NEEDS_APPROVAL
+            d.reasons = [r for r in d.reasons if not r.startswith("usual product or approved substitute")]
+            d.reasons.append(f"{name} is outside the product groups of the agent's licence")
+        return {"status": "quote", "product": q["product"], "name": name, "usual": usual, "ctx": ctx,
+                "unit_price_eur": q["unit_price_eur"], "available_units": q["available"], "delivery": q["delivery"],
+                "total_eur": line.total_eur, "decision": d, "claims": q["claims"], "stock_known": q["stock_known"]}
+
+    def buy_exact(self, product_id: str, qty: int, run: str, deadline: datetime | None = None,
+                  mandate_eur: float | None = None, scope_groups: list[str] | None = None, actor: str = "agent") -> dict:
+        """Order one named product, through the same rule check as every other order."""
+        v = self.rules["version"]
+        q = self.quote_exact(product_id, qty, deadline, mandate_eur, scope_groups, run)
+        if q["status"] == "no_match":
+            self.log.write("blocked", {"summary": f"Product {product_id} is not in the catalog."}, "agent", v, run_id=run)
+            return q
+        if q["status"] == "not_orderable":
+            self.log.write("blocked", {"summary": f"{q['name']} has no price or no delivery date now."}, "agent", v, run_id=run)
             return {"status": "not_orderable"}
-        lines = [self._line(q, qty, usual)]
-        d = R.check(lines, self.rules, ctx)
-        if dry_run:
-            return {"status": "quote", "product": q["product"], "unit_price_eur": q["unit_price_eur"],
-                    "available_units": q["available"], "delivery": q["delivery"], "total_eur": lines[0].total_eur,
-                    "decision": d.to_dict(), "claims": q["claims"]}
-        self.log.write("rule_check", {"subject": f"{qty} × {q['product']['name']}", **d.to_dict()}, "rule_check", v, run_id=run)
+        d, name = q["decision"], q["name"]
+        self.log.write("rule_check", {"subject": f"{qty} × {name}", **d.to_dict()}, "rule_check", v, run_id=run)
         if d.result == R.FORBIDDEN:
-            self.log.write("blocked", {"summary": f"{q['product']['name']} is forbidden: {'; '.join(d.reasons)}. "
+            self.log.write("blocked", {"summary": f"{name} is forbidden: {'; '.join(d.reasons)}. "
                                        "Nobody can approve it. Only a new signed rule set can change this."},
                            "rule_check", v, run_id=run)
             return {"status": "forbidden", "reasons": d.reasons, "rule_set_version": v}
-        opt = {"label": "requested", "result": d.result, "reasons": d.reasons, "summary": f"{qty} × {q['product']['name']}",
-               "trade_off": "The product you asked for.", "total_eur": lines[0].total_eur,
-               "lines": [{"product_id": product_id, "name": q["product"]["name"], "quantity": qty, "usual": usual,
+        opt = {"label": "requested", "result": d.result, "reasons": d.reasons, "summary": f"{qty} × {name}",
+               "trade_off": "The product you asked for.", "total_eur": q["total_eur"],
+               "lines": [{"product_id": product_id, "name": name, "quantity": qty, "usual": q["usual"],
                           "unit_price_eur": q["unit_price_eur"], "delivery": q["delivery"],
+                          "stock_known": q["stock_known"],
                           "price_checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]}]}
         if d.result == R.ALLOWED:
-            return self._order(opt["lines"], ctx, run, None, None, opt["total_eur"], actor=actor)
-        return self._ask([opt], ctx, run, None, q["product"]["name"])
+            return self._order(opt["lines"], q["ctx"], run, None, None, opt["total_eur"], actor=actor)
+        return self._ask([opt], q["ctx"], run, None, name)
+
+    def order_exact(self, product_id: str, qty: int, run: str, **who) -> dict:
+        """buy_exact for a caller outside this class: an error becomes a logged result, not an exception."""
+        return self._safely(run, None, lambda: self.buy_exact(product_id, qty, run, **who))
+
+    def run_state(self, run_id: str) -> dict | None:
+        """What became of one order request: ordered, waiting for a person, or how the request ended. None if unknown."""
+        if run_id in self.placed_runs:
+            return self.placed_runs[run_id]
+        asked = [a for a in self.approvals.values() if a["run_id"] == run_id]
+        if not asked:
+            return None
+        self.open_approvals()  # lets an old request expire
+        last = asked[-1]
+        waiting = last["status"] in ("open", "deciding")
+        return {"status": "waiting_for_approval" if waiting else last["status"], "approval_id": last["id"]}
 
     def _ask(self, options: list[dict], ctx: R.Context, run: str, slot: int | None, what: str) -> dict:
         aid = uuid.uuid4().hex[:6]
@@ -448,7 +493,9 @@ class Agent:
             unknown |= price is None or a.value["delivery"] is None
             if left > 0:  # the line as the catalog answers now: fresh price, date and proof, no more than is left
                 fresh.append((p.value, l | {"quantity": min(l["quantity"], left), "unit_price_eur": price,
-                                            "delivery": a.value["delivery"], "price_checked_at": a.checked_at,
+                                            "delivery": a.value["delivery"],
+                                            "stock_known": a.value.get("quantity_known", True),
+                                            "price_checked_at": a.checked_at,
                                             "sha256": a.sha256}))
         self.log.write("recheck", {"summary": "; ".join(changes) or "nothing changed.", "changes": changes}, "agent", v, run_id=run)
 
@@ -458,7 +505,8 @@ class Agent:
                                "agent", v, run_id=run)
                 self._free(slot)
                 return None, {"status": "blocked"}
-            rl = [R.Line(p, l["quantity"], l["unit_price_eur"], datetime.fromisoformat(l["delivery"]), l["usual"])
+            rl = [R.Line(p, l["quantity"], l["unit_price_eur"], datetime.fromisoformat(l["delivery"]), l["usual"],
+                         l["stock_known"])
                   for p, l in fresh]
             d = R.check(rl, self.rules, ctx)
             self.log.write("rule_check", {"subject": "order after recheck", **d.to_dict()}, "rule_check", v, run_id=run)
@@ -604,11 +652,11 @@ def _take(parts: list, need: int) -> tuple[list, int]:
     return out, left
 
 
-def rank_substitutes(safe: dict, target: dict, ctx: R.Context, approved: list[str],
+def rank_substitutes(safe: dict, target: dict, ctx: R.Context, rules: dict,
                      reliability: dict | None = None) -> list[tuple[str, dict]]:
     """best: closest match, better: close match with a better price or date, good: cheapest safe option in time.
 
-    A close match is one in the rule set's approved substitute groups, the same list the rule check uses.
+    A close match is one the rule set approves as a substitute, by the same test as the rule check.
     Among equal matches, a supplier with a better delivery record ranks first (unknown suppliers count as 1.0).
     """
     reliability = reliability or {}
@@ -619,8 +667,7 @@ def rank_substitutes(safe: dict, target: dict, ctx: R.Context, approved: list[st
     if not subs:
         return []
     def closeness(q):
-        p = q["product"]
-        ok = p.get("substitute_group") in approved or p.get("id") in approved
+        ok = R.is_approved_substitute(q["product"], rules, target["group"])
         return (ok, datetime.fromisoformat(q["delivery"]) <= ctx.needed_by)
     by_match = sorted(subs, key=lambda q: (closeness(q), score(q), -q["unit_price_eur"]), reverse=True)
     best = by_match[0]
@@ -666,12 +713,9 @@ UNIT_SCALE = {"l": ("l", 1), "litre": ("l", 1), "litres": ("l", 1), "liter": ("l
               "ml": ("l", 0.001), "kg": ("kg", 1), "kilo": ("kg", 1), "kilos": ("kg", 1), "g": ("kg", 0.001)}
 
 
+NEEDED_HOUR = 7  # "by Monday" with no time means Monday 07:00, before the kitchen starts
 DEADLINE = re.compile(r"\bby\s+(today|tomorrow|" + "|".join(WEEKDAYS)
                       + r"|\d{1,2}\.\d{1,2}\.?)(?:\s+(?:at\s+)?(\d{1,2})[:.](\d{2}))?")
-
-
-def words(text: str) -> list[str]:
-    return re.sub(r"[^a-z0-9äöå]+", " ", text.lower()).split()
 
 
 def match_target(text: str, targets: list[dict]) -> dict | None:
@@ -708,7 +752,7 @@ def parse_deadline(text: str, now: datetime) -> datetime | None:
     m = DEADLINE.search(text.lower())
     if not m:
         return None
-    word, hh, mm = m.group(1), int(m.group(2) or 7), int(m.group(3) or 0)
+    word, hh, mm = m.group(1), int(m.group(2) or NEEDED_HOUR), int(m.group(3) or 0)
     if word == "today":
         day = now.date()
     elif word == "tomorrow":
@@ -730,15 +774,13 @@ def units_for(text: str, product: str) -> int | None:
     if qty is None:
         return None
     m = re.search(r"\d[\d,\s]*\s*(ml|l|litres?|liters?|kg|kilos?|g)\b", text.lower())
-    pack = re.search(r"(\d+(?:[.,]\d+)?)\s*(ml|l|kg|g)\b", product.lower())
+    pack = pack_of(product)
     if not m or not pack:
         return qty  # a plain count of packs
-    asked_dim, asked_scale = UNIT_SCALE[m.group(1)]
-    pack_dim, pack_scale = UNIT_SCALE[pack.group(2)]
-    if asked_dim != pack_dim:
+    asked_unit, asked_scale = UNIT_SCALE[m.group(1)]
+    if asked_unit != pack["unit"]:
         return qty
-    pack_size = float(pack.group(1).replace(",", ".")) * pack_scale
-    return max(1, math.ceil(qty * asked_scale / pack_size - 1e-9))
+    return max(1, math.ceil(qty * asked_scale / pack["amount"] - 1e-9))
 
 
 def parse_quantity(text: str) -> int | None:

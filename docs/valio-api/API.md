@@ -149,7 +149,7 @@ The column `AVG kg CO2-eq/kg` is an average for the product group, not a measure
 
 ## What this means for our code
 
-Items 1 to 3 are done in `backend/valio.py` and `backend/allergens.py`, with tests. Items 4 to 7 are open.
+Items 1 to 3, 5 and 6 are done in `backend/valio.py` and `backend/allergens.py`, with tests. Item 4 is open. Item 7 is done in part: a product with `salesBlock` has no stock, and a product with the 999999 amount goes to a person. `closingTime` and `allowedLotSize` are not used yet.
 
 1. `backend/valio.py` calls `POST /api/price` and `POST /api/availability` with the `X-API-Key` header. It no longer calls `/products` or `/orders`.
 2. It builds a local product index from the data file for search.

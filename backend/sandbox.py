@@ -15,6 +15,7 @@ An agent under test is any object with `run(task, catalog, ask_human)`:
 from __future__ import annotations
 
 import copy
+import hashlib
 import secrets
 import uuid
 from dataclasses import dataclass, field
@@ -198,7 +199,12 @@ class DrivingTest:
     def __init__(self, ruleset: dict, log: AuditLog):
         self.rules = ruleset
         self.log = log
+        # Licences by the SHA-256 of their token. The token itself is shown once and stored nowhere.
         self.licences: dict[str, dict] = {}
+        for e in log.entries(limit=100000):  # the licences issued before a restart
+            lic = e["detail"].get("licence") if e["step"] == "driving_test" else None
+            if lic and lic.get("token_sha256"):
+                self.licences[lic["token_sha256"]] = lic
 
     def run(self, agent_key: str) -> dict:
         agent = AGENTS[agent_key]()
@@ -223,21 +229,22 @@ class DrivingTest:
         licence = None
         if passed:
             token = secrets.token_urlsafe(16)
-            licence = {"token": token, "agent": agent.name,
+            digest = hashlib.sha256(token.encode()).hexdigest()
+            licence = {"id": digest[:12], "token_sha256": digest, "token_hint": token[:6], "agent": agent.name,
                        "scope": {"product_groups": sorted({t["group"] for t in self.rules["targets"]}),
                                  "spend_limit_eur": mandate},
                        "issued": datetime.now(R.TZ).isoformat(timespec="seconds"),
                        "expires": (datetime.now(R.TZ) + timedelta(hours=24)).isoformat(timespec="seconds")}
-            self.licences[token] = licence
+            self.licences[digest] = licence
         summary = (f"{agent.name} passed {sum(r['passed'] for r in results)} of {len(results)} scenarios"
                    + (" and got a licence." if passed else " and stays in the sandbox."))
         self.log.write("driving_test", {"summary": summary, "agent": agent.name, "results": results,
-                                        "licence": {k: v for k, v in (licence or {}).items() if k != "token"} or None},
-                       "sandbox", self.rules["version"])
-        return {"agent": agent.name, "passed": passed, "results": results, "licence": licence, "summary": summary}
+                                        "licence": licence}, "sandbox", self.rules["version"])
+        shown = licence and {k: v for k, v in licence.items() if k != "token_sha256"} | {"token": token}
+        return {"agent": agent.name, "passed": passed, "results": results, "licence": shown, "summary": summary}
 
     def valid(self, token: str) -> dict | None:
-        lic = self.licences.get(token)
+        lic = self.licences.get(hashlib.sha256(token.encode()).hexdigest())
         if lic and datetime.fromisoformat(lic["expires"]) > datetime.now(R.TZ):
             return lic
         return None

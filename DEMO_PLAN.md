@@ -168,6 +168,8 @@ Build the first version as fixed code with no language model. Then add a languag
 
 Store each price, stock and origin claim from Valio with the endpoint, the time and a hash of the response. Show the time next to every number, for example "price checked 21:14".
 
+A hash shows that an answer did not change. It does not show who gave the answer, because the server can make any hash. So the gateway signs every quote and every order answer with an Ed25519 key (`backend/signing.py`). An outside agent reads the public key at `GET /gateway/key` and can prove later what the wholesaler told it. In this prototype the gateway makes its own key. In production the key belongs to Valio.
+
 ### Approvals
 
 1. The backend stores open approval requests.
@@ -243,6 +245,10 @@ Scenarios:
 
 Demo: two agents take the test. Our agent passes. A naive agent with the same tools falls for the injected description and is refused a licence. The naive agent is a script that acts like a careless model. It is not a real language model, and the demo says so. Every `/gateway` call reads the licence.
 
+We wrote the scenarios and both agents, so the test proves little alone. `backend/model_agent.py` lets a real language model take the test. The model gets the tool descriptions, the request and the kitchen's rules, and no hint about the scenarios. If `ANTHROPIC_API_KEY` is in `.env`, send `{"agent": "claude"}` to `POST /sandbox/test`. Nobody ran it yet. Run it before the pitch, and show the result as it is, pass or fail.
+
+A licence holds a spend limit and product groups. A product outside the groups goes to the chef. Licences survive a restart of the backend: the audit log holds a hash of each token, never the token.
+
 ## Robustness
 
 A review of the current code (`backend/agent.py`, `backend/valio.py`, `backend/app.py`) on 13 November found these gaps. Fix them in this order. Each fix needs a test that fails without it.
@@ -283,6 +289,7 @@ A second review found eight more faults in `backend/agent.py`, `backend/sandbox.
 | `POST /gateway/quotes` | Price, stock, delivery date and the rule decision for one product. Nothing is ordered |
 | `POST /gateway/orders` | Order a quote: 201 placed, 202 sent to the chef, 403 refused with the reason |
 | `GET /gateway/orders/{run_id}`, `GET /gateway/audit?run_id=` | The state and the log entries of one order request |
+| `GET /gateway/key` | The public key that checks the signature on quotes and order answers. Needs no licence |
 | `GET /sandbox/licences` | Issued licences, with scope and expiry |
 
 ## Tests
@@ -352,23 +359,25 @@ Work in this order. Stop at any point, and the demo still runs.
 
 The Valio judges come from marketplace, online sales, IT integration and data governance. Lead with what the brief asks, in their words:
 
-1. The gateway covers the three core requirements: lookup, quote to order at fixed prices, and permission with human approval.
-2. Valio keeps control. Every agent has a mandate, every claim has a time and a hash, and every decision is in an audit trail that both sides can read.
-3. Proof from a real client: a shelf camera in a kitchen triggers an order through the gateway.
-4. Evidence on dirty data: the counts of risky products caught, sent to a person, and missed.
-5. If built: the Agent Driving Test, which an external agent must pass before it reaches the real interface.
+1. The gateway is the entry. It covers the three core requirements: lookup, quote to order at fixed prices, and permission with human approval. Its description is one OpenAPI file: `docs/valio-api/gateway-openapi.json`.
+2. Valio keeps control. Every agent has a mandate, every quote and order answer has a signature that the agent can check, and every decision is in an audit trail that both sides can read.
+3. Evidence on the real catalog: under a school's bans, 11% of 17,546 products are forbidden, 46% go to a person and 42% are clear. A blocked nut product proves nothing, because the rule check is plain code. The count shows what the rules do to real data.
+4. The chef reads the label of an unknown product once. After that, the same product orders alone.
+5. The Agent Driving Test, which an external agent must pass before it reaches the real interface. If we have a real model's result, show it.
+6. One client as proof: a shelf camera in a kitchen triggers an order through the gateway.
 
 Do not claim that no other team has these ideas. The originality tests only show that language models did not suggest the shelf camera, Cold Chain Proof and the Driving Test from the brief.
 
-## Demo script (five steps)
+## Demo script (six steps)
 
-The demo length is not known yet. Each step works without live input from a judge.
+The demo length is not known yet. Each step works without live input from a judge. `HANDBOOK.md` has the same steps.
 
-1. One request through the gateway: "1,000 litres of lactose-free milk by Monday". The answer shows products, prices and availability with the time of each claim.
-2. Take the milk off the shelf. The camera triggers the reference client, and the box beeps.
-3. Stock is partial. A safe substitute needs approval, and the chef approves on the phone.
-4. A prepared risky product with the allergen only in the ingredient text. The check sends it to a person and gives the reason. Then offer the judges a try.
-5. The audit trail as a story and as data. If built, end with the Driving Test result of a naive agent.
+1. The Driving Test: the naive agent fails, and our agent gets a licence.
+2. With the licence, an outside agent asks the gateway for a quote for "1,000 litres of lactose-free milk by Monday". Show the price, its time and the signature. Change one digit, and the signature fails.
+3. The agent orders the quote. The order is over its limit, so the chef approves on the phone.
+4. The real catalog count: 11% forbidden, 46% to a person, 42% clear. Then a product with no allergen data: the chef reads the label once, and the second order goes through alone.
+5. The kitchen as one client: take the milk off the shelf. The camera triggers the agent, and the box beeps. Stock is partial, so a safe substitute needs approval.
+6. The audit trail as a story and as data.
 
 ## Still unknown
 

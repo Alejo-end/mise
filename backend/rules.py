@@ -105,6 +105,7 @@ class Line:
     unit_price_eur: float | None
     delivery: datetime | None
     is_usual: bool = True
+    stock_known: bool = True  # False when the supplier ships the product and the wholesaler cannot count it
 
     @property
     def total_eur(self) -> float | None:
@@ -125,6 +126,7 @@ class Context:
     auto_limit_eur: float | None = None  # live value from the knob, capped by the signed limit
     previous_standing_qty: int | None = None
     cold_room_alarm_c: float | None = None  # set while the cold room is too warm
+    label_checks: dict = field(default_factory=dict)  # label_key of a product -> who checked its label, and when
 
 
 @dataclass
@@ -141,41 +143,45 @@ def _worst(a: str, b: str) -> str:
     return a if _SEVERITY[a] >= _SEVERITY[b] else b
 
 
-def check_line(line: Line, rules: dict, ctx: Context) -> Decision:
-    """Safety rules for one product, then substitute, price and delivery.
+LABEL_FIELDS = ("id", "name", "allergens", "traces", "undeclared", "text_allergens", "allergen_conflicts", "properties")
+
+
+def label_key(product: dict) -> str:
+    """A fingerprint of what a label check covers. It changes when the name or the allergen data of the product changes."""
+    seen = {k: product.get(k) for k in LABEL_FIELDS}
+    return hashlib.sha256(json.dumps(seen, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def safety(p: dict, rules: dict) -> tuple[list[str], list[str]]:
+    """The safety rules for one product: (reasons that forbid it, reasons a person must check its label).
 
     The rule set's `unknown_allergens` says what happens when the manufacturer gave no allergen
     data, or left a banned allergen undeclared: `forbidden` (the default) or `needs_approval`.
     A banned allergen that only the ingredient text names always goes to a person.
     """
-    p = line.product
     name = p.get("name", p.get("id", "product"))
-    result, reasons = ALLOWED, []
-    person = []  # reasons that send this line to a person
+    forbidden, person = [], []
     to_person = rules.get("unknown_allergens", FORBIDDEN) == NEEDS_APPROVAL
 
     allergens, traces = p.get("allergens"), p.get("traces")
     if allergens is None or traces is None:
         if not to_person:
-            return Decision(FORBIDDEN, [f"{name}: allergen data is missing, so it counts as unsafe"], rules["version"])
+            return [f"{name}: allergen data is missing, so it counts as unsafe"], []
         person.append(f"{name}: the manufacturer gave no allergen data, so a person must check the label")
         allergens, traces = allergens or [], traces or []
     banned = {a.lower() for a in rules["banned_allergens"]}
     for a in allergens:
         if a.lower() in banned:
-            result = FORBIDDEN
-            reasons.append(f"{name} contains {a}, which this kitchen bans")
+            forbidden.append(f"{name} contains {a}, which this kitchen bans")
     for a in traces:
         if a.lower() in banned:
-            result = FORBIDDEN
-            reasons.append(f"{name} may contain traces of {a}, which this kitchen bans")
+            forbidden.append(f"{name} may contain traces of {a}, which this kitchen bans")
     for a in p.get("undeclared") or []:
         if a.lower() in banned:
             if to_person:
                 person.append(f"{name}: the manufacturer left {a} undeclared, so a person must check the label")
             else:
-                result = FORBIDDEN
-                reasons.append(f"{name}: the manufacturer left {a} undeclared, so it counts as unsafe")
+                forbidden.append(f"{name}: the manufacturer left {a} undeclared, so it counts as unsafe")
     declared = {a.lower() for a in allergens} | {a.lower() for a in traces}
     for a in p.get("text_allergens") or []:
         if a.lower() in banned and a.lower() not in declared:
@@ -189,21 +195,46 @@ def check_line(line: Line, rules: dict, ctx: Context) -> Decision:
             continue
         wanted = rule["property"]
         if wanted not in props:
-            result = FORBIDDEN
-            reasons.append(f"{name} is {rule['product_group']} but not {wanted.replace('_', '-')}")
+            forbidden.append(f"{name} is {rule['product_group']} but not {wanted.replace('_', '-')}")
         elif wanted.endswith("_free") and wanted[:-len("_free")] in conflicts:
             person.append(f"{name} claims to be {wanted.replace('_', '-')}, but its allergen field lists "
                           f"{wanted[:-len('_free')]}, so a person must check the label")
+    return forbidden, person
 
-    if result == FORBIDDEN:
-        return Decision(result, reasons + person, rules["version"])
-    if person:
+
+def needs_label_check(product: dict, rules: dict) -> bool:
+    """True when the product can be ordered only after a person reads its label."""
+    forbidden, person = safety(product, rules)
+    return bool(person) and not forbidden
+
+
+def check_line(line: Line, rules: dict, ctx: Context) -> Decision:
+    """Safety rules for one product, then substitute, stock, price and delivery.
+
+    A person who approves a product that needs a label check does that check once. After that,
+    ctx.label_checks holds the product, and the same product with the same data does not ask again.
+    """
+    p = line.product
+    name = p.get("name", p.get("id", "product"))
+    forbidden, person = safety(p, rules)
+    if forbidden:
+        return Decision(FORBIDDEN, forbidden + person, rules["version"])
+    result, reasons = ALLOWED, []
+    checked = ctx.label_checks.get(label_key(p)) if person else None
+    if checked:
+        reasons.append(f"{name}: {checked}")
+    elif person:
         result = NEEDS_APPROVAL
         reasons += person
 
     if not line.is_usual and not is_approved_substitute(p, rules, ctx.slot_group):
         result = NEEDS_APPROVAL
-        reasons.append(f"{name} is a substitute outside the approved groups for {ctx.slot_group.replace('_', ' ')}")
+        reasons.append(f"{name} is not the usual product or an approved substitute of any slot in the rule set"
+                       if ctx.slot_group == "unknown" else
+                       f"{name} is a substitute outside the approved groups for {ctx.slot_group.replace('_', ' ')}")
+    if not line.stock_known:
+        result = NEEDS_APPROVAL
+        reasons.append(f"{name}: the wholesaler does not know the stock, so a person must look")
     if line.unit_price_eur is None:
         result = NEEDS_APPROVAL
         reasons.append(f"{name}: no price, so a person must look")

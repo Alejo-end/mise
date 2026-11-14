@@ -314,13 +314,19 @@ def modulino(origin, kind):
     return union(parts)
 
 
-def uno_q():
+def uno_q_connectors():
+    """The parts of the UNO Q that the CAD data places: the headers, the parts below the board and the USB-C port."""
     ox, oy, oz = UNO_O
-    parts = [box(ox, oy, oz, ox + UNO_X, oy + UNO_Y, UNO_TOP + 4.0)]          # PCB and low parts
-    parts += [box(ox + a, oy + b, UNO_TOP, ox + c, oy + d, UNO_TOP + UNO_HEADER_H) for a, b, c, d in UNO_HEADERS]
+    parts = [box(ox + a, oy + b, UNO_TOP, ox + c, oy + d, UNO_TOP + UNO_HEADER_H) for a, b, c, d in UNO_HEADERS]
     parts += [box(ox + a, oy + b, oz - UNO_BOTTOM, ox + c, oy + d, oz) for a, b, c, d in UNO_BOTTOM_PARTS]
     parts.append(box(ox + UNO_USB_FACE, oy + UNO_USB_Y - 4.5, UNO_TOP, ox + 7.4, oy + UNO_USB_Y + 4.5, UNO_TOP + 3.2))
-    return union(parts)
+    return parts
+
+
+def uno_q():
+    """The UNO Q as one solid for the fit: the board with its low parts as a block, and the connectors."""
+    ox, oy, oz = UNO_O
+    return union([box(ox, oy, oz, ox + UNO_X, oy + UNO_Y, UNO_TOP + 4.0)] + uno_q_connectors())
 
 
 def modulino_look(origin, kind):
@@ -343,9 +349,7 @@ def uno_q_look():
     pcb = box(ox, oy, oz, ox + UNO_X, oy + UNO_Y, UNO_TOP)
     for hx, hy in UNO_HOLES:
         pcb -= cyl(ox + hx, oy + hy, oz - 1, UNO_TOP + 1, 3.2, 32)
-    parts = [box(ox + a, oy + b, UNO_TOP, ox + c, oy + d, UNO_TOP + UNO_HEADER_H) for a, b, c, d in UNO_HEADERS]
-    parts += [box(ox + a, oy + b, oz - UNO_BOTTOM, ox + c, oy + d, oz) for a, b, c, d in UNO_BOTTOM_PARTS]
-    parts.append(box(ox + UNO_USB_FACE, oy + UNO_USB_Y - 4.5, UNO_TOP, ox + 7.4, oy + UNO_USB_Y + 4.5, UNO_TOP + 3.2))
+    parts = uno_q_connectors()
     a, b, c, d = UNO_MATRIX
     parts.append(box(ox + a, oy + b, UNO_TOP, ox + c, oy + d, UNO_TOP + 0.8))
     parts.append(cyl(ox + UNO_BUTTON[0], oy + UNO_BUTTON[1], UNO_TOP, UNO_TOP + 2.0, 3.0, 32))
