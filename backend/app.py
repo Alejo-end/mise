@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
@@ -20,13 +20,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .agent import Agent
 from .audit import AuditLog, story
-from .gateway import make_router
+from . import rules as R
+from .gateway import make_router, public
 from .rules import TZ
 from .allergens import unscanned
 from .sandbox import AGENTS, DrivingTest
 from .settings import Settings
 from .shelf import Shelf, ShelfError, versions_dir_for
 from .signing import Signer
+from .cold import BREACH, DEFAULT_ALLOWED_MIN, ColdLog, exposure
 from .stock import StockHistory, against_delivery, outlook
 from .valio import ValioCatalog, make_client
 
@@ -68,6 +70,7 @@ ruleset = shelf.rules
 catalog = make_client()
 log = AuditLog(os.getenv("AUDIT_DB", DATA / "audit.sqlite"))
 stock_history = StockHistory(os.getenv("AUDIT_DB", DATA / "audit.sqlite"))
+cold_log = ColdLog(os.getenv("AUDIT_DB", DATA / "audit.sqlite"))
 
 
 def _check_targets() -> None:
@@ -100,6 +103,7 @@ if SETTINGS.overrides():
 driving_test = DrivingTest(ruleset, log)
 PINS = {p.split(":", 1)[0].strip(): p.split(":", 1)[1].strip()
         for p in os.getenv("APPROVER_PINS", "").split(",") if ":" in p}
+SHOW_PINS = os.getenv("SHOW_PINS", "").strip() == "1"  # demo only: a PIN on the page protects nothing
 OFFLINE_AFTER_S = SETTINGS.offline_after_s
 # After 5 wrong PINs within a minute, nobody can approve for 30 seconds. A PIN has four digits.
 WRONG_PINS, PIN_WINDOW_S, PIN_LOCK_S = 5, 60, 30
@@ -233,6 +237,12 @@ def approve_page():
     return FileResponse(ROOT / "web" / "approve.html")
 
 
+@app.get("/fonts/name.ttf")
+def name_font():
+    """The cursive font of the name on the case, so the page and the box carry the same name. SIL Open Font License."""
+    return FileResponse(ROOT / "enclosure" / "fonts" / "Borel-Regular.ttf", media_type="font/ttf")
+
+
 @app.post("/events")
 def events(ev: Event):
     data = ev.model_dump(exclude_none=True)
@@ -245,6 +255,8 @@ def events(ev: Event):
     for key in ("temperature_c", "auto_limit_eur"):
         if data.get(key) is not None:
             device[key] = data[key]
+    if data.get("temperature_c") is not None and data["type"] != "delivery_check":
+        cold_log.record(float(data["temperature_c"]), "sensor", datetime.now(TZ))  # the cold log; it only watches
     if data["type"] == "temperature_alarm":
         device["alarm"] = data["active"]
     elif "alarm" in data:
@@ -252,8 +264,12 @@ def events(ev: Event):
     if data["type"] == "slot_state":
         data = shelf.observe(data)  # the observation; with fill, units = round(fill x the assignment's target)
         device["slots"][str(data["slot"])] = {"state": data["state"], "units": data.get("estimated_units")}
-        if data.get("estimated_units") is not None and not data.get("uncertain"):
-            # The stock timeline. It only watches: also in a recording session, and before any trigger.
+        target = next((t for t in ruleset["targets"] if t["slot"] == data["slot"]), None)
+        if (data.get("estimated_units") is not None and not data.get("uncertain") and not OBSERVE_ONLY
+                and target is not None and target.get("product_id")):
+            # The stock timeline: camera counts of a slot that holds a catalogue product. Observed props (an
+            # observe-only shelf, a recording session, an unmapped slot) stay out of it: they are kept apart as
+            # "observation" or "recording" entries in the audit log, never as stock of a catalogue product.
             stock_history.record(int(data["slot"]), int(data["estimated_units"]), "camera", datetime.now(TZ))
     if OBSERVE_ONLY:
         if data["type"] in ("slot_state", "manual_low"):
@@ -401,6 +417,8 @@ def device_state():
         "weekly_spent_eur": agent.weekly_spent_eur, "catalog": catalog.name, "text_scan_gaps": TEXT_SCAN_GAPS, "cold_alarm_c": agent.cold_alarm_c,
         "rule_set_version": ruleset["version"], "rule_set_sha256": ruleset["sha256"][:12],
         "signed_by": ruleset.get("signed_by"), "pins_set": bool(PINS),
+        # For a demo only: SHOW_PINS=1 puts the approver PINs on the page, so that a visitor can approve.
+        "demo_pins": [{"pin": p, "name": n} for p, n in PINS.items()] if SHOW_PINS else [],
         "recording_session": RECORDING_SESSION or None, "shelf_events": "observe" if OBSERVE_ONLY else "purchase"} | device_health()
 
 
@@ -487,6 +505,194 @@ def get_log(format: str = "story", limit: int = 200):
 @app.post("/request")
 def text_request(r: TextRequest):
     return agent.handle_request(r.text, r.product_id, (r.asked_by or "").strip() or None)
+
+
+# A scanned product code, looked up in the wholesaler's catalog -------------------------------------
+
+def _code(text: str) -> str:
+    """A product code as people and scanners give it: digits only, with no leading zeros."""
+    return "".join(ch for ch in str(text) if ch.isdigit()).lstrip("0")
+
+
+def _by_code(code: str) -> list[dict]:
+    """The catalog products that carry this GTIN (the number under the barcode). A few codes name two products."""
+    wanted = _code(code)
+    return [p for p in catalog.products.values() if wanted and _code(p.get("gtin") or "") == wanted]
+
+
+def _scan_answer(product: dict) -> dict:
+    """What the catalog and this kitchen's rules say about one product, for a person who holds the pack."""
+    forbidden, person = R.safety(product, ruleset)
+    verdict = "forbidden" if forbidden else "read_label" if person else "allowed"
+    limit = _limit_for(product)
+    now = datetime.now(TZ)
+    air = exposure(cold_log.readings(now - timedelta(hours=24)), limit, _allowed_minutes(), None, now)
+    slot = next((t["slot"] for t in ruleset["targets"] if str(t.get("product_id")) == str(product["id"])), None)
+    return {"product": public(product), "verdict": verdict, "reasons": forbidden or person,
+            "rule_set_version": ruleset["version"], "keep_at_or_below_c": limit, "cold_room": air.to_dict(),
+            "shelf_slot": slot}
+
+
+class Scan(BaseModel):
+    code: str = Field(min_length=4, max_length=40)
+    where: Literal["door", "shelf"] = "door"
+    scanned_by: str | None = Field(default=None, max_length=60)
+
+
+@app.get("/scan/{code}")
+def scan_lookup(code: str):
+    """Look a product code up in the catalog. Nothing is recorded."""
+    found = _by_code(code)
+    if not found:
+        raise HTTPException(404, "This code is not in the wholesaler's catalog.")
+    return {"code": _code(code), "matches": [_scan_answer(p) for p in found]}
+
+
+@app.post("/scan")
+def scan_record(s: Scan):
+    """Record that a person or the box scanned a pack at the door or on the shelf. The audit log keeps the product,
+    what this kitchen's rules say about it, and its storage limit."""
+    found = _by_code(s.code)
+    if not found:
+        log.write("scan", {"summary": f"A scanned code is not in the catalog: {_code(s.code)}.", "code": _code(s.code),
+                           "where": s.where}, s.scanned_by or "kitchen", ruleset["version"])
+        raise HTTPException(404, "This code is not in the wholesaler's catalog.")
+    answers = [_scan_answer(p) for p in found]
+    words = {"allowed": "allowed in this kitchen", "read_label": "a person must read the label", "forbidden": "forbidden in this kitchen"}
+    for a in answers:
+        limit = a["keep_at_or_below_c"]
+        log.write("scan", {"summary": f"{a['product']['name']} scanned at the {s.where}: {words[a['verdict']]}"
+                           + (f" ({'; '.join(a['reasons'])})" if a["reasons"] else "")
+                           + (f". Keep at {limit:g} °C or colder." if limit is not None else ". No storage limit in the catalog."),
+                           "code": _code(s.code), "product_id": a["product"]["id"], "where": s.where,
+                           "verdict": a["verdict"]}, s.scanned_by or "kitchen", ruleset["version"])
+    return {"code": _code(s.code), "where": s.where, "matches": answers}
+
+
+# The cold log and the way of an order ------------------------------------------------------------
+
+cold_alerted: set[tuple[int, str]] = set()  # (slot, start of the breach): one audit entry for each breach
+
+
+def _allowed_minutes() -> int:
+    """The kitchen's limit from the rule set. COLD_ALLOWED_MINUTES replaces it for a demo, so the alert shows in minutes."""
+    demo = os.getenv("COLD_ALLOWED_MINUTES", "").strip()
+    return int(demo) if demo.isdigit() else int((ruleset.get("cold_chain") or {}).get("max_minutes_above", DEFAULT_ALLOWED_MIN))
+
+
+def _limit_for(product: dict) -> float | None:
+    """The storage limit of a product: the manufacturer's from the catalog, or else the kitchen's own from the rule set."""
+    if product.get("max_temp_c") is not None:
+        return product["max_temp_c"]
+    own = next((t.get("keep_at_or_below_c") for t in ruleset["targets"]
+                if product.get("id") is not None and str(t.get("product_id")) == str(product["id"])), None)
+    return own if own is not None else COLD_LIMITS.get(str(product.get("id")))
+
+
+def _own_cold_limits() -> dict[str, float]:
+    """COLD_LIMITS="464316:6,463335:6": the kitchen's own limit for products whose catalog entry has none.
+
+    The right home for these is a rule set target (`keep_at_or_below_c`), which the code reads first. A new
+    rule set version changes the ids that the shelf box calibrates against, so for now a setting carries them.
+    """
+    out = {}
+    for pair in os.getenv("COLD_LIMITS", "").split(","):
+        pid, _, value = pair.partition(":")
+        try:
+            out[pid.strip()] = float(value)
+        except ValueError:
+            continue
+    return out
+
+
+COLD_LIMITS = _own_cold_limits()
+
+
+def _cold_products(since: datetime | None = None) -> list[dict]:
+    """Each shelf product against its own storage limit from the catalog."""
+    readings, now, out = cold_log.readings(since), datetime.now(TZ), []
+    for t in sorted(ruleset["targets"], key=lambda t: t["slot"]):
+        product = (catalog.product(t["product_id"]).value if t.get("product_id") else None) or {}
+        e = exposure(readings, _limit_for(product | {"id": t.get("product_id")}), _allowed_minutes(), since, now)
+        out.append(e.to_dict() | {"slot": t["slot"], "product": t.get("product")})
+    return out
+
+
+class TempReading(BaseModel):
+    temperature_c: float = Field(ge=-60, le=80)
+    measured_by: str | None = Field(default=None, max_length=60)
+
+
+@app.post("/cold/reading")
+def cold_reading(t: TempReading):
+    """A temperature that a person measured, for example with a probe thermometer. It goes into the cold log."""
+    cold_log.record(t.temperature_c, "person", datetime.now(TZ))
+    return {"temperature_c": t.temperature_c, "source": "person"}
+
+
+@app.get("/cold")
+def cold():
+    """The air temperature where the food is kept, and each shelf product against its own limit over the last day."""
+    now = datetime.now(TZ)
+    since = now - timedelta(hours=24)
+    products, readings = _cold_products(since), cold_log.readings(since)
+    for p in products:
+        if p["state"] == BREACH:
+            started = (now - timedelta(minutes=p["minutes_above_now"])).strftime("%Y-%m-%dT%H")
+            if (p["slot"], started) not in cold_alerted:
+                cold_alerted.add((p["slot"], started))
+                log.write("cold_breach", {"summary": f"{p['product']} was above its {p['limit_c']:g} °C limit for "
+                                          f"{p['minutes_above_now']} minutes (air {p['temperature_c']:.1f} °C). "
+                                          "A person must check the product before use.", "slot": p["slot"],
+                                          "limit_c": p["limit_c"], "minutes": p["minutes_above_now"]},
+                          "cold log", ruleset["version"])
+    last = readings[-1] if readings else None
+    return {"temperature_c": last.temperature_c if last else None,
+            "measured_at": last.time.isoformat(timespec="seconds") if last else None,
+            "source": last.source if last else None, "allowed_minutes": _allowed_minutes(), "products": products,
+            "history": [{"time": x.time.isoformat(timespec="seconds"), "temperature_c": x.temperature_c} for x in readings[-120:]]}
+
+
+@app.get("/orders/{order_id}/chain")
+def order_chain(order_id: str):
+    """The way of one order: who asked, what the rule check said, the order, the delivery at the door, the storage.
+
+    Every step comes from the audit log or the cold log. A step that did not happen yet has done = false.
+    """
+    order = agent.orders.get(order_id)
+    if order is None:
+        raise HTTPException(404, "No such order.")
+    entries = [e for e in log.entries(100000) if e["run_id"] == order.get("run_id")]
+    first = lambda step: next((e for e in entries if e["step"] == step), None)  # noqa: E731
+    asked, ordered = first("trigger"), next((e for e in entries if e["step"] == "order"), None)
+    checks = [e for e in entries if e["step"] == "rule_check"]
+    decided = next((e for e in entries if e["step"] == "approval" and e["detail"].get("status") not in ("open", "expired")), None)
+    delivery = next((d for d in agent.deliveries if d["order_id"] == order_id), None)
+    delivered_at = next((e["time"] for e in entries if e["step"] == "delivery_check"), None)
+    steps = [
+        {"step": "asked", "done": asked is not None, "time": asked and asked["time"], "who": asked and asked["actor"],
+         "text": asked["detail"].get("summary", "") if asked else "No request in the log."},
+        {"step": "checked", "done": bool(checks), "time": checks[-1]["time"] if checks else None,
+         "who": decided["actor"] if decided else "rule check",
+         "text": (f"Rule set {order.get('rule_set_version', ruleset['version'])}: " + checks[-1]["detail"]["result"].replace("_", " ")
+                  + (f". {decided['actor']} approved." if decided else ". No person was needed.")) if checks else "No rule check in the log."},
+        {"step": "ordered", "done": True, "time": order["time"], "who": ordered["actor"] if ordered else None,
+         "text": ", ".join(f"{l['quantity']} × {l['name']}" for l in order["lines"]) + f", €{order['total_eur']:.2f}"},
+        {"step": "delivered", "done": delivery is not None, "time": delivered_at, "who": "at the door",
+         "text": delivery["summary"] + (f" Air at the door: {delivery['temperature_c']:.1f} °C." if delivery and delivery.get("temperature_c") is not None else "")
+                 if delivery else "Not checked at the door yet."},
+    ]
+    stored = {"step": "stored", "done": False, "time": None, "who": "cold log", "text": "The storage record starts after the delivery check."}
+    if delivery is not None and delivered_at:
+        since = datetime.fromisoformat(delivered_at)
+        limits = [_limit_for((catalog.product(l["product_id"]).value or {}) | {"id": l["product_id"]}) for l in order["lines"]]
+        limit = min((x for x in limits if x is not None), default=None)
+        e = exposure(cold_log.readings(since), limit, _allowed_minutes(), since, datetime.now(TZ))
+        stored = {"step": "stored", "done": e.state != "unknown", "time": e.measured_at, "who": "cold log", "state": e.state,
+                  "text": "No temperature reading since the delivery." if e.temperature_c is None else
+                          "No storage limit in the product data." if limit is None else
+                          f"Since the delivery: {e.minutes_above_total} minutes above {limit:g} °C, peak {e.peak_c:.1f} °C. Now {e.state}."}
+    return {"order_id": order_id, "steps": steps + [stored]}
 
 
 @app.get("/orders")

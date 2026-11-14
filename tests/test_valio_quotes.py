@@ -64,7 +64,7 @@ class FakeApi:
         self.calls = []
         self.now = datetime.now(TZ)
         self.day = self.now.date().isoformat()  # today: before every deadline the tests use
-        self.amounts = {}  # product -> availableAmount; default 9999999999 (measured for Stock products)
+        self.amounts = {}  # product -> availableAmount; default 5000, a known stock. 999999 or more means unknown
         self.closing = {}  # product -> closingTime; default: tomorrow 17:00
         self.units = {}  # product -> salesUnit the API answers; default: the file's
         self.status = []  # HTTP status codes to answer before the real answer, e.g. [429]
@@ -86,7 +86,7 @@ class FakeApi:
         sales = {r["id"]: r["salesUnit"] for r in RECORDS}
         return httpx.Response(200, json={"timeNow": self.now.strftime(fmt), "requestedDate": "x", "products": [
             {"productId": i, "closingTime": self.closing.get(i, tomorrow), "salesBlock": False, "logisticModel": "Stock",
-             "scheduleLines": [{"salesBlock": False, "availableAmount": float(self.amounts.get(i, 9999999999)),
+             "scheduleLines": [{"salesBlock": False, "availableAmount": float(self.amounts.get(i, 5000)),
                                 "availableDate": self.day,
                                 "salesUnit": self.units.get(i, sales[i])}]} for i in ids]})
 
@@ -103,7 +103,7 @@ def catalog(tmp_path, api):
     (tmp_path / V.CARBON_FILE).write_text("productId,AVG kg CO2-eq/kg\n1,1.44\n5,0.9\n")
     c = V.ValioCatalog(tmp_path, "https://example.test", "key-123", transport=httpx.MockTransport(api),
                        record_dir=tmp_path / "rec")
-    c.min_gap_s = c.retry_wait_s = 0
+    c.min_gap_s = c.retry_wait_s = c.blocked_wait_s = 0
     return c
 
 
@@ -127,7 +127,7 @@ def test_the_delivery_is_the_available_date_and_no_arrival_time_is_invented(cata
     assert a["closing_time"].endswith("17:00:00+02:00")
     assert (a["unit_price_eur"], a["unit_price_with_tax_eur"], a["tax_rate_pct"]) == (1.4, 1.59, 13.5)
     assert a["price_valid_to"] == "2026-12-31T00:00:00+02:00"
-    assert a["available_units"] == 24 and a["quantity_known"] is True  # 9999999999 read as stated
+    assert a["available_units"] == 24 and a["quantity_known"] is True
     assert "mock API" in a["source"] and "not a Valio production system" in a["source"]
 
 
@@ -162,6 +162,13 @@ def test_comparison_informs_and_keeps_unknowns_unknown(catalog):
     bread = comparison(catalog.product("2").value, 10)
     assert bread["delivery_reliability"]["value"] is None and bread["delivery_reliability"]["status"] == "unknown"
     assert bread["carbon"]["estimate_kg_co2e"] is None
+
+
+def test_an_amount_of_999999_or_more_means_that_valio_does_not_know_the_stock(catalog, api):
+    """Valio's answer of 14 Nov. The mock API gives 9999999999 for Stock products: that is unknown too."""
+    for amount, known in ((500, True), (999998, True), (999999, False), (9999999999, False)):
+        api.amounts["1"] = amount
+        assert catalog.availability("1", 24, needed(api)).value["quantity_known"] is known, amount
 
 
 def test_429_is_retried_with_backoff_and_at_most_three_times(catalog, api):
@@ -356,7 +363,9 @@ def test_replay_the_recorded_answers_for_the_demo_products():
     monday = datetime(2026, 11, 16, 7, 0, tzinfo=TZ)
     milk = c.availability("463335", 24, monday).value
     assert (milk["unit_price_eur"], milk["delivery"], milk["sales_unit"]) == (1.4, "2026-11-16", "ST")
-    assert milk["quantity_known"] and milk["problem"] is None
+    # Since main 574247f a recorded stock of 999,999 or more counts as unknown (decision I): the mock's 9,999,999,999
+    # is not a quantity. The price and the date stay usable.
+    assert not milk["quantity_known"] and milk["problem"] is None
     crate = c.availability("462921", 200, monday).value
     assert crate["sales_unit"] == "KI" and crate["unit_price_eur"] == 10.97
     # Recorded 14 Nov 05:49: the rye bread's cut-off was 12 Nov 12:30, so 16 Nov cannot be reached.

@@ -1,48 +1,47 @@
 ### R0 shelf props observe only: ['ignored', 'ignored'] | orders [] | approvals [] | Valio calls 0
-Driving Test passed: True | licence: {'id': '8bbd8cb3bf6b', 'token_hint': '8Yka01', 'agent': 'Safe Kitchen Agent', 'granted_by': 'Head chef', 'scope': {'product_groups': ['lactose_free_milk', 'natural_yogurt', 'rye_bread'], 'spend_limit_eur': 150.0}, 'issued': '2026-11-14T16:01:54+02:00', 'expires': '2026-11-15T16:01:54+02:00'}
+Driving Test passed: True | licence: {'id': '3ab9154fb11b', 'token_hint': 'jX1pTP', 'agent': 'Safe Kitchen Agent', 'granted_by': 'Head chef', 'scope': {'product_groups': ['lactose_free_milk', 'natural_yogurt', 'rye_bread'], 'spend_limit_eur': 150.0}, 'issued': '2026-11-14T16:33:49+02:00', 'expires': '2026-11-15T16:33:49+02:00'}
 lookup: [('463335', 'Valio Eila® 3 % milk drink 1 l lactose free'), ('476240', 'Valio Eila® skimmed milk drink 1 l lactose fr'), ('469119', 'Valio Eila® skimmed milk drink 1,75 l lactose'), ('469386', '5 x Arla Lactose- and fatfree milkdrink 1 L S'), ('464401', 'Valio Hyvä suomalainen Arki® Eila® skimmed mi')]
 
 ### R1 gateway order within the licence and the auto-limit (6 x 463335; decision G assumed allowed)
-  quote: {'quote_id': 'Q-A32A2B4C', 'total_eur': 8.4, 'unit_price_eur': 1.4, 'delivery': '2026-11-16', 'valid_until': '2026-11-14T16:16:57+02:00', 'needs_person': None}
+  quote: {'quote_id': 'Q-1FCEC81E', 'total_eur': 8.4, 'unit_price_eur': 1.4, 'delivery': '2026-11-16', 'valid_until': '2026-11-14T16:48:53+02:00', 'needs_person': None}
 
 ### R1 result
-  result: {"run_id": "328db3f9", "status": "ordered", "order_id": "ORD-3156DF48", "total_eur": 8.4, "sent_to_valio": false, "note": "Recorded by the gateway, not sent to Valio: the challenge API has no order endpoint.", "signature": {"alg": "Ed25519", "key_id": "e8f9abbfcb1a", "value": "Oo2o/raekEh2jc4Xn/2A35
-  - trigger: Safe Kitchen Agent asked through the gateway for 6 × product 463335 (quote Q-A32A2B4C).
+  result: {"run_id": "b18c4a92", "status": "needs_approval", "approval_id": "bbed4b", "signature": {"alg": "Ed25519", "key_id": "2dcdf3d85e06", "value": "1acr3rROMh7nyscotJ4vXg9YgJrtZDgZ4Z2DUndqG8cEC8IHFNQg4rYG5TvD8eXYp27hm481R9JISQ3ueuvRAA=="}}
+  - trigger: Safe Kitchen Agent asked through the gateway for 6 × product 463335 (quote Q-1FCEC81E).
   - rule_check: 6 × Valio Eila® 3 % milk drink 1 l lactose free
-  - recheck: nothing changed.
-  - order: 6 × Valio Eila® 3 % milk drink 1 l lactose free, €8.40, within the auto-order rules. Recorded by the gateway, not sent to Valio. Delivery charge unknown: the challenge API supplies no delivery charge.
-  orders: [('ORD-3156DF48', [('463335', 6, 1.4)])]
+  - approval: {"status": "open", "approval_id": "bbed4b", "approver": "Head chef", "options": [{"label": "requested", "summary": "6 \u00d7 Valio Eila\u00ae 3 % milk
+  orders: []
 
 ### R2 gateway order that needs the Head chef (24 x 463335; v4 as signed)
-  order answer: {"run_id": "859a3f76", "status": "needs_approval", "approval_id": "458813", "signature": {"alg": "Ed25519", "key_id": "651a36d1f50b", "value": "yosoWb0qAVQMZiZEJf2DEIWwNN9ZV/yfACHSvLEeDtuTGPGXoKSyW6dOBKFC3/6zby1nDdAzELp3
+  order answer: {"run_id": "b7f9b693", "status": "needs_approval", "approval_id": "ebfb16", "signature": {"alg": "Ed25519", "key_id": "57d1589afb61", "value": "0Bxv/FeeZ7oXkhY2YO4Xf4HNmAQ7E9rSoZI6PjIT987cpIsJSRv02GJb4nmANoWqSKQ4EKTtgl4Q
 
 ### R2 after the Head chef approves with the PIN (recheck with fresh price and date)
-  result: {"status": "ordered", "order_id": "ORD-31AF51F5", "total_eur": 33.6, "sent_to_valio": false, "note": "Recorded by the gateway, not sent to Valio: the challenge API has no order endpoint."}
-  - trigger: Safe Kitchen Agent asked through the gateway for 24 × product 463335 (quote Q-ACD76EB4).
+  result: {"status": "ordered", "order_id": "ORD-522E2D7D", "total_eur": 33.6, "sent_to_valio": false, "note": "Recorded by the gateway, not sent to Valio: the challenge API has no order endpoint."}
+  - trigger: Safe Kitchen Agent asked through the gateway for 24 × product 463335 (quote Q-6D43B9C5).
   - rule_check: 24 × Valio Eila® 3 % milk drink 1 l lactose free
-  - approval: {"status": "open", "approval_id": "458813", "approver": "Head chef", "options": [{"label": "requested", "summary": "24 \u00d7 Valio Eila\u00ae 3 % mil
+  - approval: {"status": "open", "approval_id": "ebfb16", "approver": "Head chef", "options": [{"label": "requested", "summary": "24 \u00d7 Valio Eila\u00ae 3 % mil
   - recheck: nothing changed.
   - order: 24 × Valio Eila® 3 % milk drink 1 l lactose free, €33.60, approved by Head chef. Recorded by the gateway, not sent to Valio. Delivery charge unknown: the challenge API supplies no delivery charge.
   - approval: ordered
-  orders: [('ORD-31AF51F5', [('463335', 24, 1.4)])]
+  orders: [('ORD-522E2D7D', [('463335', 24, 1.4)])]
 
 ### R3a price up 1.40 -> 1.95 at approval (injected by the rehearsal)
-  result: {"status": "needs_approval", "approval_id": "eda46d"}
-  - trigger: Safe Kitchen Agent asked through the gateway for 24 × product 463335 (quote Q-7F308F59).
+  result: {"status": "needs_approval", "approval_id": "2a678e"}
+  - trigger: Safe Kitchen Agent asked through the gateway for 24 × product 463335 (quote Q-AD600EDC).
   - rule_check: 24 × Valio Eila® 3 % milk drink 1 l lactose free
-  - approval: {"status": "open", "approval_id": "4b9b12", "approver": "Head chef", "options": [{"label": "requested", "summary": "24 \u00d7 Valio Eila\u00ae 3 % mil
+  - approval: {"status": "open", "approval_id": "58bd24", "approver": "Head chef", "options": [{"label": "requested", "summary": "24 \u00d7 Valio Eila\u00ae 3 % mil
   - recheck: Valio Eila® 3 % milk drink 1 l lactose free price 1.4 → 1.95
   - rule_check: order after recheck
-  - approval: {"status": "open", "approval_id": "eda46d", "approver": "Head chef", "options": [{"label": "after recheck", "summary": "24 \u00d7 Valio Eila\u00ae 3 %
+  - approval: {"status": "open", "approval_id": "2a678e", "approver": "Head chef", "options": [{"label": "after recheck", "summary": "24 \u00d7 Valio Eila\u00ae 3 %
   - approval: needs_approval
   orders: []
-  open approvals now: [('eda46d', 'changed order')]
+  open approvals now: [('2a678e', 'changed order')]
 
 ### R3b stock gone at approval (injected by the rehearsal)
   result: {"status": "blocked"}
-  - trigger: Safe Kitchen Agent asked through the gateway for 24 × product 463335 (quote Q-A2F5436D).
+  - trigger: Safe Kitchen Agent asked through the gateway for 24 × product 463335 (quote Q-7C364047).
   - rule_check: 24 × Valio Eila® 3 % milk drink 1 l lactose free
-  - approval: {"status": "open", "approval_id": "f7a59f", "approver": "Head chef", "options": [{"label": "requested", "summary": "24 \u00d7 Valio Eila\u00ae 3 % mil
+  - approval: {"status": "open", "approval_id": "38cd0c", "approver": "Head chef", "options": [{"label": "requested", "summary": "24 \u00d7 Valio Eila\u00ae 3 % mil
   - recheck: Valio Eila® 3 % milk drink 1 l lactose free only 0 of 24 left
   - blocked: After the recheck nothing can be ordered: Valio Eila® 3 % milk drink 1 l lactose free only 0 of 24 left
   - approval: blocked
@@ -51,9 +50,9 @@ lookup: [('463335', 'Valio Eila® 3 % milk drink 1 l lactose free'), ('476240', 
 
 ### R3c order cut-off passed at approval (cut-off before the API time in the answer) (injected by the rehearsal)
   result: {"status": "blocked"}
-  - trigger: Safe Kitchen Agent asked through the gateway for 24 × product 463335 (quote Q-52920C3E).
+  - trigger: Safe Kitchen Agent asked through the gateway for 24 × product 463335 (quote Q-8DC7E13E).
   - rule_check: 24 × Valio Eila® 3 % milk drink 1 l lactose free
-  - approval: {"status": "open", "approval_id": "f15258", "approver": "Head chef", "options": [{"label": "requested", "summary": "24 \u00d7 Valio Eila\u00ae 3 % mil
+  - approval: {"status": "open", "approval_id": "9d96f0", "approver": "Head chef", "options": [{"label": "requested", "summary": "24 \u00d7 Valio Eila\u00ae 3 % mil
   - recheck: Valio Eila® 3 % milk drink 1 l lactose free delivery 2026-11-16 → the order cut-off 2026-11-14T05:00:00+02:00 for delivery on 2026-11-16 has passed
   - blocked: After the recheck nothing can be ordered: Valio Eila® 3 % milk drink 1 l lactose free delivery 2026-11-16 → the order cut-off 2026-11-14T05:00:00+02:00 for delivery on 2026-11-16 has passed
   - approval: blocked
@@ -62,9 +61,9 @@ lookup: [('463335', 'Valio Eila® 3 % milk drink 1 l lactose free'), ('476240', 
 
 ### R3d product loses 'lactose_free' at approval (product constraint) (injected by the rehearsal)
   result: {"status": "forbidden", "reasons": ["Valio Eila\u00ae 3 % milk drink 1 l lactose free is 10400 but not lactose-free"]}
-  - trigger: Safe Kitchen Agent asked through the gateway for 24 × product 463335 (quote Q-A5E5F64C).
+  - trigger: Safe Kitchen Agent asked through the gateway for 24 × product 463335 (quote Q-A0801825).
   - rule_check: 24 × Valio Eila® 3 % milk drink 1 l lactose free
-  - approval: {"status": "open", "approval_id": "22ed46", "approver": "Head chef", "options": [{"label": "requested", "summary": "24 \u00d7 Valio Eila\u00ae 3 % mil
+  - approval: {"status": "open", "approval_id": "4fbdd8", "approver": "Head chef", "options": [{"label": "requested", "summary": "24 \u00d7 Valio Eila\u00ae 3 % mil
   - recheck: nothing changed.
   - rule_check: order after recheck (current product data)
   - blocked: The product data changed since the quote; the rule check now forbids the order.

@@ -87,3 +87,28 @@ def test_shelf_events_observe_keeps_the_gateway_buying(tmp_path, monkeypatch):
     assert r["status"] in ("ordered", "needs_approval")  # the kitchen request still buys
     monkeypatch.delenv("SHELF_EVENTS")
     importlib.reload(m)
+
+
+def test_the_page_gets_the_pins_only_when_the_demo_switch_is_on(client, monkeypatch):
+    assert client.get("/device").json()["demo_pins"] == []
+    monkeypatch.setenv("SHOW_PINS", "1")
+    import backend.app as m
+    shown = TestClient(importlib.reload(m).app).get("/device").json()["demo_pins"]
+    assert shown == [{"pin": "4821", "name": "Head chef"}]
+
+
+def test_observed_prop_readings_never_enter_the_stock_timeline(tmp_path, monkeypatch):
+    """Vision props on an observe-only shelf must not become stock history of a catalogue product."""
+    for k, v in {"AUDIT_DB": str(tmp_path / "t.sqlite"), "CATALOG": "local", "GATEWAY_KEY": str(tmp_path / "k.pem"),
+                 "APPROVER_PINS": "4821:Head chef", "SHELF_EVENTS": "observe"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("RECORDING_SESSION", raising=False)
+    import backend.app as m
+    m = importlib.reload(m)
+    c = TestClient(m.app)
+    c.post("/events", json={"type": "slot_state", "slot": 3, "state": "low", "estimated_units": 5})
+    slot3 = next(s for s in c.get("/stock").json() if s["slot"] == 3)
+    assert slot3["history"] == []  # nothing recorded for the catalogue product of slot 3
+    assert any(e["step"] == "observation" for e in c.get("/log?format=json").json())  # kept apart, in the audit log
+    monkeypatch.delenv("SHELF_EVENTS")
+    importlib.reload(m)

@@ -10,3 +10,6 @@ from pathlib import Path
 
 os.environ["CATALOG"] = "local"
 os.environ["RULES_FILE"] = str(Path(__file__).resolve().parent.parent / "rules" / "school_kitchen.yaml")
+os.environ["SHOW_PINS"] = ""  # a PIN on the page is for a demo only
+os.environ["COLD_ALLOWED_MINUTES"] = ""
+os.environ["COLD_LIMITS"] = ""

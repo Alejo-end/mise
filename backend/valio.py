@@ -158,9 +158,11 @@ DEFAULT_URL = "https://junction26.valioaimo.fi"
 SOURCE = "Valio Aimo challenge data and mock API (sponsor-provided, not a Valio production system)"
 # The availability API gives a delivery date (availableDate) and no time. We do not invent one: the
 # delivery is that date, and the deadline check compares dates (rules.Line.delivery_time_known).
-UNKNOWN_AMOUNT = 999999  # the amount the API gives for Terminal products: the quantity is not known
-# Measured on 14 Nov: Stock products answer 9999999999.0, a value the documentation does not name. The
-# documentation says availableAmount is the quantity available, so we read it as stated. Ask Valio.
+# Valio's answer of 14 Nov: an availableAmount of 999999 or more means that Valio does not know the availability,
+# and its own logic then accepts any quantity. An empty answer means not available. So 9999999999, which the
+# mock API gives for Stock products, is "unknown" too, not a stock count.
+UNKNOWN_AMOUNT = 999999
+BLOCKED_S = 30  # Valio's answer of 14 Nov: after a 429 the caller is blocked for 30 seconds
 MAX_HITS = 40
 MAX_IDS_PER_CALL = 1000  # the API rejects a longer list with HTTP 422
 PREFETCH_MAX_AGE_S = 60
@@ -277,7 +279,8 @@ def map_product(raw: dict, delivery_reliability: float | None = None, carbon: fl
         "delivery_reliability": delivery_reliability,
         "carbon_kg_co2e_per_kg": carbon,
         "sales_unit": raw.get("salesUnit"),
-        "lot_size": raw.get("allowedLotSize"),
+        # Valio's answer of 14 Nov: a lot size of 0.01 has a technical reason and means 1.
+        "lot_size": 1.0 if raw.get("allowedLotSize") == 0.01 else raw.get("allowedLotSize"),
         "units": {u["unitId"]: u.get("sizeInBaseUnits") for u in raw.get("units") or [] if u.get("unitId")},
         "deposits": [dict(d) for d in raw.get("deposits") or []],
         "mass_kg": _mass_kg(raw),
@@ -298,6 +301,7 @@ class ValioCatalog:
         self.data_dir = Path(data_dir)
         self.customer = customer
         self.retry_wait_s = 0.5  # the first backoff; it doubles on each retry, plus jitter
+        self.blocked_wait_s = BLOCKED_S  # the wait after a 429 that names no Retry-After
         self.min_gap_s = MIN_CALL_GAP_S
         self.http = httpx.Client(base_url=base_url, headers={"X-API-Key": api_key}, timeout=10, transport=transport)
         self._secret = api_key
@@ -423,7 +427,8 @@ class ValioCatalog:
                 r.raise_for_status()
                 return r.content
             after = r.headers.get("retry-after") if r is not None else None
-            wait = float(after) if after and after.isdigit() else self.retry_wait_s * 2 ** attempt
+            blocked = r is not None and r.status_code == 429  # a retry inside the block only fails again
+            wait = float(after) if after and after.isdigit() else self.blocked_wait_s if blocked else self.retry_wait_s * 2 ** attempt
             time_mod.sleep(min(wait, 30) + random.uniform(0, self.retry_wait_s))
         raise RuntimeError("unreachable")
 
@@ -495,7 +500,7 @@ class ValioCatalog:
             "closing_time": closing,
             "sales_unit": unit or p.get("sales_unit"),
             "logistic_model": (avail or {}).get("logisticModel"),
-            "quantity_known": bool(line) and amount != UNKNOWN_AMOUNT,
+            "quantity_known": bool(line) and amount < UNKNOWN_AMOUNT,
             "problem": problem,
             "source": SOURCE,
         }
