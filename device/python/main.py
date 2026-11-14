@@ -1,6 +1,6 @@
 # Safe Kitchen Agent: Linux side of the UNO Q.
 #
-# Every 2 seconds it reads a camera frame and compares each taped shelf slot
+# Once a second (frame_interval_s) it takes the newest camera frame and compares each taped shelf slot
 # with stored photos of the slot when empty and when full. When a slot changes
 # state, it sends an event to the backend on the laptop. It also forwards the
 # knob, the knob press and the thermo readings, and plays buzzer tones that the
@@ -12,6 +12,7 @@
 import base64
 import io
 import json
+import math
 import threading
 import time
 from datetime import datetime
@@ -223,13 +224,29 @@ def on_knob_long_press():
     start_delivery_check()
 
 
+def finite(value):
+    """The value as a float, or None when it is missing or not a real number (NaN, infinity)."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
 def on_thermo(celsius, humidity):
+    # A Thermo that is unplugged or busy reads NaN. JSON cannot carry NaN, so one bad reading
+    # in the state would stop every event to the agent and break the /state page.
+    celsius, humidity = finite(celsius), finite(humidity)
     if celsius is None:
+        if state["temperature_c"] is not None:
+            logger.warning("thermo gave no valid reading; the temperature is unknown until it does")
+        state["temperature_c"], state["humidity"] = None, None
+        ui.send_message("sensors", sensors())
         return
     if state["delivery"]:
-        state["delivery"]["temps"].append(float(celsius))
-    state["temperature_c"] = round(float(celsius), 2)
-    state["humidity"] = None if humidity is None else round(float(humidity), 1)
+        state["delivery"]["temps"].append(celsius)
+    state["temperature_c"] = round(celsius, 2)
+    state["humidity"] = None if humidity is None else round(humidity, 1)
     limit = float(config["temperature_limit_c"])
     # 0.5 degree hysteresis so the alarm does not flicker at the limit.
     if not state["alarm"] and celsius > limit:

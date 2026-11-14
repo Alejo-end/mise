@@ -4,7 +4,7 @@ Main case: Arduino UNO Q + Modulino Knob + Modulino Buzzer.
 Pod: a small vented box for the Modulino Thermo, on a long Qwiic cable.
 
 Run:  uv run --no-project --with manifold3d --with numpy --with matplotlib \
-        python enclosure.py [--preview]
+        python enclosure.py [--preview] [--assembly]
 
 All numbers are millimetres. Board geometry comes from the official Arduino
 CAD files (docs.arduino.cc, "CAD files" download of each board):
@@ -314,13 +314,48 @@ def modulino(origin, kind):
     return union(parts)
 
 
-def uno_q():
+def uno_q_connectors():
+    """The parts of the UNO Q that the CAD data places: the headers, the parts below the board and the USB-C port."""
     ox, oy, oz = UNO_O
-    parts = [box(ox, oy, oz, ox + UNO_X, oy + UNO_Y, UNO_TOP + 4.0)]          # PCB and low parts
-    parts += [box(ox + a, oy + b, UNO_TOP, ox + c, oy + d, UNO_TOP + UNO_HEADER_H) for a, b, c, d in UNO_HEADERS]
+    parts = [box(ox + a, oy + b, UNO_TOP, ox + c, oy + d, UNO_TOP + UNO_HEADER_H) for a, b, c, d in UNO_HEADERS]
     parts += [box(ox + a, oy + b, oz - UNO_BOTTOM, ox + c, oy + d, oz) for a, b, c, d in UNO_BOTTOM_PARTS]
     parts.append(box(ox + UNO_USB_FACE, oy + UNO_USB_Y - 4.5, UNO_TOP, ox + 7.4, oy + UNO_USB_Y + 4.5, UNO_TOP + 3.2))
-    return union(parts)
+    return parts
+
+
+def uno_q():
+    """The UNO Q as one solid for the fit: the board with its low parts as a block, and the connectors."""
+    ox, oy, oz = UNO_O
+    return union([box(ox, oy, oz, ox + UNO_X, oy + UNO_Y, UNO_TOP + 4.0)] + uno_q_connectors())
+
+
+def modulino_look(origin, kind):
+    """A Modulino as two solids for pictures: the bare board, and what sits on it."""
+    ox, oy, oz = origin
+    top = oz + MOD_T
+    pcb = rbox(ox, oy, oz, ox + MOD_X, oy + MOD_Y, top, MOD_R)
+    for hx, hy in MOD_HOLES:
+        pcb -= cyl(ox + hx, oy + hy, oz - 1, top + 1, 3.2, 32)
+    return pcb, modulino(origin, kind) - box(ox - 1, oy - 1, oz - 1, ox + MOD_X + 1, oy + MOD_Y + 1, top + 0.001)
+
+
+def uno_q_look():
+    """The UNO Q as two solids for pictures: the bare board, and its headers, connectors and chips.
+
+    Headers, the USB-C port and the LED matrix sit where the CAD data puts them. The two chips
+    are drawn for the look only: their place and size are not from the CAD data.
+    """
+    ox, oy, oz = UNO_O
+    pcb = box(ox, oy, oz, ox + UNO_X, oy + UNO_Y, UNO_TOP)
+    for hx, hy in UNO_HOLES:
+        pcb -= cyl(ox + hx, oy + hy, oz - 1, UNO_TOP + 1, 3.2, 32)
+    parts = uno_q_connectors()
+    a, b, c, d = UNO_MATRIX
+    parts.append(box(ox + a, oy + b, UNO_TOP, ox + c, oy + d, UNO_TOP + 0.8))
+    parts.append(cyl(ox + UNO_BUTTON[0], oy + UNO_BUTTON[1], UNO_TOP, UNO_TOP + 2.0, 3.0, 32))
+    parts += [box(ox + 30, oy + 26, UNO_TOP, ox + 44, oy + 40, UNO_TOP + 1.4),   # chips, for the look only
+              box(ox + 48, oy + 30, UNO_TOP, ox + 56, oy + 38, UNO_TOP + 1.0)]
+    return pcb, union(parts)
 
 
 def boards():
@@ -423,6 +458,65 @@ def render(items, path):
     fig.savefig(path, dpi=120)
 
 
+def screw(x, y, z_head_top, length, head_d=5.6, head_h=2.0):
+    """A plain stand-in for an M3 screw, head up. z_head_top is the top of the head."""
+    return union([cyl(x, y, z_head_top - head_h, z_head_top, head_d, 32),
+                  cyl(x, y, z_head_top - head_h - length, z_head_top - head_h + 0.01, 3.0, 24)])
+
+
+def write_assembly(base, lid, pod, cover):
+    """Every part in its assembled place, for the FreeCAD file and the exploded picture.
+
+    Writes assembly/*.stl and assembly/assembly.json. Each entry of the JSON names a part, its
+    colour, and how far it moves in the exploded view (mm, as x, y, z). The pod sits to the
+    right of the case.
+    """
+    import json
+
+    folder = HERE / "assembly"
+    folder.mkdir(exist_ok=True)
+    shift = (OX + 26, (OY - P_OY) / 2, 0)  # the pod sits to the right of the case
+    move = lambda part: part.translate(shift)
+    board_screws = lambda origin, top: union([screw(origin[0] + hx, origin[1] + hy, top + 2.0, 6.0) for hx, hy in MOD_HOLES])
+    pod_top = P_H + P_COVER
+    grey, white, dark, steel = "#cfd0cc", "#e4e4e0", "#2b2b2b", "#b9bcc0"
+    teal, blue = "#00878f", "#1d3f8f"  # the UNO Q board and the Modulino boards
+    uno_pcb, uno_parts = uno_q_look()
+    knob_pcb, knob_parts = modulino_look(KNOB_O, "knob")
+    buzz_pcb, buzz_parts = modulino_look(BUZZ_O, "buzzer")
+    thermo_pcb, thermo_parts = modulino_look(P_O, "thermo")
+    up, screws_up, lid_up, lid_screws_up = (0, 0, 34), (0, 0, 58), (0, 0, 98), (0, 0, 128)
+    parts = [
+        # name, solid, colour, exploded move, what it is, kind of surface
+        ("base", base, grey, (0, 0, 0), "Printed base", "print"),
+        ("uno_q", uno_pcb, teal, up, "Arduino UNO Q", "board"),
+        ("uno_q_parts", uno_parts, dark, up, "Arduino UNO Q, headers and connectors", "part"),
+        ("uno_q_screws", union([screw(UNO_O[0] + hx, UNO_O[1] + hy, UNO_TOP + 2.0, 6.0) for hx, hy in UNO_HOLES]),
+         steel, screws_up, "4 screws M3 x 6", "metal"),
+        ("knob", knob_pcb, blue, up, "Modulino Knob", "board"),
+        ("knob_parts", knob_parts, steel, up, "Modulino Knob, encoder", "metal"),
+        ("knob_screws", board_screws(KNOB_O, KNOB_O[2] + MOD_T), steel, screws_up, "4 screws M3 x 6", "metal"),
+        ("buzzer", buzz_pcb, blue, up, "Modulino Buzzer", "board"),
+        ("buzzer_parts", buzz_parts, dark, up, "Modulino Buzzer, buzzer", "part"),
+        ("buzzer_screws", board_screws(BUZZ_O, BUZZ_O[2] + MOD_T), steel, screws_up, "4 screws M3 x 6", "metal"),
+        ("lid", lid, white, lid_up, "Printed lid", "print"),
+        ("lid_screws", union([screw(x, y, Z_TOP, 10.0) for x, y in POSTS]), steel, lid_screws_up, "4 screws M3 x 10", "metal"),
+        ("pod_base", move(pod), grey, (0, 0, 0), "Printed Thermo pod base", "print"),
+        ("thermo", move(thermo_pcb), blue, (0, 0, 18), "Modulino Thermo", "board"),
+        ("thermo_parts", move(thermo_parts), dark, (0, 0, 18), "Modulino Thermo, sensor", "part"),
+        ("pod_cover", move(cover), white, (0, 0, 40), "Printed Thermo pod cover", "print"),
+        ("pod_screws", move(union([screw(P_O[0] + hx, P_O[1] + hy, pod_top, 10.0) for hx, hy in MOD_HOLES])),
+         steel, (0, 0, 62), "4 screws M3 x 10", "metal"),
+    ]
+    manifest = []
+    for name, solid, colour, explode, label, surface in parts:
+        write_stl(solid, folder / f"{name}.stl")
+        manifest.append({"name": name, "file": f"{name}.stl", "colour": colour, "explode": explode, "label": label,
+                         "surface": surface})
+    (folder / "assembly.json").write_text(json.dumps({"units": "mm", "parts": manifest}, indent=1) + "\n")
+    print(f"assembly: {len(parts)} parts in {folder}")
+
+
 def main():
     OUT.mkdir(exist_ok=True)
     base, lid = make_base(), make_lid()
@@ -441,6 +535,9 @@ def main():
     print(f"standoffs: UNO Q {STANDOFF_UNO:.2f}, Knob {KNOB_O[2] - Z_IN:.2f}, Buzzer {BUZZ_O[2] - Z_IN:.2f} mm")
     for name, p in (("base", base), ("lid", lid), ("pod", pod), ("cover", cover)):
         print(f"{name}: {p.status().name}, {p.volume() / 1000:.1f} cm3")
+
+    if "--assembly" in sys.argv:
+        write_assembly(base, lid, pod, cover)
 
     if "--preview" in sys.argv:
         grey, metal = "#d6d7d3", "#8a8d8f"

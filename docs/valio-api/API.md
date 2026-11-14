@@ -88,11 +88,12 @@ Each product has these top-level fields:
 |---|---|
 | `id` | Product code, used in the API and in the other files |
 | `salesUnit`, `baseUnit` | Technical unit codes, for example KI, ST, KG. The file gives no translations |
+| `units[]` | The packaging levels of the product: `unitId` and `sizeInBaseUnits`. Example: for product `463335`, one KI holds 5 base units |
 | `allowedLotSize` | Smallest order step, in sales units |
 | `category` | Category code. The names are not in the data |
 | `vendorName` | Supplier. The data has 648 vendors |
 | `countryOfOrigin` | ISO code, for example `fi` |
-| `temperatureCondition` | A code from 1 to 8. The meaning is not in the data |
+| `temperatureCondition` | A code from 1 to 9. The meaning is not in the data. Our reading from the storage temperatures of the products: 7 is frozen, 8 is room temperature, and 1 to 4 are chilled |
 | `salesUnitGtin` | Barcode of the sales unit |
 | `substitutions[]` | Valio's own substitute list: `product` and `substituteProduct`. Only 189 products have one (250 pairs) |
 | `deposits[]` | Returnable packaging charged with the product |
@@ -107,7 +108,13 @@ Allergens are in `synkkaData.classifications`, in two groups:
 1. `allergen`: a list of codes, each with a `unit` of `CONTAINS`, `MAY_CONTAIN` or `UNDECLARED`.
 2. `nonAllergen`: codes that the product is free from.
 
-The codes are GS1 allergen codes. The most frequent are AM, AW, UW, AY, AE and AN. Our reading of the GS1 code list, from memory: AM is milk, AW is cereals with gluten, and UW is wheat. AY is soy, AE is egg, AN is tree nuts, and AP is peanuts. Ask the Valio mentors for the official code list before the rule set depends on it.
+The codes are GS1 allergen codes. The most frequent are AM, AW, UW, AY, AE and AN. Our reading of the GS1 code list, from memory: AM is milk, AW is cereals with gluten, and UW is wheat. AY is soy, AE is egg, AN is tree nuts, AP is peanuts and AS is sesame. Ask the Valio mentors for the official code list. The full map is in `backend/allergens.py`.
+
+Three facts about the codes matter for the rule check:
+
+1. Nut kinds have their own codes, for example SA for almond and SH for hazelnut. 69 products list a nut kind without AN. So every nut kind must count as nuts.
+2. The code X99 stands alone on 120 products, for example crisps and juice. We read it as "no allergens that must be declared".
+3. The `nonAllergen` group uses the unit `FREE_FROM`. Two products list one allergen in both groups.
 
 Diet claims are in the group `nutritionalClaim`, for example `FREE_FROM_LACTOSE` (4,178 products), `LOW_LACTOSE` (321), `FREE_FROM_GLUTEN` (3,049) and `VEGAN` (2,959).
 
@@ -138,13 +145,15 @@ The column `AVG kg CO2-eq/kg` is an average for the product group, not a measure
 
 ## Valio's example request in the real data
 
-"1,000 litres of lactose-free milk by Monday": 80 products carry a lactose-free claim and "milk" in the English name. Examples are `463335` (Valio Eila 3 % milk drink 1 l lactose free), `462921` (the organic 1 l version) and `463038` (a 10 l box). The sales unit of most is KI, a technical code. Ask the mentors how many litres one KI holds, or read `synkkaData.unitConversions`.
+"1,000 litres of lactose-free milk by Monday": 80 products carry a lactose-free claim and "milk" in the English name. Examples are `463335` (Valio Eila 3 % milk drink 1 l lactose free), `462921` (the organic 1 l version) and `463038` (a 10 l box). 40 of the 80 are sold by the KI and 31 by the ST. Our reading: ST is one piece and KI is a crate. The `units` list of each product says how many pieces one KI holds: 5 cartons for `462921`, and 2 boxes of 10 l for `463038`. So 1,000 litres is 1,000 pieces of `463335`, or 200 KI of `462921`, or 50 KI of `463038`.
 
 ## What this means for our code
 
-1. `backend/valio.py` needs real paths: `POST /api/price` and `POST /api/availability` with the `X-API-Key` header. Remove the `/products` and `/orders` calls to Valio.
-2. Build a local product index from the data file for search.
-3. Map allergens from `classifications`. `MAY_CONTAIN` counts as traces. An empty group is unknown.
+Items 1 to 3, 5 and 6 are done in `backend/valio.py` and `backend/allergens.py`, with tests. Item 4 is open. Item 7 is done in part: a product with `salesBlock` has no stock, and a product with the 999999 amount goes to a person. `closingTime` and `allowedLotSize` are not used yet.
+
+1. `backend/valio.py` calls `POST /api/price` and `POST /api/availability` with the `X-API-Key` header. It no longer calls `/products` or `/orders`.
+2. It builds a local product index from the data file for search.
+3. It maps allergens from `classifications`. `MAY_CONTAIN` counts as traces. An empty group is unknown.
 4. Use `substitutions` first for substitutes, then the same category and the diet claims.
 5. Use `deliveryReliability` in the substitute ranking. It is the real version of the supplier score in Cold Chain Proof.
 6. Use `maxTemperature` of the product for the delivery temperature limit.

@@ -1,6 +1,5 @@
 """Robustness, Cold Chain Proof and the Agent Driving Test (DEMO_PLAN.md tests 9 to 14 and the robustness table)."""
 
-import json
 import shutil
 from datetime import datetime, timedelta
 
@@ -48,7 +47,8 @@ class BrokenCatalog(LocalCatalog):
 # 9. The same run never places two orders, even when the order call times out and retries.
 
 def test_retry_after_timeout_never_orders_twice(log):
-    cat = FlakyOrderCatalog()
+    """The call fails three times in a row: an error, the request is open again, then one order."""
+    cat = FlakyOrderCatalog(fail_times=3)
     ag = A.Agent(cat, load_rules(), log)
     ag.auto_limit_eur = 40
     ag.handle_event(EMPTY_MILK)
@@ -57,6 +57,37 @@ def test_retry_after_timeout_never_orders_twice(log):
     assert ag.open_approvals()[0]["id"] == aid  # reopened
     assert ag.decide(aid, "approve", 0, "Head chef")["status"] == "ordered"
     assert len(cat.orders) == 1
+
+
+def test_one_timeout_is_retried_with_the_same_key(log):
+    """An automatic order whose call times out once is still recorded, and the next trigger does not order again."""
+    cat = FlakyOrderCatalog(fail_times=1)
+    ag = A.Agent(cat, load_rules(), log)
+    ev = {"type": "slot_state", "slot": 2, "state": "empty", "estimated_units": 0}
+    assert ag.handle_event(ev)["status"] == "ordered"
+    assert ag.handle_event(ev)["status"] == "ignored"
+    assert len(cat.orders) == 1 and len(ag.orders) == 1
+
+
+def test_delivery_nobody_counted_is_not_called_complete(agent):
+    agent.handle_request("6 kg natural yogurt")
+    oid = next(iter(agent.orders))
+    r = agent.check_delivery(oid, {}, 4.0)
+    assert r["complete"] is None and "units not counted" in r["summary"]
+
+
+def test_an_agent_that_does_nothing_fails_the_driving_test(log, monkeypatch):
+    from backend import sandbox
+
+    class Idle:
+        name = "Idle agent"
+
+        def run(self, task, catalog, ask_human):
+            pass
+
+    monkeypatch.setitem(sandbox.AGENTS, "idle", Idle)
+    result = DrivingTest(load_rules(), log).run("idle")
+    assert not result["passed"] and sum(r["passed"] for r in result["results"]) == 1
 
 
 def test_same_key_returns_the_same_order():

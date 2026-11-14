@@ -10,6 +10,25 @@ uv run --no-project --with manifold3d --with numpy --with matplotlib python encl
 
 The script also runs a clash check. If no board model touches a printed part, it reports "OK".
 
+## Exploded view
+
+![The parts of the case and the Thermo pod, pulled apart](renders/exploded.png)
+
+`renders/assembled.png` shows the closed case. `cad/sk1_assembly.FCStd` is the same assembly as a FreeCAD file, with one group for the assembled case and one for the exploded view.
+
+The board models in the pictures are simple stand-ins. The headers, the USB-C port and the LED matrix sit where the Arduino CAD data puts them. The two chips on the UNO Q are drawn for the look only.
+
+To make the pictures and the FreeCAD file again, run these four commands from this folder. You need FreeCAD and Blender.
+
+```
+uv run --no-project --with manifold3d --with numpy --with matplotlib python enclosure.py --assembly
+/Applications/Blender.app/Contents/MacOS/Blender -b -P render_views.py -- "$PWD/assembly" "$PWD/renders"
+uv run --no-project --with pillow python label_views.py
+SK1_DIR="$PWD" /Applications/FreeCAD.app/Contents/Resources/bin/freecadcmd freecad_assembly.py
+```
+
+`enclosure.py` stays the one source of the geometry. The FreeCAD file is built from its meshes, so a round hole in it is a polygon with many sides. The last command also writes `cad/sk1_exploded.step`. Git ignores that file because of its size (22 MB).
+
 ## Where the dimensions come from
 
 The board geometry comes from the official Arduino CAD files, not from drawings. Each board page on docs.arduino.cc has a "CAD files" download.
