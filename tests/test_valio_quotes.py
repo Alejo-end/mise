@@ -347,3 +347,36 @@ def test_replay_the_recorded_answers_for_the_demo_products():
     # Recorded 14 Nov 05:49: the rye bread's cut-off was 12 Nov 12:30, so 16 Nov cannot be reached.
     bread = c.availability("477032", 30, monday).value
     assert bread["delivery"] is None and "cut-off" in bread["problem"]
+
+
+def test_a_moved_delivery_date_after_an_approval_goes_back_to_a_person(agent, api):
+    q = agent.quote_exact("1", 5, needed(api))
+    api.day = (api.now + timedelta(days=1)).date().isoformat()  # earlier, still in time, but not what was approved
+    r = agent._order([q["line"]], q["ctx"], "run-approved", None, approved_by="Head chef", approved_total=q["total_eur"])
+    assert r["status"] == "needs_approval" and not agent.orders
+    reasons = agent.open_approvals()[0]["options"][0]["reasons"]
+    assert reasons == ["the delivery date changed after the quote, so a person must look again"]
+
+
+def test_a_late_line_is_not_called_in_time_by_date(agent, api):
+    d = needed(api)
+    milk = agent.catalog.product("1").value
+    late = check([Line(milk, 1, 1.4, delivery_at((d + timedelta(days=1)).date().isoformat())[0], True, True, False)],
+                 agent.rules, Context(slot_group="milk", needed_by=d))
+    assert not any("in time by date only" in r for r in late.reasons)
+
+
+def test_a_recording_never_overwrites_and_never_breaks_a_call(catalog, api, tmp_path):
+    rec = tmp_path / "rec"
+    rec.mkdir()
+    (rec / "001-old.json").write_text("{}")
+    (rec / "001-old.json").chmod(0o444)
+    (rec / "003-other.json").write_text("{}")  # a gap in the numbering
+    catalog.availability("1", 1, needed(api))
+    names = sorted(p.name for p in rec.glob("*.json"))
+    assert len(names) == 4 and len({n[:3] for n in names}) == 4
+    rec.chmod(0o555)  # read-only folder: the call still works
+    try:
+        assert catalog.availability("1", 1, needed(api)).value["unit_price_eur"] == 1.4
+    finally:
+        rec.chmod(0o755)

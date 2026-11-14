@@ -30,6 +30,7 @@ import json
 import os
 import random
 import re
+import sys
 import threading
 import time as time_mod
 import uuid
@@ -378,11 +379,18 @@ class ValioCatalog:
         text = json.dumps(entry, indent=1, ensure_ascii=False)
         if self._secret and self._secret in text:
             return  # never write the key
-        self.record_dir.mkdir(parents=True, exist_ok=True)
-        seq = len(list(self.record_dir.glob("*.json"))) + 1
-        out = self.record_dir / f"{seq:03d}-{path.strip('/').replace('/', '-')}-{len(body.get('products') or [])}p.json"
-        out.write_text(text + "\n")
-        out.chmod(0o444)
+        name = f"{path.strip('/').replace('/', '-')}-{len(body.get('products') or [])}p.json"
+        try:
+            self.record_dir.mkdir(parents=True, exist_ok=True)
+            seq = len(list(self.record_dir.glob("*.json"))) + 1
+            while list(self.record_dir.glob(f"{seq:03d}-*")):  # never overwrite a recording
+                seq += 1
+            out = self.record_dir / f"{seq:03d}-{name}"
+            with out.open("x", encoding="utf-8") as f:
+                f.write(text + "\n")
+            out.chmod(0o444)
+        except OSError as e:  # a recording must never break a live call; say so instead
+            print(f"valio: could not record {name} in {self.record_dir}: {e}", file=sys.stderr)
 
     def _post(self, path: str, body: dict, retries: int = MAX_RETRIES) -> bytes:
         """One read call: at most 2 a second, then up to `retries` retries on 429, 5xx and network errors.

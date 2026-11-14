@@ -534,7 +534,7 @@ class Agent:
         """Ask price and stock again. Returns the lines to order, or the result that ends the run."""
         v = self.rules["version"]
         # Step 8: ask price and stock again just before the order.
-        fresh, changes, short, unknown = [], [], False, False
+        fresh, changes, short, unknown, moved = [], [], False, False, False
         for l in lines:
             a = self.catalog.availability(l["product_id"], l["quantity"], ctx.needed_by)
             p = self.catalog.product(l["product_id"])
@@ -542,6 +542,7 @@ class Agent:
             if price != l["unit_price_eur"]:
                 changes.append(f"{l['name']} price {l['unit_price_eur']} → {price}")
             if a.value["delivery"] != l["delivery"]:
+                moved = True
                 changes.append(f"{l['name']} delivery {l['delivery']} → {a.value['delivery'] or a.value.get('problem')}")
             if left < l["quantity"]:
                 short = True
@@ -573,9 +574,11 @@ class Agent:
                 self.log.write("blocked", {"summary": "The recheck made the order forbidden."}, "rule_check", v, run_id=run)
                 self._free(slot)
                 return None, {"status": "forbidden", "reasons": d.reasons}
-            # Less stock is a change to what was decided, so a person looks again, also after an approval.
-            if short or (d.result == R.NEEDS_APPROVAL and (approved_by is None or new_total > approved_total)):
-                reasons = d.reasons if d.result == R.NEEDS_APPROVAL else ["stock fell after the quote, so a person must look again"]
+            # Less stock or another delivery date is a change to what was decided, so a person looks again,
+            # also after an approval.
+            if short or moved or (d.result == R.NEEDS_APPROVAL and (approved_by is None or new_total > approved_total)):
+                reasons = d.reasons if d.result == R.NEEDS_APPROVAL else [
+                    ("stock fell" if short else "the delivery date changed") + " after the quote, so a person must look again"]
                 names = " + ".join(f"{l['quantity']} × {l['name']}" for l in lines)
                 products = [p for p, _ in fresh]
                 return None, self._ask([{"label": "after recheck", "result": R.NEEDS_APPROVAL, "reasons": reasons,
