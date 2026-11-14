@@ -6,15 +6,15 @@ The pipeline searches, compares and proposes. backend.rules decides.
 from __future__ import annotations
 
 import math
-import os
 import re
 import threading
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, datetime, time, timedelta
 
 from . import rules as R
 from .audit import AuditLog
+from .settings import DEFAULTS, Settings
 from .valio import Claim, words
 
 APPROVAL_EXPIRY = timedelta(hours=2)
@@ -23,7 +23,8 @@ NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10,
 
 
 class Agent:
-    def __init__(self, catalog, ruleset: dict, log: AuditLog, restock_min_s: float | None = None):
+    def __init__(self, catalog, ruleset: dict, log: AuditLog, restock_min_s: float | None = None,
+                 restock_confirm_s: float | None = None, settings: Settings | None = None):
         self.catalog = catalog
         self.rules = ruleset
         self.log = log
@@ -31,12 +32,17 @@ class Agent:
         # Guards the pending-slot check in handle_event. Separate from self.lock, which _ask takes
         # inside the buying path, so holding this one while buying would deadlock.
         self.trigger_lock = threading.Lock()
-        # A "full" reading sooner than this after a slot's trigger counts as a hand, a reflection or a
-        # recalibration, not a delivery. Default 0 keeps the behaviour of test_one_empty_shelf_makes_one_order
-        # (a refill makes the slot orderable at once) until decision C in docs/PARALLEL_WORK.md is made;
-        # the live backend runs with RESTOCK_MIN_S=120.
-        self.restock_min_s = float(os.getenv("RESTOCK_MIN_S", "0")) if restock_min_s is None else restock_min_s
-        self.pending_since: dict[int, datetime] = {}
+        # The restock policy (backend/settings.py). Without settings the committed defaults apply, never
+        # the environment, so a local .env cannot change what a test checks; backend.app passes the
+        # environment's values. restock_min_s and restock_confirm_s override single values.
+        given = {"restock_min_s": restock_min_s, "restock_confirm_s": restock_confirm_s}
+        self.settings = replace(settings or DEFAULTS, **{k: float(v) for k, v in given.items() if v is not None})
+        # Pending slots (interface 3 and 8 of docs/PARALLEL_WORK.md). A slot is pending from its camera or
+        # knob trigger until its request ends (skipped, expired, blocked, failed) or its order is restocked.
+        self.pending_since: dict[int, datetime] = {}  # slot -> time of the trigger
+        self.pending: dict[int, dict] = {}  # slot -> {"run_id", "product_id", "rule_set_version", "since"}
+        self.stocked_hold: dict[int, dict] = {}  # slot -> {"start", "last", "told"}: stocked readings in a row
+        self.last_health: dict | None = None  # {"report": health of the last status event, "received": datetime}
         self.approvals: dict[str, dict] = {}
         self.orders: dict[str, dict] = {}  # order_id -> order entry, for delivery checks and weekly spend
         self.placed_runs: dict[str, dict] = {}  # run id -> result, so one run never orders twice
@@ -61,27 +67,21 @@ class Agent:
     def restore(self) -> None:
         """Rebuild orders, open approvals, pending slots and deliveries from the audit log after a restart."""
         decided = set()
-        for e in self.log.entries(limit=100000):
+        entries = self.log.entries(limit=100000)
+        for e in entries:
             d, step = e["detail"], e["step"]
             if step == "order":
                 self.orders[e["order_id"]] = {"order_id": e["order_id"], "time": e["time"], "total_eur": d["total_eur"],
                                               "lines": d["lines"], "slot": d.get("slot"), "run_id": e["run_id"]}
                 self.placed_runs[e["run_id"]] = {"status": "ordered", "order_id": e["order_id"], "total_eur": d["total_eur"]}
                 if d.get("slot") is not None:
-                    self.pending_slots.add(d["slot"])
-                    self.pending_since[d["slot"]] = datetime.fromisoformat(e["time"])
                     self.last_order_qty[d["slot"]] = sum(l["quantity"] for l in d["lines"])
-            elif step == "restock":
-                self.pending_slots.discard(d["slot"])
             elif step == "delivery_check":
                 self.deliveries.append(d)
             elif step == "approval" and d.get("status") == "open" and "full" in d:
                 a = d["full"]
                 a["ctx"] = context_from_dict(a["ctx"] | {"label_checks": self.label_checks})
                 self.approvals[a["id"]] = a
-                if a.get("slot") is not None:
-                    self.pending_slots.add(a["slot"])
-                    self.pending_since[a["slot"]] = datetime.fromisoformat(e["time"])
             elif step == "approval" and d.get("approval_id"):
                 decided.add(d["approval_id"])
             elif step == "alarm":
@@ -92,8 +92,41 @@ class Agent:
             a = self.approvals.get(aid)
             if a:
                 a["status"] = "closed"
-                if a.get("slot") is not None and not any(o.get("slot") == a["slot"] for o in self.orders.values()):
-                    self.pending_slots.discard(a["slot"])
+        self._restore_pending(entries)
+
+    def _restore_pending(self, entries: list[dict]) -> None:
+        """Pending slots after a restart: the last camera or knob trigger of each slot, when its run still has
+        an open approval, or a placed order with no restock and no delivery check after it.
+
+        Everything else that ended a request (skipped, expired, blocked, an error) leaves no open approval
+        and no order for the run, so it needs no entry of its own here. A stocked hold is not restored: after
+        a restart the slot must read stocked for RESTOCK_CONFIRM_S again.
+        """
+        last: dict[int, dict] = {}
+        for e in entries:
+            d, step = e["detail"], e["step"]
+            ev = d.get("event") if step == "trigger" else None
+            if isinstance(ev, dict) and ev.get("type") in ("slot_state", "manual_low") and ev.get("slot") is not None:
+                slot = int(ev["slot"])
+                product_id = d.get("product_id")
+                if "product_id" not in d and e["rule_set_version"] == self.rules["version"]:
+                    product_id = (R.target_for_slot(self.rules, slot) or {}).get("product_id")  # logs before 14 Nov
+                last[slot] = {"run_id": e["run_id"], "product_id": product_id, "rule_set_version": e["rule_set_version"],
+                              "since": e["time"], "ended": False}
+            elif step == "restock" and d.get("slot") in last:
+                r = last[d["slot"]]
+                r["ended"] |= e.get("run_id") in (None, r["run_id"])  # restocks before 14 Nov name no run
+            elif step == "delivery_check" and e.get("run_id"):
+                for r in last.values():
+                    r["ended"] |= r["run_id"] == e["run_id"]
+        for slot, r in last.items():
+            ended = r.pop("ended")
+            ordered = r["run_id"] in self.placed_runs
+            asking = any(a["run_id"] == r["run_id"] and a["status"] == "open" for a in self.approvals.values())
+            if not ended and (ordered or asking):
+                self.pending_slots.add(slot)
+                self.pending_since[slot] = datetime.fromisoformat(r["since"])
+                self.pending[slot] = r
 
     # Entry points ---------------------------------------------------------
 
@@ -109,9 +142,15 @@ class Agent:
                            "device")
             return {"status": "logged"}
         if kind == "delivery_check":
-            return self.check_delivery(ev.get("order_id"), ev.get("counts", {}), ev.get("temperature_c"),
-                                       ev.get("seconds_measured"))
+            result = self.check_delivery(ev.get("order_id"), ev.get("counts", {}), ev.get("temperature_c"),
+                                         ev.get("seconds_measured"))
+            with self.trigger_lock:
+                for slot in list(self.pending_slots):
+                    self._settle(slot)
+            return result
         if kind == "status":
+            if isinstance(ev.get("health"), dict):
+                self.observe_health(ev["health"])
             return {"status": "ok"}
         if kind not in ("slot_state", "manual_low"):
             return {"status": "ignored", "reason": f"unknown event type {kind}"}
@@ -122,35 +161,162 @@ class Agent:
             return {"status": "ignored", "reason": f"slot {slot} has no target in the rule set"}
         state = "low" if kind == "manual_low" else ev.get("state")
         units = int(ev.get("estimated_units") or 0) if state != "empty" else 0
+        now = datetime.now(R.TZ)
         # The check and the add below must be one step, or two events at once could both order.
         with self.trigger_lock:
-            if state == "full" or (state == "low" and kind == "slot_state" and units >= target["reorder_below"]):
-                if slot in self.pending_slots and not any(a["slot"] == slot for a in self.open_approvals()):
-                    since = self.pending_since.get(slot)
-                    age = (datetime.now(R.TZ) - since).total_seconds() if since else None
-                    if age is not None and age < self.restock_min_s:
-                        self.log.write("device", {"slot": slot, "event": ev, "summary": (
-                            f"Slot {slot} reads {state} {age:.0f} s after its order. That is too soon for a delivery "
-                            f"(under {self.restock_min_s:.0f} s), so the order stays in progress.")},
-                            "device", self.rules["version"])
-                        return {"status": "ignored", "reason": f"too soon after the order to be a delivery ({age:.0f} s)"}
-                    self.pending_slots.discard(slot)
-                    self.log.write("restock", {"slot": slot, "summary": f"Slot {slot} is stocked again."}, "device",
-                                   self.rules["version"])
-                return {"status": "ok", "reason": "stock above the reorder level"}
+            self._settle(slot)
+            if kind == "slot_state" and stocked(state, units, target):
+                return self._stocked_reading(slot, now, f"reads {state}")
+            self._break_hold(slot, f"reads {state}")
             if slot in self.pending_slots:
                 return {"status": "ignored", "reason": f"slot {slot} already has an order or a request in progress"}
+            run = uuid.uuid4().hex[:8]
             self.pending_slots.add(slot)
-            self.pending_since[slot] = datetime.now(R.TZ)
+            self.pending_since[slot] = now
+            self.pending[slot] = {"run_id": run, "product_id": target.get("product_id"),
+                                  "rule_set_version": self.rules["version"], "since": now.isoformat(timespec="seconds")}
+            self.stocked_hold.pop(slot, None)
 
-        run = uuid.uuid4().hex[:8]
         how = "knob press" if kind == "manual_low" else "camera"
         self.log.write(
             "trigger",
-            {"summary": f"Slot {slot} ({target['product']}) is {state} by {how}, about {units} units left.", "event": ev},
+            {"summary": f"Slot {slot} ({target['product']}) is {state} by {how}, about {units} units left.", "event": ev,
+             "slot": slot, "product_id": target.get("product_id")},
             "device", self.rules["version"], run_id=run,
         )
         return self._safely(run, slot, lambda: self.buy(target, units, target["target_units"] - units, run))
+
+    # Pending slots and the restock policy (worktree 1) --------------------
+    #
+    # After a trigger the slot is pending: no second order for it. With an order placed, the slot stays
+    # pending until (a) a delivery check for that order arrives, or (b) the slot reads stocked without a
+    # break for RESTOCK_CONFIRM_S and at least RESTOCK_MIN_S have passed since the order. Rule (b) is a
+    # mitigation, not proof of a delivery: a product put back or stock from a back room passes it too, and
+    # the order is not marked delivered. One stocked reading never ends it while RESTOCK_CONFIRM_S > 0.
+    # Readings come from slot_state events (sent on a change) and from the health in the board's status
+    # event (every 10 s), which shows that the stocked state continues. Health never orders, never
+    # cancels an order and never closes an approval; it only extends or breaks a stocked hold.
+
+    def pending_for_slot(self, slot: int) -> dict | None:
+        """Interface 8: the open approval or the placed, not yet restocked order of a slot, else None.
+
+        {"slot", "product_id", "rule_set_version", "run_id", "since", "status": "approval" | "ordered"}.
+        product_id and rule_set_version are the slot's assignment when it was triggered, so they stay
+        even if the assignment changes later. since is the trigger time. While the pipeline is still
+        running (between the trigger and its approval or order, about a second), the slot is pending
+        but this returns None.
+        """
+        self.open_approvals()  # an approval past its expiry ends here and frees its slot
+        with self.trigger_lock:
+            self._settle(slot)
+            status = self._pending_status(slot)
+            if status is None:
+                return None
+            r = self.pending[slot]
+            return {"slot": slot, "product_id": r["product_id"], "rule_set_version": r["rule_set_version"],
+                    "run_id": r["run_id"], "since": r["since"], "status": status}
+
+    def observe_health(self, health: dict) -> None:
+        """Use the health of a status event (interface 7) as readings for the slots with a placed order."""
+        now = datetime.now(R.TZ)
+        self.last_health = {"report": health, "received": now}
+        slots = health.get("slots") if isinstance(health.get("slots"), dict) else {}
+        box = ("the camera gives no picture" if health.get("camera_ok") is False else
+               "the box configuration is not valid" if health.get("config_valid") is False else None)
+        with self.trigger_lock:
+            for slot in sorted(self.pending_slots):
+                self._settle(slot)
+                h = slots.get(str(slot))
+                target = R.target_for_slot(self.rules, slot)
+                if not isinstance(h, dict) or target is None or self._pending_status(slot) != "ordered":
+                    continue  # no word about this slot, or nothing to restock yet
+                why = box or slot_problem(h)
+                units = round(h["fill"] * target["target_units"]) if isinstance(h.get("fill"), (int, float)) else 0
+                if why is None and stocked(h.get("state"), units, target):
+                    self._hold(slot, now, f"reads {h['state']}")
+                else:
+                    self._break_hold(slot, why or f"reads {h.get('state') or 'nothing yet'}")
+
+    def _pending_status(self, slot: int) -> str | None:
+        r = self.pending.get(slot) if slot in self.pending_slots else None
+        if r is None:
+            return None
+        if r["run_id"] in self.placed_runs:
+            return "ordered"
+        if any(a["run_id"] == r["run_id"] and a["status"] in ("open", "deciding") for a in self.approvals.values()):
+            return "approval"
+        return None  # the pipeline is still running
+
+    def _pending_order(self, slot: int) -> dict | None:
+        placed = self.placed_runs.get(self.pending[slot]["run_id"]) if slot in self.pending else None
+        return self.orders.get(placed["order_id"]) if placed else None
+
+    def _settle(self, slot: int) -> None:
+        """End a slot's pending order when a delivery check for it has arrived (rule a). Caller holds trigger_lock."""
+        order = self._pending_order(slot) if self._pending_status(slot) == "ordered" else None
+        if order and any(d.get("order_id") == order["order_id"] for d in self.deliveries):
+            self._end_pending(slot, order, "delivery_check", (
+                f"The delivery check of order {order['order_id']} arrived, so the order for slot {slot} is fulfilled. "
+                "A new shortage makes a new order."))
+
+    def _stocked_reading(self, slot: int, now: datetime, what: str) -> dict:
+        """A slot_state event at or above the reorder level. Caller holds trigger_lock."""
+        status = self._pending_status(slot)
+        if status == "ordered":
+            return self._hold(slot, now, what)
+        if status == "approval":
+            # The chef decides an open request. A reading does not close it, and no hold builds up before the order.
+            return {"status": "ok", "reason": "stock above the reorder level; the request waits for the chef"}
+        if slot in self.pending_slots:
+            return {"status": "ignored", "reason": f"the request for slot {slot} is still being prepared"}
+        return {"status": "ok", "reason": "stock above the reorder level"}
+
+    def _hold(self, slot: int, now: datetime, what: str) -> dict:
+        """One stocked reading of a slot with a placed order (rule b). Caller holds trigger_lock."""
+        s, order = self.settings, self._pending_order(slot)
+        h = self.stocked_hold.get(slot)
+        if h is None or (now - h["last"]).total_seconds() > s.health_stale_s:
+            h = self.stocked_hold[slot] = {"start": now, "last": now, "told": False}  # a gap starts the hold again
+        h["last"] = now
+        held = (now - h["start"]).total_seconds()
+        age = (now - datetime.fromisoformat(order["time"])).total_seconds()
+        if held >= s.restock_confirm_s and age >= s.restock_min_s:
+            self._end_pending(slot, order, "stocked", (
+                f"Slot {slot} is stocked again: it {what} and has read stocked for {held:.0f} s, "
+                f"{age:.0f} s after order {order['order_id']}. A new shortage makes a new order. "
+                "This is not proof of a delivery, so the order is not marked delivered."), held)
+            return {"status": "ok", "reason": "stock above the reorder level"}
+        if age < s.restock_min_s:
+            reason = f"too soon after the order to be a delivery ({age:.0f} s)"
+        else:
+            reason = f"the slot must read stocked for {s.restock_confirm_s:.0f} s; {held:.0f} s so far"
+        if not h["told"]:
+            h["told"] = True
+            wait = (f"That is too soon for a delivery (under {s.restock_min_s:.0f} s), so the order stays in progress."
+                    if age < s.restock_min_s else "The order stays in progress.")
+            self.log.write("device", {"slot": slot, "order_id": order["order_id"], "summary": (
+                f"Slot {slot} {what} {age:.0f} s after order {order['order_id']}. {wait} One reading is not a refill: "
+                f"the order ends when the slot reads stocked for {s.restock_confirm_s:.0f} s without a break, at "
+                f"least {s.restock_min_s:.0f} s after the order, or with a delivery check.")},
+                "device", self.rules["version"], run_id=self.pending[slot]["run_id"])
+        return {"status": "ignored", "reason": reason}
+
+    def _break_hold(self, slot: int, why: str) -> None:
+        """A reading below the reorder level, or an unsure one, ends a stocked hold. Caller holds trigger_lock."""
+        h = self.stocked_hold.pop(slot, None)
+        if h and h["told"]:
+            self.log.write("device", {"slot": slot, "summary": (
+                f"Slot {slot} {why}, so it no longer reads stocked. The order stays in progress, and the wait for "
+                "a refill starts again.")}, "device", self.rules["version"],
+                run_id=(self.pending.get(slot) or {}).get("run_id"))
+
+    def _end_pending(self, slot: int, order: dict, how: str, summary: str, held_s: float | None = None) -> None:
+        r = self.pending.pop(slot)
+        self.pending_slots.discard(slot)
+        self.stocked_hold.pop(slot, None)
+        self.log.write("restock", {"slot": slot, "summary": summary, "how": how, "order_id": order["order_id"],
+                                   "held_s": None if held_s is None else round(held_s)},
+                       "agent" if how == "delivery_check" else "device", self.rules["version"], run_id=r["run_id"])
 
     def _safely(self, run: str, slot: int | None, step) -> dict:
         """Run a pipeline step. On any error, free the slot, log it and say so, instead of hanging."""
@@ -656,6 +822,20 @@ class Agent:
         for r in out.values():
             r["score"] = round(r["good"] / r["deliveries"], 2)
         return out
+
+
+def stocked(state: str | None, units: int, target: dict) -> bool:
+    """A reading at or above the slot's reorder level: "full", or "low" with enough units left."""
+    return state == "full" or (state == "low" and units >= target["reorder_below"])
+
+
+def slot_problem(h: dict) -> str | None:
+    """Why one slot's health is no evidence of its stock, or None when it is."""
+    if h.get("uncertain"):
+        return f"is uncertain ({h['uncertain']})"
+    if h.get("calibration") in ("missing", "stale"):
+        return f"has a {h['calibration']} calibration"
+    return None
 
 
 def rest_by_rank(safe: dict, target: dict, ranked: list) -> list[dict]:
