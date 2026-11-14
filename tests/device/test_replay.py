@@ -127,7 +127,9 @@ def test_a_hand_over_a_slot_for_two_seconds_is_ignored(steady, apart):
 # Uncertain views ----------------------------------------------------------------------------
 
 def test_a_view_that_does_not_match_the_calibration_is_uncertain(steady, apart):
-    """steady-01: the camera moved after calibration and shows a cup and a keyboard."""
+    """steady-01: the camera moved after calibration and shows a cup and a keyboard. Covers the rule on the
+    recorded boxes, and the layout and recalibration gates. The valid-geometry, valid-photos case of an
+    unrelated view is a separate failure mode: see the two tests after this one."""
     # The view-mismatch rule itself, on the recorded boxes the photos were taken for.
     for f in steady.frames:
         for s in steady.config["slots"]:
@@ -141,6 +143,50 @@ def test_a_view_that_does_not_match_the_calibration_is_uncertain(steady, apart):
     events, trackers = replay_board(steady.frames, steady, apart, end=steady.frames[-1].t,
                                     recalibrate=sd.recal_after_move({}, [1, 2, 3]))
     assert events == [] and {tr["uncertain"] for tr in trackers.values()} == {sd.RECAL_WHY}
+
+
+def _odd_view_at_slot3(steady, apart, slot3_view):
+    """3 s of a normal full shelf, then 10 s where slot 3 shows slot3_view (None: the recorded scene)."""
+    normal = shelf_frame(steady, apart, {})
+    if slot3_view is None:
+        odd = steady.frames[3].image
+        for s in apart["slots"][:2]:
+            odd = paint_reference(odd, s["rect"], steady.refs[s["slot"]][1])
+    else:
+        odd = paint_reference(normal, APART[2], slot3_view)
+    return [Frame(float(i), normal) for i in range(3)] + [Frame(float(i), odd) for i in range(3, 13)]
+
+
+@pytest.mark.parametrize("view", ["textured object", "different object"])
+def test_an_unrelated_view_with_valid_boxes_and_photos_is_uncertain_and_buys_nothing(steady, apart, tmp_path, view):
+    """A different failure mode from the test above: nothing moved and nothing waits for photos. The boxes
+    are valid and every slot's photos fit its box, but slot 3 suddenly shows something unrelated."""
+    assert sd.config_errors({**steady.config, **apart}) == []  # valid geometry, no overlap
+    e3, f3 = steady.refs[3]
+    slot3_view = {"textured object": np.random.default_rng(1).normal(0, 0.25, e3.shape),
+                  "different object": f3.T.copy()}[view]
+    events, trackers = replay_board(_odd_view_at_slot3(steady, apart, slot3_view), steady, apart, end=12.0,
+                                    calibration={1: "ok", 2: "ok", 3: "ok"}, recalibrate={})
+    assert [e for e in events if e.slot == 3] == []
+    assert trackers[3]["uncertain"] == "view does not match the photos"
+    agent = agent_for(tmp_path)
+    feed(agent, events)
+    assert agent.orders == {} and agent.open_approvals() == []
+
+
+@pytest.mark.xfail(strict=True, reason="known gap of the two-photo baseline: a view whose distance falls between "
+                   "the empty and the full photo reads 'low' (fill about 0.56) instead of uncertain. On 14 Nov it bought "
+                   "nothing only because 13 units stay above slot 3's reorder level of 6. Measured by eval-hand and "
+                   "eval-unfamiliar recordings; the detector is unchanged.")
+@pytest.mark.parametrize("view", ["recorded cup and keyboard", "half covered"])
+def test_known_gap_a_view_between_the_two_photos_should_be_uncertain(steady, apart, view):
+    e3, f3 = steady.refs[3]
+    half = f3.copy()
+    half[:, half.shape[1] // 2:] = np.random.default_rng(1).normal(0.1, 0.2, (half.shape[0], half.shape[1] - half.shape[1] // 2))
+    events, trackers = replay_board(_odd_view_at_slot3(steady, apart, {"recorded cup and keyboard": None,
+                                                                       "half covered": half}[view]),
+                                    steady, apart, end=12.0)
+    assert [e for e in events if e.slot == 3] == [] and trackers[3]["uncertain"] is not None
 
 
 def test_a_covered_lens_is_uncertain(steady, apart):
