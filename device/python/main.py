@@ -23,8 +23,11 @@ import requests
 from PIL import Image, ImageOps
 
 from arduino.app_bricks.web_ui import WebUI
-from arduino.app_peripherals.usb_camera import USBCamera
+# USBCamera was removed from the Arduino bricks on 25 Sep 2026 (app-bricks-py #499).
+# Camera returns numpy frames in BGR order; numpy_to_pil converts them to an RGB PIL image.
+from arduino.app_peripherals.camera import Camera, WebSocketCamera
 from arduino.app_utils import App, Bridge, Logger
+from arduino.app_utils.image import numpy_to_pil
 
 logger = Logger("safe-kitchen")
 TZ = ZoneInfo("Europe/Helsinki")
@@ -38,6 +41,9 @@ DEFAULT_CONFIG = {
     "backend_url": "http://192.168.1.10:8000",
     "temperature_limit_c": 6.0,
     "frame_interval_s": 1.0,  # how often the shelf is checked; the live preview runs faster, see PREVIEW_FPS
+    # "usb": camera plugged into the board. "websocket": frames sent over Wi-Fi to port 8080,
+    # for example by tools/laptop-camera.html. The app.yaml must then list "ports: [8080]".
+    "camera_source": "usb",
     "manual_slot": 3,
     # Slots as fractions of the frame: x, y, width, height.
     "slots": [
@@ -435,18 +441,29 @@ last_status = 0.0
 
 def camera_worker():
     camera = None
+    last_frame_at = 0.0
     while True:
         try:
+            remote = config.get("camera_source") == "websocket"
             if camera is None:
-                camera = USBCamera(resolution=(640, 480), fps=15)
+                if remote:
+                    camera = WebSocketCamera(port=8080, resolution=(640, 480), fps=15)
+                else:
+                    camera = Camera(resolution=(640, 480), fps=15)  # first plugged-in camera
                 camera.start()
-                logger.info("camera started")
-            img = camera.capture()
-            if img is None:
-                state["camera_ok"], state["camera_error"] = False, "camera gave no picture"
-                time.sleep(0.2)
+                logger.info(f"camera started ({'websocket on port 8080' if remote else 'usb'})")
+            frame = camera.capture()
+            if frame is None:
+                # capture() gives None whenever no new frame arrived in time (the WebSocket camera
+                # waits only 0.1 s). Report the camera as missing only after 2 s without any frame,
+                # so the page does not flicker between the picture and "No camera picture".
+                if time.time() - last_frame_at > 2.0:
+                    state["camera_ok"] = False
+                    state["camera_error"] = "waiting for frames on port 8080" if remote else "camera gave no picture"
+                time.sleep(0.05)
                 continue
-            state["last_frame"] = img.convert("RGB")
+            last_frame_at = time.time()
+            state["last_frame"] = numpy_to_pil(frame)
             state["camera_ok"], state["camera_error"] = True, ""
         except Exception as e:
             state["camera_ok"], state["camera_error"] = False, str(e)[:160]
