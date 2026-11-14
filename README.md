@@ -1,4 +1,4 @@
-# Aimo Agent Gateway and the Safe Kitchen Agent
+# mise: the Aimo Agent Gateway and its kitchen
 
 Our entry to "Trusted Trade Agents" by Valio Aimo. Read `HANDBOOK.md` for the full explanation with pictures. The build brief is `DEMO_PLAN.md`.
 
@@ -13,11 +13,15 @@ A language model can search, compare and explain. Plain code decides what is all
 
 ## What it looks like
 
-One page serves three people. Each person sees only the own part.
+The page is called mise. One page serves three people, and each person sees only the own part.
+
+![The head chef's page: one request with its stock outlook, the pack to use first, the cold room and the log](docs/screenshots/head-chef.png)
 
 **The head chef approves.** The card says who asked, what is on the shelf, how fast the kitchen uses the product and when the shelf runs out.
 
-<img src="docs/screenshots/head-chef-phone.png" alt="The head chef's phone with one request to approve, its stock outlook and three options" width="360">
+The same page on the head chef's phone:
+
+<img src="docs/screenshots/head-chef-phone.png" alt="The head chef's phone with one request to approve and its stock outlook" width="360">
 
 **The kitchen asks, and sees the shelf.** Each slot shows its count, its use per day and what is on order. A person can type a count.
 

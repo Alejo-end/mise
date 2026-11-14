@@ -34,6 +34,7 @@
   .sidenote { display:none }
   .topbar { display:flex; align-items:center; gap:0.75rem; padding:0.25rem 0 0.875rem; flex-wrap:wrap }
   .topbar h1 { margin-right:auto }
+  #size { font-weight:650; letter-spacing:-0.02em } #size[aria-pressed="true"] { background:var(--blue-soft); color:var(--blue); border-color:transparent }
   #ruleset { display:flex; flex-wrap:wrap; gap:0.375rem }
   .chip { display:inline-flex; align-items:center; gap:0.3125rem; font-size:0.75rem; font-weight:550; padding:0.125rem 0.5rem; border-radius:99px;
       border:1px solid var(--line); background:var(--panel); color:var(--soft) }
@@ -52,7 +53,8 @@
   html[data-as="valio"] section[data-role~="valio"] { display:block }
   section[hidden] { display:none !important }
   main section { margin-bottom:1.25rem }
-  .foot { max-width:34rem; margin:0 auto; padding:0 0.875rem 5.5rem; display:flex; align-items:baseline; gap:0.625rem; flex-wrap:wrap; color:var(--faint) }
+  main { display:flex; flex-direction:column } main > .do { order:1 } main > .strip { order:2 } main > .see { order:3 }
+  .foot { padding:0 0 5.5rem; display:flex; align-items:baseline; gap:0.625rem; flex-wrap:wrap; color:var(--faint) }
   .foot .wordmark { font-size:1.25rem; color:var(--faint) } .foot .meta { color:var(--faint) }
 
   /* Controls */
@@ -115,8 +117,24 @@
   .options .name { font-weight:600 } .options .price { font-weight:650; font-size:1rem; white-space:nowrap }
   .lines { margin:0.25rem 0 0; padding-left:1rem; color:var(--ink) }
   .ticket > footer { padding:0 0.875rem 0.875rem } .ticket > footer .row { margin-top:0 }
+  .ticket .row > button { flex:0 0 auto; min-width:9.5rem }
+  .why { margin-top:0.5rem; font-size:0.8125rem; color:var(--soft) } .why > span { font-weight:600; color:var(--ink) }
+  .why ul { margin:0.125rem 0 0; padding-left:1rem } .why li { margin:0.0625rem 0 }
   details.alt { background:none; border:0; border-radius:0; margin:0 }
   details.alt > summary { padding:0; font-weight:400 } details.alt > summary .price { margin-left:auto; font-size:0.875rem }
+
+  .emptystate { display:flex; align-items:center; gap:0.75rem; padding:1rem 0.875rem; border:1px dashed var(--line); border-radius:0.625rem; color:var(--soft) }
+  .emptystate svg { width:1.25rem; height:1.25rem; color:var(--ok); flex:none } .emptystate b { display:block; color:var(--ink) }
+  .who { display:flex; align-items:center; gap:0.375rem 0.5rem; flex-wrap:wrap; margin-bottom:0.375rem } .who .state { margin-left:auto }
+  .who .meta { order:3; flex-basis:100% }
+  .kind { font-size:0.6875rem; font-weight:600; padding:0.0625rem 0.4375rem; border-radius:0.25rem; background:var(--blue-soft); color:var(--blue) }
+  .dialrow { display:grid; grid-template-columns:auto minmax(0,1fr); gap:1.25rem; align-items:center }
+  .dial { width:5.75rem; height:5.75rem; color:var(--ink) } .dial .ticks { color:var(--faint) }
+  .dial .track { stroke:var(--line) } .dial .fill { stroke:var(--blue) } .dial .fill.off { stroke:var(--faint) }
+  .dial .hand circle { fill:var(--panel); stroke:currentColor; stroke-width:1.5 }
+  .help { margin:0.75rem 0 0; padding-top:0.625rem; border-top:1px solid var(--line2); font-size:0.75rem; color:var(--faint) }
+  .live { color:var(--ok) }
+  .navlabel { display:none }
 
   /* An alert: a banner, not a wall */
   .alert { background:var(--pink-soft); color:var(--ink); border:1px solid color-mix(in srgb, var(--pink) 35%, var(--line)); border-left:3px solid var(--pink);
@@ -125,15 +143,19 @@
 
   /* Lists inside panels: rows with hairlines */
   .slots { list-style:none; margin:0; padding:0; background:var(--panel); border:1px solid var(--line); border-radius:0.625rem }
-  .slots li { padding:0.625rem 0.875rem; border-top:1px solid var(--line2) } .slots li:first-child { border-top:0 }
+  .slots li { padding:0.625rem 0.875rem; border-top:1px solid var(--line2); display:grid; grid-template-columns:minmax(0,1fr) auto;
+    grid-template-areas:"name qty" "meta count"; gap:0.25rem 1rem; align-items:center }
+  .slots li:first-child { border-top:0 } .slots li.empty { display:block }
+  .slots .what { display:contents } .slots .what > b { grid-area:name } .slots .what > .meta { grid-area:meta; align-self:start }
+  .slots .qty { grid-area:qty; text-align:right; min-width:8.5rem } .slots .count { grid-area:count; justify-content:flex-end; align-self:start }
   .slots .head { display:flex; justify-content:space-between; gap:0.75rem; align-items:baseline }
   .slots .num { white-space:nowrap } .slots .num small { font-weight:400; color:var(--soft); font-size:0.8125rem }
-  .level { position:relative; height:0.25rem; border-radius:99px; background:var(--line); margin:0.375rem 0 }
+  .level { position:relative; height:0.25rem; border-radius:99px; background:var(--line); margin:0.25rem 0 0 }
   .level i { position:absolute; left:0; top:0; bottom:0; border-radius:99px; background:var(--blue) } .lowslot .level i { background:var(--pink) }
   .level b { position:absolute; top:-0.1875rem; bottom:-0.1875rem; width:1.5px; background:var(--faint) }
   .lowslot .num { color:var(--pink) }
-  .slots .count, .sheet .count { display:flex; gap:0.375rem; margin-top:0.5rem }
-  .slots .count input, .sheet .count input { width:5.5rem; flex:none; min-height:1.875rem; padding:0.1875rem 0.5rem }
+  .slots .count, .sheet .count { display:flex; gap:0.375rem } .sheet .count { margin-top:0.5rem }
+  .slots .count input, .sheet .count input { width:4.75rem; flex:none; min-height:1.875rem; padding:0.1875rem 0.5rem }
   .usefirst { background:var(--panel); border:1px solid var(--line); border-radius:0.625rem }
   .usefirst li { padding:0.625rem 0.875rem; border-top:1px solid var(--line2); border-left:3px solid var(--warn) } .usefirst li:first-child { border-top:0; border-top-left-radius:0.5rem }
   .usefirst li:last-child { border-bottom-left-radius:0.5rem }
@@ -159,6 +181,9 @@
   .roll { padding:0.25rem 0.875rem 0.75rem }
   .log li { display:flex; gap:0.75rem; padding:0.4375rem 0; border-top:1px solid var(--line2); font-size:0.8125rem } .log li:first-child { border-top:0 }
   .log time { color:var(--faint); flex:none; font-variant-numeric:tabular-nums }
+  .log li[data-line] { cursor:pointer } .log li[data-line]:hover span { color:var(--ink) }
+  .log li span { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; color:var(--soft) }
+  .log li.open span { -webkit-line-clamp:unset; color:var(--ink) }
   pre { white-space:pre-wrap; word-break:break-word; font:0.6875rem/1.5 ui-monospace, "SF Mono", Menlo, monospace; max-height:20rem; overflow:auto; margin:0;
       background:var(--bg); border:1px solid var(--line2); border-radius:0.375rem; padding:0.5rem }
 
@@ -172,6 +197,7 @@
     .app { max-width:none; margin:0; padding:0; display:grid; grid-template-columns:14.5rem minmax(0,1fr); min-height:100vh }
     .side { position:sticky; top:0; align-self:start; height:100vh; padding:1rem 0.75rem; border-right:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column }
     .brand { padding:0.25rem 0.5rem 1rem }
+    .navlabel { display:block; padding:0 0.5rem 0.375rem; font-size:0.6875rem; font-weight:600; color:var(--faint) }
     .roles { position:static; flex-direction:column; gap:0.125rem; padding:0; background:none; border:0; -webkit-backdrop-filter:none; backdrop-filter:none }
     .roles button { flex:none; flex-direction:row; align-items:center; gap:0.625rem; text-align:left; padding:0.4375rem 0.5rem; min-height:0; color:var(--ink); font-weight:550 }
     .roles button:hover { background:var(--line2) }
@@ -182,9 +208,11 @@
     .topbar { position:sticky; top:0; z-index:5; padding:0.875rem 0; margin-bottom:1rem; background:color-mix(in srgb, var(--bg) 88%, transparent); border-bottom:1px solid var(--line);
         -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px) }
     main { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(0,1fr); gap:0 2rem; align-items:start }
+    main > .do, main > .strip, main > .see { order:0 }
+    .who .meta { order:0; flex-basis:auto }
     main > .strip { grid-column:1 / -1 }
     #result { bottom:1.25rem }
-    .foot { max-width:none; margin-left:14.5rem; padding:0 2rem 1.5rem }
+    .foot { max-width:none; margin:1rem 0 0; padding:0 0 0.5rem }
   }
   @media (prefers-reduced-motion: reduce) { button:active { transform:none } summary::after { transition:none } }
 </style>
@@ -194,6 +222,7 @@
 <aside class="side">
   <div class="brand"><span class="wordmark" aria-label="mise">mise</span></div>
   <!-- Three people use this system. Each one sees only the own part. -->
+  <div class="navlabel">Workspaces</div>
   <nav class="roles" role="tablist" aria-label="Who you are">
     <button role="tab" data-pick="chef"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm3 5.1-3.6 3.9a.6.6 0 0 1-.9 0L5 8.9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Head chef<small>approves orders</small></span></button>
     <button role="tab" data-pick="kitchen"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5.2 8 2l6 3.2v5.6L8 14l-6-3.2V5.2Zm0 0L8 8.4m0 0 6-3.2M8 8.4V14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span>Kitchen<small>asks for products</small></span></button>
@@ -205,16 +234,16 @@
 <div class="topbar">
   <h1 id="pageTitle">Head chef</h1>
   <div class="meta" id="ruleset"></div>
-  <button id="size" class="small" aria-pressed="false">Larger text</button>
+  <button id="size" class="small" aria-pressed="false" aria-label="Larger text" title="Larger text">Aa</button>
 </div>
 <main>
   <p class="reasons" id="result" role="status" aria-live="polite"></p>
 
   <section data-role="chef" class="strip">
     <div class="sheet">
-      <dl class="glance" id="stats"></dl>
-      <p class="meta" style="margin:0.625rem 0 0">Turn the knob on the box to change what the agent may order alone, €10 a step. Hold it 2 seconds to check a delivery at the door. <span id="knobNote"></span></p>
-      <p class="meta" id="shelf" style="margin:0.25rem 0 0"></p>
+      <div class="dialrow"><svg class="dial" id="dial" viewBox="0 0 150 150" role="img" aria-label="Spend limit"></svg>
+        <dl class="glance" id="stats"></dl></div>
+      <p class="help">The knob on the box sets the first number, €10 a step. Hold it 2 seconds to check a delivery at the door. <span id="knobNote"></span> <span id="shelf"></span></p>
     </div>
   </section>
 
@@ -229,7 +258,7 @@
     </div>
     <p class="demopins" data-pins-for="pin" hidden></p>
     <div id="coldAlert" aria-live="assertive"></div>
-    <div id="approvals" aria-live="polite"><p class="empty">Nothing waits for you.</p></div>
+    <div id="approvals" aria-live="polite"><div class="emptystate"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm3 5.1-3.6 3.9a.6.6 0 0 1-.9 0L5 8.900" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><div><b>All clear</b><span>No request waits for you.</span></div></div></div>
   </section>
 
   <section data-role="kitchen">
@@ -355,10 +384,11 @@
   </section>
   </div>
 </main>
-</div>
-</div>
 <!-- The name is "mise" on the lid of the box and "en place" on its base. The page follows the box. -->
 <footer class="foot"><span class="wordmark">en place</span> <span class="meta">Everything in its place before service: the stock, the rules and the orders.</span></footer>
+</div>
+</div>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -409,6 +439,19 @@ function optionStock(o) {
   return o.order_lasts_days != null ? `<p class="reasons">This order lasts about ${o.order_lasts_days} days.</p>` : "";
 }
 
+// The rule check names the product in every reason. On a ticket the product is the heading, so the name comes off.
+function whyList(o) {
+  const names = o.lines.map(l => l.name).sort((a, b) => b.length - a.length);
+  return o.reasons.flatMap(x => x.split("; ")).map(x => {
+    for (const n of names) x = x.split(n + ": ").join("").split(n + " is ").join("It is ").split(n + " ").join("It ").split(n).join("it");
+    return cap(x.trim());
+  });
+}
+
+const EMPTY = `<div class="emptystate"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm3 5.1-3.6 3.9a.6.6 0 0 1-.9 0L5 8.900" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><div><b>All clear</b><span>No request waits for you.</span></div></div>`;
+// Who started a request, as a short label: the shelf, a person in the kitchen, or an agent of another company.
+const kind = (a) => a.asked_by === "device" || (a.slot && !a.request) ? "Shelf" : a.request ? "Kitchen" : "Outside agent";
+
 let shownApprovals = null;
 function renderApprovals(list) {
   // Redraw only when the requests change, so a screen reader is not interrupted
@@ -416,12 +459,14 @@ function renderApprovals(list) {
   const key = JSON.stringify(list.map(a => [a.id, a.options.map(o => o.total_eur), a.stock && [a.stock.units, a.stock.use_per_day]]));
   if (key === shownApprovals) return;
   shownApprovals = key;
-  if (!list.length) { $("approvals").innerHTML = '<p class="empty">Nothing waits for you.</p>'; return; }
+  if (!list.length) { $("approvals").innerHTML = EMPTY; return; }
   $("approvals").innerHTML = list.map(a => {
     const first = a.options[0] && a.options[0].lines[0];
     return `<article class="ticket">
       <header>
-        <div class="meta">${a.asked_by ? `${esc(cap(WHO[a.asked_by] || a.asked_by))} asked` : "Asked"} at ${esc(a.created.slice(11,16))}${a.slot ? `, shelf slot ${a.slot}` : ""}</div>
+        <div class="who"><span class="kind">${kind(a)}</span>
+          <span class="meta">${a.asked_by ? esc(cap(WHO[a.asked_by] || a.asked_by)) : "Asked"}, ${esc(a.created.slice(11,16))}${a.slot ? `, shelf slot ${a.slot}` : ""}</span>
+          <span class="state ${a.options.length ? "warm" : "breach"}">${a.options.length ? "Needs your approval" : "Nothing to order"}</span></div>
         <h3>${esc(a.what[0].toUpperCase() + a.what.slice(1))}</h3>
         ${a.request ? `<p class="quote">“${esc(a.request)}”</p>` : ""}
       </header>
@@ -431,15 +476,16 @@ function renderApprovals(list) {
           ${i === 0 ? `<div class="top"><span class="name">${esc(NAMES[o.label] || o.label)}</span><span class="price">${euro(o.total_eur)}</span></div>` : ""}
           <ul class="lines">${o.lines.map(l => `<li>${l.quantity} × ${esc(l.name)} at ${euro(l.unit_price_eur)}</li>`).join("")}</ul>
           <p class="reasons">${esc(o.trade_off)} Price checked at ${esc(o.lines[0].price_checked_at.slice(11,16))}.</p>
-          <p class="reasons">Why you decide: ${o.reasons.map(esc).join("; ")}.</p>
+          <div class="why"><span>Why you decide</span><ul>${whyList(o).map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>
           ${o.reasons.some(x => x.includes("check the label")) ? `<p class="reasons"><b>Read the label before you approve.</b>
             The agent keeps your answer and does not ask again for this product.</p>` : ""}
           ${a.stock && a.stock.options[i] ? optionStock(a.stock.options[i]) : ""}
-          <div class="row"><button class="${i===0?"primary":""}" data-a="${a.id}" data-o="${i}">${i===0?"Approve this order":"Choose this one"}</button></div>
+          <div class="row"><button class="${i===0?"primary":""}" data-a="${a.id}" data-o="${i}">${i===0?"Approve this order":"Choose this one"}</button>
+            ${i === 0 ? `<button data-a="${a.id}" data-skip="1">Order nothing</button>` : ""}</div>
         ${i === 0 ? "" : "</details>"}</li>`).join("")}</ol>
       ${a.options.length ? "" : `<div class="shelfnow"><p style="margin:0"><b class="forbidden">The agent found nothing that it may order.</b>
         The kitchen still needs this product. Order it another way, or change the rules.</p></div>`}
-      <footer><div class="row"><button data-a="${a.id}" data-skip="1">${a.options.length ? "Order nothing" : "I have seen this"}</button></div></footer>
+      ${a.options.length ? "" : `<footer><div class="row"><button data-a="${a.id}" data-skip="1">I have seen this</button></div></footer>`}
     </article>`; }).join("");
 }
 
@@ -512,12 +558,13 @@ function drawStock(slots) {
     const mark = s.reorder_below && s.target_units ? Math.min(100, 100 * s.reorder_below / s.target_units) : null;
     const low = s.units != null && s.reorder_below != null && s.units < s.reorder_below;
     const name = s.product ? s.product[0].toUpperCase() + s.product.slice(1) : "Slot " + s.slot;
-    return `<li class="${low ? "lowslot" : ""}"><div class="head"><b>${esc(name)}</b>
-        <span class="num">${s.units == null ? "?" : s.units}<small> of ${s.target_units}</small></span></div>
-      <div class="level"><i style="width:${share}%"></i>${mark == null ? "" : `<b style="left:${mark}%" title="Reorder below ${s.reorder_below}"></b>`}</div>
-      <div class="meta">${s.units == null ? "Nobody counted this slot yet." : `${cap(SOURCE[s.source] || esc(s.source))}, ${esc(s.counted_at.slice(11, 16))}${s.stale ? `, ${Math.round(s.age_hours)} hours old` : ""}.`}
+    return `<li class="${low ? "lowslot" : ""}">
+      <div class="what"><b>${esc(name)}</b>
+        <div class="meta">${s.units == null ? "Nobody counted this slot yet." : `${cap(SOURCE[s.source] || esc(s.source))}, ${esc(s.counted_at.slice(11, 16))}${s.stale ? `, ${Math.round(s.age_hours)} hours old` : ""}.`}
         ${s.on_order ? ` <b>${s.on_order} on order.</b>` : s.request_open ? " <b>A request waits for the head chef.</b>" : ""}
-        ${s.use_per_day ? ` About ${s.use_per_day} a day, so empty ${esc(when(s.runs_out_at))}. A full shelf lasts ${s.days_of_use_when_full} days.` : ""}</div>
+        ${s.use_per_day ? ` About ${s.use_per_day} a day, empty ${esc(when(s.runs_out_at))}.` : ""}</div></div>
+      <div class="qty"><span class="num">${s.units == null ? "?" : s.units}<small> of ${s.target_units}</small></span>
+        <div class="level"><i style="width:${share}%"></i>${mark == null ? "" : `<b style="left:${mark}%" title="Reorder below ${s.reorder_below}"></b>`}</div></div>
       <div class="count"><input type="number" min="0" inputmode="numeric" placeholder="Count" aria-label="Count for ${esc(name)}" data-count="${s.slot}">
         <button class="small" data-save="${s.slot}">Save</button></div></li>`; }).join("") || '<li class="empty">No shelf slots in the rule set.</li>';
 }
@@ -643,6 +690,30 @@ document.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => setRole(
 try { $("who").value = localStorage.getItem("who") || ""; } catch (e) {}
 $("who").addEventListener("change", () => { try { localStorage.setItem("who", $("who").value); } catch (e) {} });
 
+// The dial mirrors the knob on the box: a 270° sweep, a tick for each €10, and a bar at the limit the chef signed.
+const KNOB_MAX = 300, SIGNED_LIMIT = 150;
+function renderDial(eur, online) {
+  const cx = 75, cy = 75, rad = 58, a0 = 135, sweep = 270;
+  const pt = (deg, d) => [cx + d * Math.cos(deg * Math.PI / 180), cy + d * Math.sin(deg * Math.PI / 180)].map(n => n.toFixed(1));
+  const arc = (from, to) => `M${pt(from, rad).join(" ")} A${rad} ${rad} 0 ${to - from > 180 ? 1 : 0} 1 ${pt(to, rad).join(" ")}`;
+  const v = Math.max(0, Math.min(KNOB_MAX, eur || 0)), at = a0 + sweep * v / KNOB_MAX, signed = a0 + sweep * SIGNED_LIMIT / KNOB_MAX;
+  const line = (deg, from, to, w) => { const [x1, y1] = pt(deg, from), [x2, y2] = pt(deg, to);
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="currentColor" stroke-width="${w}" stroke-linecap="round"/>`; };
+  let ticks = "";
+  for (let i = 0; i <= 30; i++) ticks += line(a0 + sweep * i / 30, rad + 8, rad + (i % 5 ? 12 : 16), i % 5 ? 1 : 2);
+  $("dial").innerHTML = `<g class="ticks">${ticks}</g>
+    <path d="${arc(a0, a0 + sweep)}" fill="none" class="track" stroke-width="8"/>
+    ${v > 0 ? `<path d="${arc(a0, at)}" fill="none" class="${online ? "fill" : "fill off"}" stroke-width="8"/>` : ""}
+    <g class="hand">${line(signed, rad - 7, rad + 17, 3)}<circle cx="${cx}" cy="${cy}" r="38"/>${eur == null ? "" : line(at, 0, rad - 18, 3)}</g>`;
+  $("dial").setAttribute("aria-label", eur == null ? "The box did not send its limit yet" : `Spend limit €${v}, the signed limit is €${SIGNED_LIMIT}`);
+}
+
+let shownStory = null;
+const openLines = new Set();
+$("story").addEventListener("click", (e) => {
+  const li = e.target.closest("li[data-line]"); if (!li) return;
+  li.classList.toggle("open") ? openLines.add(li.dataset.line) : openLines.delete(li.dataset.line);
+});
 $("more").onclick = () => { showAll = !showAll; tick(); };
 $("dataBox").addEventListener("toggle", tick);
 
@@ -686,18 +757,23 @@ async function tick() {
       <span class="chip">Rule set ${dev.rule_set_version}</span>`;
     forceOptions(dev.catalog);
     $("stats").innerHTML = [
-      ["the agent may order alone", dev.auto_limit_eur == null ? "–" : `€${dev.auto_limit_eur}`],
-      ["air in the cold room", dev.temperature_c == null ? "–" : `<span class="${dev.alarm ? "alarm" : ""}">${dev.temperature_c.toFixed(1)} °C</span>`],
-      ["spent this week", `€${dev.weekly_spent_eur.toFixed(0)}`],
-      ["the shelf box", dev.online ? "online" : `<span class="alarm">offline</span>`],
+      ["Agent orders alone up to", dev.auto_limit_eur == null ? "–" : `€${Number(dev.auto_limit_eur).toLocaleString("en")}`],
+      ["Cold room air", dev.temperature_c == null ? "–" : `<span class="${dev.alarm ? "alarm" : ""}">${dev.temperature_c.toFixed(1)} °C</span>`],
+      ["Spent this week", `€${Math.round(dev.weekly_spent_eur).toLocaleString("en")}`],
+      ["Shelf box", dev.online ? `<span class="live">Online</span>` : `<span class="alarm">Offline</span>`],
     ].map(([k, v]) => `<div><dd>${v}</dd><dt>${k}</dt></div>`).join("");
+    renderDial(dev.auto_limit_eur, dev.online);
     $("knobNote").textContent = dev.auto_limit_eur == null ? "The box did not send its limit yet, so the limit of the rule set counts."
       : dev.online ? "" : "The box is offline. This is the last limit that it sent.";
-    const slots = Object.entries(dev.slots).map(([k, v]) => `slot ${k} ${v.state}`).join(" · ");
-    $("shelf").textContent = slots ? `Shelf: ${slots}` : "Shelf: no data from the camera yet.";
+    const slots = Object.entries(dev.slots).map(([k, v]) => `slot ${k} ${v.state}`).join(", ");
+    $("shelf").textContent = slots ? `The camera reads: ${slots}.` : "";
     const lines = log.story.slice().reverse();
-    $("story").innerHTML = lines.slice(0, showAll ? lines.length : SHORT).map(l =>
-      `<li><time>${esc(l.slice(0, 5))}</time><span>${esc(l.slice(6))}</span></li>`).join("") || '<li class="empty">Nothing yet.</li>';
+    const shown = lines.slice(0, showAll ? lines.length : SHORT), storyKey = shown.join("\n");
+    if (storyKey !== shownStory) {
+      shownStory = storyKey;
+      $("story").innerHTML = shown.map(l => `<li class="${openLines.has(l) ? "open" : ""}" data-line="${esc(l)}" title="Click to read all of it">
+        <time>${esc(l.slice(0, 5))}</time><span>${esc(l.slice(6))}</span></li>`).join("") || '<li class="empty">Nothing yet.</li>';
+    }
     $("more").hidden = lines.length <= SHORT;
     $("more").textContent = showAll ? "Show the latest only" : `Show ${lines.length - SHORT} more`;
     $("more").setAttribute("aria-expanded", String(showAll));
@@ -707,7 +783,7 @@ async function tick() {
 function setSize(large) {
   document.documentElement.classList.toggle("large", large);
   $("size").setAttribute("aria-pressed", String(large));
-  $("size").textContent = large ? "Normal text" : "Larger text";
+  $("size").title = large ? "Normal text" : "Larger text"; $("size").setAttribute("aria-label", $("size").title);
   try { localStorage.setItem("large", large ? "1" : "0"); } catch (e) {}
 }
 try { setSize(localStorage.getItem("large") === "1"); } catch (e) {}
