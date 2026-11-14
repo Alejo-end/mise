@@ -45,3 +45,24 @@ def test_five_wrong_pins_lock_approvals_for_a_while(client):
     for _ in range(5):
         assert client.post(f"/approvals/{aid}", json={"action": "approve", "pin": "0000"}).status_code == 403
     assert client.post(f"/approvals/{aid}", json={"action": "approve", "pin": "4821"}).status_code == 429
+
+
+def test_a_recording_session_isolates_purchasing(tmp_path, monkeypatch):
+    """Shelf recordings: taking the milk out, pressing the knob or a health report changes no order."""
+    monkeypatch.setenv("AUDIT_DB", str(tmp_path / "r.sqlite"))
+    monkeypatch.setenv("CATALOG", "local")
+    monkeypatch.setenv("GATEWAY_KEY", str(tmp_path / "key.pem"))
+    monkeypatch.setenv("RECORDING_SESSION", "eval-a-20261114")
+    import backend.app as m
+    m = importlib.reload(m)
+    c = TestClient(m.app)
+    for ev in ({"type": "slot_state", "slot": 3, "state": "empty", "estimated_units": 0},
+               {"type": "manual_low", "slot": 2}):
+        r = c.post("/events", json=ev).json()
+        assert r["status"] == "ignored" and "purchasing isolated" in r["reason"]
+    assert c.get("/approvals/open").json() == [] and c.get("/orders").json() == []
+    assert c.get("/device").json()["recording_session"] == "eval-a-20261114"
+    assert c.get("/device").json()["slots"]["3"]["state"] == "empty"  # the device view still updates
+    assert [e for e in c.get("/log?format=json").json() if e["step"] in ("trigger", "order", "approval")] == []
+    monkeypatch.delenv("RECORDING_SESSION")
+    importlib.reload(m)  # leave a normal app for later tests

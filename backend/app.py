@@ -45,6 +45,10 @@ def _load_env(path: Path) -> None:
 
 _load_env(ROOT / ".env")
 SETTINGS = Settings.from_env()  # committed defaults in backend/settings.py; .env.example lists every key
+# Shelf recording session (tools/record_sequence.py): device events update the device view and are logged,
+# but never reach the agent, so calibration and evaluation actions cannot create orders or approvals and
+# cannot end a pending order. Empty (the default) is normal operation.
+RECORDING_SESSION = os.getenv("RECORDING_SESSION", "").strip()
 if os.getenv("ANTHROPIC_API_KEY"):  # a real model can take the Driving Test
     from .model_agent import ModelUnderTest
     AGENTS["claude"] = ModelUnderTest
@@ -216,6 +220,12 @@ def events(ev: Event):
     if data["type"] == "slot_state":
         data = shelf.observe(data)  # the observation; with fill, units = round(fill x the assignment's target)
         device["slots"][str(data["slot"])] = {"state": data["state"], "units": data.get("estimated_units")}
+    if RECORDING_SESSION:
+        if data["type"] in ("slot_state", "manual_low"):
+            log.write("recording", {"summary": f"Recording session {RECORDING_SESSION}: slot {data['slot']} reads "
+                                    f"{data.get('state', 'low (knob)')}. Purchasing is isolated: no trigger.",
+                                    "event": data}, "device", ruleset["version"])
+        return {"status": "ignored", "reason": f"recording session {RECORDING_SESSION}: purchasing isolated"}
     result = agent.handle_event(data)
     if data["type"] == "delivery_check" and result.get("status") == "problem":
         device["problem_until"] = time.time() + 6
@@ -290,7 +300,8 @@ def device_state():
         "last_seen": datetime.fromtimestamp(seen, TZ).isoformat(timespec="seconds") if seen else None,
         "weekly_spent_eur": agent.weekly_spent_eur, "catalog": catalog.name, "text_scan_gaps": TEXT_SCAN_GAPS, "cold_alarm_c": agent.cold_alarm_c,
         "rule_set_version": ruleset["version"], "rule_set_sha256": ruleset["sha256"][:12],
-        "signed_by": ruleset.get("signed_by"), "pins_set": bool(PINS)} | device_health()
+        "signed_by": ruleset.get("signed_by"), "pins_set": bool(PINS),
+        "recording_session": RECORDING_SESSION or None} | device_health()
 
 
 def device_health() -> dict:
