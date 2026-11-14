@@ -740,6 +740,20 @@ class Agent:
                                             "sha256": a.sha256}))
         self.log.write("recheck", {"summary": "; ".join(changes) or "nothing changed.", "changes": changes}, "agent", v, run_id=run)
 
+        if not changes and fresh:
+            # Price, stock and delivery are unchanged, but the product data may not be (a property or an allergen
+            # changed since the quote). The rules are checked on the product as the catalog describes it now.
+            rl = [R.Line(p, l["quantity"], l["unit_price_eur"], *_delivery_pair(l["delivery"], l["usual"], l["stock_known"]))
+                  for p, l in fresh]
+            d = R.check(rl, self.rules, ctx)
+            if d.result == R.FORBIDDEN:
+                self.log.write("rule_check", {"subject": "order after recheck (current product data)", **d.to_dict()},
+                               "rule_check", v, run_id=run)
+                self.log.write("blocked", {"summary": "The product data changed since the quote; the rule check now "
+                                           "forbids the order."}, "rule_check", v, run_id=run)
+                self._free(slot)
+                return None, {"status": "forbidden", "reasons": d.reasons}
+
         if changes:
             if not fresh or unknown:
                 self.log.write("blocked", {"summary": "After the recheck nothing can be ordered: " + "; ".join(changes)},

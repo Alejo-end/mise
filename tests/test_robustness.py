@@ -231,3 +231,19 @@ def test_unsigned_new_version_is_refused(tmp_path):
         load_rules(f)
     sign(f)
     assert load_rules(f)["version"] == 4
+
+
+# Found by the agent benchmark (exp/agent-bench, family product_rule_change): product data that changes between the
+# quote and the order must be checked against the rules again, even when price, stock and delivery are unchanged.
+def test_a_product_that_loses_a_required_property_after_approval_is_not_ordered(log):
+    cat = LocalCatalog()
+    ag = A.Agent(cat, load_rules(), log)
+    ag.auto_limit_eur = 40
+    ag.handle_event(EMPTY_MILK)
+    a = ag.open_approvals()[0]
+    lines = a.get("lines") or (a.get("options") or [{}])[0].get("lines") or []
+    pid = lines[0]["product_id"] if lines else "MOCK-MILK-LF-1L"
+    cat.products[pid]["properties"] = [x for x in cat.products[pid]["properties"] if x != "lactose_free"]
+    result = ag.decide(a["id"], "approve", 0, "Head chef")
+    assert result["status"] == "forbidden" and not cat.orders
+    assert any(e["step"] == "blocked" and "product data changed" in str(e) for e in log.entries(50))
