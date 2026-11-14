@@ -122,6 +122,13 @@
   .size { min-height:48px; padding:6px 14px; font-size:1.1rem }
   @media (prefers-contrast: more) { :root { --dim:#000; --led-off:#555 } }
   .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap }
+  /* Recognize shelf (experimental): boxes coloured by outcome; similarity is a model score, not accuracy */
+  .rbox { position:absolute; border:3px solid #fff; pointer-events:none }
+  .rbox.known { border-color:#33d17a } .rbox.unknown { border-color:#c0bfbc; border-style:dashed }
+  .rbox.ambiguous { border-color:#ffa348 } .rbox.obstructed { border-color:#ff5f5f; border-style:dotted }
+  .rbox b { position:absolute; left:-3px; top:-25px; background:#000; color:#fff; font-size:.9rem; font-weight:700; padding:1px 6px; white-space:nowrap }
+  .rsurf { position:absolute; border:2px dashed rgba(255,255,255,.55); pointer-events:none }
+  #recogList { margin:10px 0 0; padding-left:1.2em } #recogList li { margin:2px 0 }
 </style>
 </head>
 <body>
@@ -146,6 +153,24 @@
       <section class="mod">
         <h2>shelf now</h2>
         <div class="channels" id="shelf"></div>
+      </section>
+      <section class="mod" id="recog">
+        <h2>recognize shelf <small>experimental · observes only, never orders</small></h2>
+        <p class="hint" style="margin-top:0">Looks anywhere on the monitored surface: the boxes only say where to look, not what must be there. Names come from your own enrolled photos; a product it does not know stays "unknown".</p>
+        <div class="keys">
+          <button class="primary" id="recogBtn">Recognize shelf</button>
+          <button id="bgBtn">Save empty surface</button>
+          <label class="hint" style="margin:0"><input type="checkbox" id="wholeFrame"> whole picture</label>
+        </div>
+        <div class="keys" style="margin-top:8px">
+          <select id="enrolId"><option value="exp:chips">chips</option><option value="exp:energy-drink">energy drink</option><option value="exp:milk">milk</option></select>
+          <select id="enrolRole"><option value="reference">reference photo</option><option value="heldout">held-out test photo</option></select>
+          <button id="enrolBtn">Save enrolment photo</button>
+        </div>
+        <p class="hint" id="enrolStatus"></p>
+        <div class="cam" id="recogCam" hidden><img id="recogFrame" alt="The picture that was recognised"></div>
+        <ul id="recogList"></ul>
+        <p class="hint" id="recogMeta"></p>
       </section>
     </div>
 
@@ -469,6 +494,45 @@ $("save").onclick = () => {
   socket.emit("save_config", {backend_url: $("url").value.trim(), temperature_limit_c: isFinite(limit) ? limit : 6,
                               manual_slot: Number($("kslot").value), slots: s});
 };
+
+// Recognize shelf (experimental, observational) ---------------------------------------------------------------
+const RNAMES = {"exp:chips": "chips", "exp:energy-drink": "energy drink", "exp:milk": "milk"};
+const rname = (id) => RNAMES[id] || id || "unknown";
+const surfaceArg = () => ($("wholeFrame").checked ? [0, 0, 1, 1] : null);
+const pct = (v) => `${(v * 100).toFixed(2)}%`;
+function placeBox(el, b) { el.style.left = pct(b[0]); el.style.top = pct(b[1]); el.style.width = pct(b[2]); el.style.height = pct(b[3]); }
+$("recogBtn").onclick = () => { $("recogMeta").textContent = "Recognizing…"; socket.emit("recognize", {surface: surfaceArg()}); };
+$("bgBtn").onclick = () => { toast("Saving the empty surface…"); socket.emit("recognition_background", {surface: surfaceArg()}); };
+$("enrolBtn").onclick = () => { toast("Saving the enrolment photo…"); socket.emit("enrol_photo", {identity: $("enrolId").value, role: $("enrolRole").value, surface: surfaceArg()}); };
+socket.on("recognition_background_response", (r) => toast(r.ok ? "Empty surface saved." : `Not saved: ${r.error || r.detail}`));
+socket.on("enrol_photo_response", (r) => { toast(r.ok ? `Saved a ${$("enrolRole").value} photo of ${rname($("enrolId").value)}.` : `Not saved: ${r.error || r.detail}`); socket.emit("recognition_status", {}); });
+socket.on("recognition_status_response", (r) => {
+  if (!r.ok) { $("enrolStatus").textContent = `Recognition service not reachable (${r.url}).`; return; }
+  const e = r.enrolment || {}; const rows = e.identities || e;
+  $("enrolStatus").textContent = "Enrolled photos: " + Object.entries(rows).filter(([k]) => k.startsWith("exp:")).map(([k, v]) =>
+    `${rname(k)} ${(v.reference ?? v.photos?.reference ?? 0)} reference / ${(v.heldout ?? v.photos?.heldout ?? 0)} held-out`).join(", ");
+});
+socket.on("recognize_response", (r) => {
+  if (!r.ok) { $("recogMeta").textContent = `Not recognized: ${r.error || r.detail || "service error"}`; return; }
+  const cam = $("recogCam"); cam.hidden = false; $("recogFrame").src = `data:image/jpeg;base64,${r.frame}`;
+  cam.querySelectorAll(".rbox,.rsurf").forEach((e) => e.remove());
+  const surf = document.createElement("div"); surf.className = "rsurf"; placeBox(surf, r.surface); cam.appendChild(surf);
+  const list = $("recogList"); list.innerHTML = "";
+  (r.objects || []).forEach((o, i) => {
+    const top = (o.candidates || [])[0];
+    const text = o.status === "known" ? rname(o.identity) : o.status === "ambiguous" && top ? `ambiguous (${rname(top.identity)}?)` : o.status;
+    const d = document.createElement("div"); d.className = `rbox ${o.status}`; placeBox(d, o.box);
+    const tag = document.createElement("b"); tag.textContent = `${i + 1} ${text}`; d.appendChild(tag); cam.appendChild(d);
+    const li = document.createElement("li");
+    li.textContent = `${i + 1}: ${text}` + (top ? ` (nearest ${rname(top.identity)}, score ${Number(top.similarity).toFixed(2)})` : "");
+    list.appendChild(li);
+  });
+  const counts = Object.entries(r.visible_units || {}).map(([k, n]) => `${rname(k)} ${n}`).join(", ") || "none";
+  const t = r.timing_ms || {};
+  $("recogMeta").textContent = `Visible units: ${counts}. ${r.uncertain ? "Uncertain: " + (r.reasons || []).join("; ") + ". " : ""}` +
+    `Captured ${String(r.captured_at).slice(11, 23)}; ${t.total ?? "?"} ms in the service (${(r.model || {}).name || "model"} on ${(r.model || {}).device || "?"}), ${r.round_trip_ms} ms round trip. Scores are model similarities, not measured accuracy. Observes only: no stock events, no orders.`;
+});
+socket.on("connect", () => socket.emit("recognition_status", {}));
 </script>
 </body>
 </html>

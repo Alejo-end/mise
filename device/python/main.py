@@ -528,6 +528,76 @@ def on_simulate(_sid, data):
                        "estimated_units": units})
 
 
+# Shelf recognition (experimental, observational) ---------------------------------------------------------------
+# The page's "Recognize shelf" panel sends the newest fresh camera frame to the recognition service on the laptop
+# (experiments/recognition/shelf_service on branch exp/recognition, port 8100). Results go back to the page only:
+# nothing here calls the purchasing backend, so recognition cannot create stock events, orders or approvals.
+
+def recognition_url() -> str:
+    if config.get("recognition_url"):
+        return str(config["recognition_url"]).rstrip("/")
+    host = str(config["backend_url"]).split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+    return f"http://{host}:8100"
+
+
+def surface_rect() -> list[float]:
+    """Where to look: the configured surface, else the area around all slot boxes (a region, not a product)."""
+    if config.get("surface"):
+        return config["surface"]
+    rects = [s["rect"] for s in config.get("slots", [])]
+    if not rects:
+        return [0.0, 0.0, 1.0, 1.0]
+    pad = 0.03
+    x0, y0 = max(0.0, min(r[0] for r in rects) - pad), max(0.0, min(r[1] for r in rects) - pad)
+    x1, y1 = min(1.0, max(r[0] + r[2] for r in rects) + pad), min(1.0, max(r[1] + r[3] for r in rects) + pad)
+    return [round(x0, 4), round(y0, 4), round(x1 - x0, 4), round(y1 - y0, 4)]
+
+
+def recognition_call(sid, path: str, extra: dict, reply: str):
+    """Send the newest frame (never older than CAMERA_GRACE_S) to the service; answer the page with the result."""
+    with lock:
+        img, t = state["last_frame"], state["frame_time"]
+    if img is None or t is None or time.time() - t > CAMERA_GRACE_S:
+        ui.send_message(reply, {"ok": False, "error": "no fresh camera picture (none, or older than 2 s)"}, sid)
+        return
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    captured = datetime.fromtimestamp(t, TZ).isoformat(timespec="milliseconds")
+    surface = extra.pop("surface", None) or surface_rect()
+    body = {"image_b64": b64, "surface": surface, "captured_at": captured, **extra}
+
+    def run():
+        t0 = time.time()
+        try:
+            r = requests.post(recognition_url() + path, json=body, timeout=60)
+            try:
+                out = r.json()
+            except ValueError:
+                out = {"error": r.text[:200]}
+            ok = r.status_code == 200
+        except Exception as e:
+            out, ok = {"error": f"recognition service not reachable at {recognition_url()}: {str(e)[:120]}"}, False
+        out = dict(out) if isinstance(out, dict) else {"result": out}
+        out.update(ok=ok and not out.get("error"), round_trip_ms=round((time.time() - t0) * 1000),
+                   captured_at=captured, surface=surface)
+        if path == "/recognize":
+            out["frame"] = b64  # the exact picture that was recognised, so the boxes match it
+        ui.send_message(reply, out, sid)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def recognition_status(sid):
+    def run():
+        try:
+            out = requests.get(recognition_url() + "/enrolment", timeout=10).json()
+            ui.send_message("recognition_status_response", {"ok": True, "enrolment": out, "url": recognition_url()}, sid)
+        except Exception as e:
+            ui.send_message("recognition_status_response", {"ok": False, "error": str(e)[:160], "url": recognition_url()}, sid)
+    threading.Thread(target=run, daemon=True).start()
+
+
 ui = WebUI()
 ui.on_message("calibrate", on_calibrate)
 ui.on_message("save_config", on_save_config)
@@ -535,6 +605,14 @@ ui.on_message("setup", on_setup)
 ui.on_message("simulate", on_simulate)
 ui.on_message("delivery_check", lambda _sid, _d: start_delivery_check())
 ui.on_message("get_state", lambda sid, _d: ui.send_message("sensors", sensors(), sid))
+ui.on_message("recognize", lambda sid, d: recognition_call(sid, "/recognize", {"surface": (d or {}).get("surface")},
+                                                            "recognize_response"))
+ui.on_message("recognition_background", lambda sid, d: recognition_call(
+    sid, "/background", {"surface": (d or {}).get("surface")}, "recognition_background_response"))
+ui.on_message("enrol_photo", lambda sid, d: recognition_call(
+    sid, "/enrol/photo", {"identity": (d or {}).get("identity"), "role": (d or {}).get("role", "reference"),
+                          "surface": (d or {}).get("surface")}, "enrol_photo_response"))
+ui.on_message("recognition_status", lambda sid, _d: recognition_status(sid))
 ui.expose_api("GET", "/state", sensors)
 
 
