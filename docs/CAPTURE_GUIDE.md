@@ -21,11 +21,17 @@ below were checked against the code on branch `valio/integration-unattended` at 
 | Pre-upload check and upload to Modal | Yes | Upload to a scratch Volume path, then removed | No |
 | Recording mode (no purchasing side effects) | Yes (`tests/test_app.py`) | Live backend runs in it | No |
 | Board and laptop on the same network | — | Checked 10:08: laptop 172.20.10.4, board answers, backend sees the board online | — |
+| USB camera on the board with `safe-kitchen-agent` | — | Checked 11:11: camera OK, fresh frames, clean preview frames; recorder copies over SSH and refuses uncalibrated spots | No |
 | Calibration and capture with the real products, one-row layout, dim light, light change | No | No | **No: untested** |
 
 ## 1. Last-known versions and network status
 
-- **Board** (Arduino UNO Q, app `safe-kitchen-test`, laptop-camera variant): `main.py` c60b68271b87,
+- **Camera path (11:14):** the USB camera on the board works through the replaced hub (diagnosis:
+  `measurements/camera-diagnosis-2026-11-14.md`). The board now runs **`safe-kitchen-agent`** (USB camera on the
+  board) and calibration with it has started. The board's **default app is still `safe-kitchen-test`** (laptop
+  camera): after a reboot it comes back with the laptop-camera variant; start the USB variant again with
+  `arduino-app-cli app start user:safe-kitchen-agent` (on the board) or from App Lab.
+- **Board files** (Arduino UNO Q, both app variants share them): `main.py` c60b68271b87,
   `shelf_detect.py` 7095fd9ead9a, `index.html` 8fdd4027b2fb = commit 0d93b6a (tag `deploy/live-0d93b6a`), checked
   over USB at 09:43. The app container runs; the board is on the hotspot "Anatoly’s iPhone" as 172.20.10.2.
 - **Backend** (laptop, port 8000): integration code at 851a992 (later commits are documentation), audit database
@@ -37,10 +43,16 @@ below were checked against the code on branch `valio/integration-unattended` at 
 
 ## 2. Setup and preflight
 
-Physical: board on USB to the laptop (the recorder copies the board's photos over adb); camera on the laptop;
-laptop and board on the hotspot "Anatoly’s iPhone" (Maximize Compatibility on). Open the camera bridge page
-http://localhost:8765/laptop-camera.html in a browser tab and allow the camera (it is served by the main checkout,
-`junction2026/valio-challenge/tools`; if it does not load: `cd /Users/bigboss/Ai/Claudecode/junction2026/valio-challenge/tools && python3 -m http.server --bind 127.0.0.1 8765`).
+Two camera paths; use one per session and pass the matching `--app` to the recorder:
+
+| Path | Board app | Camera | Recorder |
+|---|---|---|---|
+| **USB camera on the board (current)** | `safe-kitchen-agent` | USB camera through the hub, 640x480 at 15 fps | `--app safe-kitchen-agent` |
+| Laptop camera bridge (earlier) | `safe-kitchen-test` | laptop camera; open http://localhost:8765/laptop-camera.html and allow the camera | `--app safe-kitchen-test` (default) |
+
+Laptop and board on the hotspot "Anatoly’s iPhone". The recorder copies the board's calibration over adb when the
+board is on USB to the laptop, otherwise over SSH (it asks for the board password). Each app keeps its own boxes and
+photos: calibrating one does not change the other.
 
 Run these from any terminal; every line must give the expected answer before calibrating:
 
@@ -111,10 +123,11 @@ uv run python tools/enrol_product.py unfamiliar --none                        # 
 Working directory: `/Users/bigboss/Ai/Claudecode/junction2026-int/valio-challenge`. One command per clip:
 
 ```
-uv run --with "python-socketio[client]" python tools/record_sequence.py <NAME>
+uv run --with "python-socketio[client]" python tools/record_sequence.py <NAME> --app safe-kitchen-agent
 ```
 
-What happens: it refuses if the boxes are not ready; shows the clip's steps; asks **how many items are in slots
+(For the laptop camera bridge, leave out `--app`.) What happens: it refuses if the boxes are not ready or any spot
+has no valid calibration photos; shows the clip's steps; asks **how many items are in slots
 1, 2, 3 right now** (type the actual numbers, for example `2 1 2`; empty clips skip this); waits for Enter to
 start; shows a countdown with the next cue; you press **Enter at the moment you do each step** (a word + Enter adds
 a free note); at the end it lists your marks and the item counts and asks you to confirm. Only "y" makes the

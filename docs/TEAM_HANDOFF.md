@@ -21,7 +21,7 @@ Canonical branch: `valio/integration-unattended` (contains `main` and Alejo's `r
 No language model is in the live purchasing path: `backend/agent.py` is deterministic; a model is used only as an
 agent under test in the Driving Test (`backend/model_agent.py`, when a key is set). Checked by the coordinator.
 
-**Deployed (live now):** board app = 0d93b6a (files checked over USB at 09:43). Backend process started 08:40 from
+**Deployed (live now):** board files = 0d93b6a (checked over USB at 09:43). Since 11:11 the board runs the USB-camera variant `safe-kitchen-agent` through the replaced hub (camera OK, clean frames; see `measurements/camera-diagnosis-2026-11-14.md`); its default app is still the laptop-camera variant. Backend process started 08:40 from
 851a992 code: it does **not** yet contain the recheck fix 3c3c7a2. It runs in **recording mode**, and signed rule
 set v6 leaves all three slots unmapped, so the shelf cannot buy anything until someone ends recording mode and signs
 purchasable products again.
