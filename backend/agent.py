@@ -348,8 +348,9 @@ class Agent:
                            self.rules["version"], run_id=run)
             return {"status": "error", "reason": str(e)}
 
-    def handle_request(self, text: str, product_id: str | None = None) -> dict:
-        """A text request from the chef, for example '1,000 litres of lactose-free milk by Monday'."""
+    def handle_request(self, text: str, product_id: str | None = None, asked_by: str | None = None) -> dict:
+        """A text request from a person in the kitchen, for example '1,000 litres of lactose-free milk by Monday'.
+        `asked_by` is the name that the log and the approval request show."""
         run = uuid.uuid4().hex[:8]
         target = match_target(text, self.rules["targets"])
         # The deadline comes out first, so "by 17.11." is not read as 17 units.
@@ -358,8 +359,9 @@ class Agent:
         understood = f"{qty} × {target['product'] if target else 'unknown product'}"
         if deadline:
             understood += f", needed by {deadline:%a %d.%m. %H:%M}"
-        self.log.write("trigger", {"summary": f"The chef asked: \"{text}\". Understood as {understood}.", "text": text,
-                                   "quantity": qty, "needed_by": deadline, "product_id": product_id}, "chef",
+        self.log.write("trigger", {"summary": f"{asked_by or 'The chef'} asked: \"{text}\". Understood as {understood}.",
+                                   "text": text, "quantity": qty, "needed_by": deadline, "product_id": product_id},
+                       asked_by or "chef",
                        self.rules["version"], run_id=run)
         if product_id:
             # The chef (or a judge) names one product. It still goes through the rule check.
@@ -653,8 +655,13 @@ class Agent:
                 "source": self.source}
 
     def buy_exact(self, product_id: str, qty: int, run: str, deadline: datetime | None = None,
-                  mandate_eur: float | None = None, scope_groups: list[str] | None = None, actor: str = "agent") -> dict:
-        """Order one named product, through the same rule check as every other order."""
+                  mandate_eur: float | None = None, scope_groups: list[str] | None = None, actor: str = "agent",
+                  max_unit_price_eur: float | None = None) -> dict:
+        """Order one named product, through the same rule check as every other order.
+
+        max_unit_price_eur is the price of the quote that the buyer holds. If the price is higher now,
+        nothing is ordered and the status is "price_changed".
+        """
         v = self.rules["version"]
         q = self.quote_exact(product_id, qty, deadline, mandate_eur, scope_groups, run)
         if q["status"] == "no_match":
@@ -668,6 +675,11 @@ class Agent:
             self.log.write("blocked", {"summary": f"{q['name']}: {q['reason']}."}, "agent", v, run_id=run)
             return {"status": "invalid_quantity", "reason": q["reason"]}
         d, name = q["decision"], q["name"]
+        if max_unit_price_eur is not None and q["unit_price_eur"] > max_unit_price_eur:
+            self.log.write("blocked", {"summary": f"The price of {name} rose from {max_unit_price_eur} to "
+                                       f"{q['unit_price_eur']} after the quote. Nothing is ordered."}, "agent", v, run_id=run)
+            return {"status": "price_changed", "quoted_unit_price_eur": max_unit_price_eur,
+                    "unit_price_eur": q["unit_price_eur"]}
         self.log.write("rule_check", {"subject": f"{qty} × {name}", **d.to_dict()}, "rule_check", v, run_id=run)
         if d.result == R.FORBIDDEN:
             self.log.write("blocked", {"summary": f"{name} is forbidden: {'; '.join(d.reasons)}. "

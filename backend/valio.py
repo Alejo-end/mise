@@ -262,6 +262,7 @@ def map_product(raw: dict, delivery_reliability: float | None = None, carbon: fl
     s = raw.get("synkkaData") or {}
     return {
         "id": str(raw["id"]),
+        "gtin": s.get("gtin"),  # the GS1 number that a buyer's own systems know the product by
         "name": _text(s.get("names")) or str(raw["id"]),
         "product_group": raw.get("category"),
         "substitute_group": raw.get("category"),

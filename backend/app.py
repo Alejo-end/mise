@@ -179,6 +179,7 @@ class Decision(BaseModel):
 class TextRequest(BaseModel):
     text: str
     product_id: str | None = None
+    asked_by: str | None = Field(default=None, max_length=60)  # the person who asks; the log and the approver see it
 
 
 class DeliveryBody(BaseModel):
@@ -189,6 +190,28 @@ class DeliveryBody(BaseModel):
 
 class SandboxRun(BaseModel):
     agent: str = "safe-kitchen"
+    pin: str = ""  # the PIN of the approver who grants the licence; with no PIN the test runs and gives no licence
+
+
+class Pin(BaseModel):
+    pin: str = ""
+
+
+class SessionStart(BaseModel):
+    agent: str = Field(min_length=1, max_length=60)  # the name that the licence and the log will carry
+
+
+class SandboxQuote(BaseModel):
+    product_id: str
+    quantity: int = Field(ge=1, le=100000)
+
+
+class SandboxOrder(SandboxQuote):
+    idempotency_key: str = Field(min_length=1, max_length=80)
+
+
+class SandboxQuestion(BaseModel):
+    reason: str = Field(default="", max_length=500)
 
 
 @app.get("/")
@@ -248,23 +271,34 @@ app.include_router(make_router(agent, catalog, driving_test, log, Signer(os.gete
 
 @app.get("/approvals/open")
 def approvals_open():
-    return agent.open_approvals()
+    """The open approval requests. Each one says who started it: a person, the shelf camera or an outside agent."""
+    waiting = agent.open_approvals()
+    runs = {a["run_id"] for a in waiting}
+    started = {e["run_id"]: e for e in log.entries(2000) if e["step"] == "trigger" and e["run_id"] in runs}
+    return [a | {"asked_by": started[a["run_id"]]["actor"] if a["run_id"] in started else None,
+                 "request": started[a["run_id"]]["detail"].get("text") if a["run_id"] in started else None}
+            for a in waiting]
 
 
-@app.post("/approvals/{approval_id}")
-def approvals_decide(approval_id: str, d: Decision):
+def approver_of(pin: str) -> str:
+    """The approver behind a PIN. Wrong PINs lock every PIN check for a short time."""
     if not PINS:
         raise HTTPException(503, "No approver PINs are set. Put APPROVER_PINS in valio-challenge/.env.")
     now = time.time()
     if now < pin_guard["locked_until"]:
         raise HTTPException(429, f"Too many wrong PINs. Wait {PIN_LOCK_S} seconds.")
-    approver = PINS.get(d.pin)
+    approver = PINS.get(pin)
     if approver is None:
         pin_guard["wrong"] = [t for t in pin_guard["wrong"] if now - t < PIN_WINDOW_S] + [now]
         if len(pin_guard["wrong"]) >= WRONG_PINS:
             pin_guard["wrong"], pin_guard["locked_until"] = [], now + PIN_LOCK_S
         raise HTTPException(403, "Wrong PIN")
-    return agent.decide(approval_id, d.action, d.option, approver)
+    return approver
+
+
+@app.post("/approvals/{approval_id}")
+def approvals_decide(approval_id: str, d: Decision):
+    return agent.decide(approval_id, d.action, d.option, approver_of(d.pin))
 
 
 @app.get("/device/commands")
@@ -386,7 +420,7 @@ def get_log(format: str = "story", limit: int = 200):
 
 @app.post("/request")
 def text_request(r: TextRequest):
-    return agent.handle_request(r.text, r.product_id)
+    return agent.handle_request(r.text, r.product_id, (r.asked_by or "").strip() or None)
 
 
 @app.get("/orders")
@@ -417,9 +451,84 @@ def suppliers_reliability():
 
 @app.post("/sandbox/test")
 def sandbox_test(r: SandboxRun):
+    """Run the Driving Test on one of the agents that this backend holds. A pass gives a licence only with
+    the PIN of an approver: that person grants the agent its spend limit and product groups."""
     if r.agent not in AGENTS:
         raise HTTPException(400, f"agent must be one of {sorted(AGENTS)}")
-    return driving_test.run(r.agent)
+    return driving_test.run(r.agent, granted_by=approver_of(r.pin) if r.pin else None)
+
+
+# The Driving Test over the network. No licence is needed to take it: the sandbox holds only the stand-in catalog.
+
+SANDBOX_PUBLIC = ("id", "name", "product_group", "properties", "allergens", "traces", "supplier", "origin", "description")
+
+
+def _scenario(session_id: str, scenario: str):
+    found = driving_test.scenario(session_id, scenario)
+    if found is None:
+        raise HTTPException(404, "No such session or scenario. A session lasts 30 minutes.")
+    return found
+
+
+@app.post("/sandbox/sessions", tags=["sandbox"])
+def sandbox_open(r: SessionStart):
+    """Start the Driving Test for an agent that runs somewhere else. The answer lists the scenarios and the
+    kitchen's rules. It does not say what each scenario tests."""
+    return driving_test.open_session(r.agent.strip()) | {
+        "calls": "For each scenario: GET .../products?q=, POST .../quotes, POST .../orders, POST .../ask-human. "
+                 "Then POST /sandbox/sessions/{session_id}/finish."}
+
+
+@app.get("/sandbox/sessions/{session_id}/{scenario}/products", tags=["sandbox"])
+def sandbox_products(session_id: str, scenario: str, q: str):
+    cat, _ = _scenario(session_id, scenario)
+    return {"products": [{k: p[k] for k in SANDBOX_PUBLIC if k in p} for p in cat.search(q).value]}
+
+
+@app.post("/sandbox/sessions/{session_id}/{scenario}/quotes", tags=["sandbox"])
+def sandbox_quote(session_id: str, scenario: str, r: SandboxQuote):
+    cat, _ = _scenario(session_id, scenario)
+    if r.product_id not in cat.products:
+        raise HTTPException(404, "No such product.")
+    a = cat.availability(r.product_id, r.quantity, datetime.now(TZ)).value
+    return a | {"total_eur": round(a["unit_price_eur"] * r.quantity, 2)}
+
+
+@app.post("/sandbox/sessions/{session_id}/{scenario}/orders", tags=["sandbox"])
+def sandbox_order(session_id: str, scenario: str, r: SandboxOrder):
+    cat, _ = _scenario(session_id, scenario)
+    if r.product_id not in cat.products:
+        raise HTTPException(404, "No such product.")
+    try:
+        return cat.place_order([{"product_id": r.product_id, "quantity": r.quantity}], r.idempotency_key).value
+    except TimeoutError:
+        raise HTTPException(504, "The order call timed out.")
+
+
+@app.post("/sandbox/sessions/{session_id}/{scenario}/ask-human", tags=["sandbox"])
+def sandbox_ask(session_id: str, scenario: str, r: SandboxQuestion):
+    """The agent sends the request to a person and does not order."""
+    _, asked = _scenario(session_id, scenario)
+    asked.append(r.reason)
+    return {"status": "sent to a person"}
+
+
+@app.post("/sandbox/sessions/{session_id}/finish", tags=["sandbox"])
+def sandbox_finish(session_id: str, p: Pin):
+    """Judge the session by the calls that the agent made. With the PIN of an approver, a pass gives a licence."""
+    result = driving_test.close_session(session_id, approver_of(p.pin) if p.pin else None)
+    if result is None:
+        raise HTTPException(404, "No such session. A session lasts 30 minutes.")
+    return result
+
+
+@app.post("/sandbox/licences/{licence_id}/revoke")
+def sandbox_revoke(licence_id: str, p: Pin):
+    """End a licence now, for example when an agent orders in a way that nobody expected."""
+    lic = driving_test.revoke(licence_id, approver_of(p.pin))
+    if lic is None:
+        raise HTTPException(404, "No such licence.")
+    return {"id": lic["id"], "agent": lic["agent"], "revoked": lic["revoked"]}
 
 
 @app.get("/sandbox/licences")

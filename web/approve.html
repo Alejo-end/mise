@@ -5,106 +5,232 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Safe Kitchen</title>
 <style>
-  :root { --bg:#f6f4ef; --card:#fff; --ink:#1d1d1b; --muted:#4a4944; --line:#e3e0d8;
-          --ok:#1f6b3f; --warn:#8a4d00; --bad:#a3201a; --accent:#1f4e8c; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#151514; --card:#1f1f1d; --ink:#eeece6; --muted:#a3a19a;
-          --line:#33322e; --ok:#5cc28a; --warn:#e3a33b; --bad:#ef6b62; --accent:#7fb0ff; } }
+  /* Berry and leaf on warm cream, with frosted glass cards. System fonts only: the page needs no network.
+     Every size is in rem, so "Larger text" scales the whole page evenly. */
+  :root { --bg:#f3f5fc; --ink:#0d1b45; --muted:#55608a; --line:rgba(20,40,110,0.13);
+          --glass:rgba(255,255,255,0.66); --edge:rgba(255,255,255,0.9); --field:rgba(255,255,255,0.78);
+          --shadow:0 1px 1px rgba(15,30,90,0.04), 0 12px 32px -14px rgba(20,50,150,0.28);
+          --accent:#1238b4; --accent2:#2f62ea; --on-accent:#fff; --pink:#d81b72; --pink-soft:#ff8fc0;
+          --ok:#12725a; --warn:#8a5200; --bad:#b3202c;
+          --blob1:rgba(255,120,180,0.34); --blob2:rgba(60,110,240,0.26); --blob3:rgba(255,170,205,0.30);
+          font-size:100% }
+  @media (prefers-color-scheme: dark) { :root { --bg:#080f2a; --ink:#eef1fc; --muted:#a6b0d6; --line:rgba(255,255,255,0.12);
+          --glass:rgba(255,255,255,0.07); --edge:rgba(255,255,255,0.14); --field:rgba(255,255,255,0.08);
+          --shadow:0 14px 34px -14px rgba(0,0,0,0.65);
+          --accent:#8fb0ff; --accent2:#6f95ff; --on-accent:#08133a; --pink:#ff8fc0; --pink-soft:#ff8fc0;
+          --ok:#6fd6b6; --warn:#f0b35a; --bad:#ff8f95;
+          --blob1:rgba(216,27,114,0.30); --blob2:rgba(47,98,234,0.34); --blob3:rgba(120,60,160,0.24); } }
+  html.large { font-size:120% }
   * { box-sizing:border-box }
-  body { margin:0; font:18px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink) }
-  main { max-width:640px; margin:0 auto; padding:16px }
-  header { display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap }
-  h1 { font-size:24px; margin:0 } h2 { font-size:19px; color:var(--ink); margin:28px 0 10px }
-  .meta { color:var(--muted); font-size:16px }
-  html.large { font-size:125% } html.large body { font-size:22px }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px }
-  .opt { border:1px solid var(--line); border-radius:10px; padding:10px; margin-top:10px }
+  body { margin:0; font:1rem/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); min-height:100vh }
+  body::before { content:""; position:fixed; inset:0; z-index:-1; pointer-events:none; background:
+      radial-gradient(34rem 26rem at 108% -6%, var(--blob1), transparent 62%),
+      radial-gradient(30rem 26rem at -12% 34%, var(--blob2), transparent 60%),
+      radial-gradient(32rem 24rem at 96% 92%, var(--blob3), transparent 62%) }
+  .app { max-width:40rem; margin:0 auto; padding:1rem 0.875rem 3.5rem }
+  header { display:flex; justify-content:space-between; align-items:center; gap:0.5rem; padding:0.25rem 0.125rem 0 }
+  .sidenote { display:none }
+  /* A wide screen: the roles sit in a panel on the left, and the work area has two columns. */
+  @media (min-width:64rem) {
+    .app { max-width:84rem; display:grid; grid-template-columns:17rem minmax(0,1fr); gap:2rem; padding:1.75rem 2rem 3rem; align-items:start }
+    .side { position:sticky; top:1.75rem; padding:1.125rem; border-radius:1.5rem; background:var(--glass); border:1px solid var(--edge); box-shadow:var(--shadow);
+        -webkit-backdrop-filter:blur(22px) saturate(170%); backdrop-filter:blur(22px) saturate(170%) }
+    .side header { flex-direction:column; align-items:flex-start; gap:0.75rem; padding:0 }
+    .side .roles { flex-direction:column; border-radius:1.125rem; background:transparent; border:0; box-shadow:none; padding:0; margin:1.25rem 0 0;
+        -webkit-backdrop-filter:none; backdrop-filter:none }
+    .side .roles button { text-align:left; padding:0.625rem 0.875rem; border-radius:0.875rem; flex:none }
+    .side .roles small { font-size:0.8125rem }
+    .sidenote { display:block; margin:1.25rem 0.25rem 0; font-size:0.8125rem }
+    main { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); gap:0 1.75rem; align-items:start }
+    main > section { grid-column:2 }
+    main > section.lead { grid-column:1; grid-row:1 / span 8 }
+    main h2 { margin-top:0.25rem }
+    main > section:not(.lead) + section:not(.lead) h2 { margin-top:1.25rem }
+  }
+  h1 { font-size:1.5rem; font-weight:750; line-height:1.1; letter-spacing:-0.025em; margin:0 } h1 span { color:var(--pink) }
+  #ruleset { display:flex; align-items:center; gap:0.375rem; margin-top:0.25rem }
+  #ruleset::before { content:""; width:0.5rem; height:0.5rem; border-radius:50%; background:var(--ok); box-shadow:0 0 0 0.1875rem color-mix(in srgb, var(--ok) 22%, transparent) }
+  h2 { font-size:0.75rem; font-weight:650; letter-spacing:0.09em; text-transform:uppercase; color:var(--pink); margin:1.625rem 0.25rem 0.5rem }
+  .meta { color:var(--muted); font-size:0.875rem }
+  .card, details { background:var(--glass); border:1px solid var(--edge); border-radius:1.25rem; box-shadow:var(--shadow);
+      -webkit-backdrop-filter:blur(22px) saturate(170%); backdrop-filter:blur(22px) saturate(170%); margin-bottom:0.625rem }
+  .card { padding:0.875rem }
+  @media (prefers-reduced-transparency: reduce) { .card, details { -webkit-backdrop-filter:none; backdrop-filter:none; background:color-mix(in srgb, var(--bg) 60%, #fff) } }
+  .opt { border-top:1px solid var(--line); padding-top:0.625rem; margin-top:0.625rem }
   .opt b { display:block }
-  .tag { display:inline-block; font-size:15px; font-weight:600; padding:1px 8px; border-radius:99px; border:1px solid currentColor; margin-right:6px }
+  .tag { display:inline-block; font-size:0.75rem; font-weight:650; padding:0.0625rem 0.5625rem; border-radius:99px; margin:0 0.25rem 0.3125rem 0;
+      background:color-mix(in srgb, currentColor 13%, transparent) }
   .allowed { color:var(--ok) } .needs_approval { color:var(--warn) } .forbidden { color:var(--bad) }
-  .reasons { color:var(--muted); font-size:16px; margin:6px 0 0 }
-  .lines { font-size:16px; margin:6px 0 0; padding-left:18px }
-  button { font:inherit; font-weight:600; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); padding:12px 18px; min-height:52px; font-size:18px; cursor:pointer }
-  button:focus-visible, input:focus-visible, select:focus-visible { outline:3px solid var(--accent); outline-offset:2px }
-  button.primary { background:var(--accent); border-color:var(--accent); color:#fff }
-  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px }
-  .empty { color:var(--muted) }
-  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px }
-  .stat { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 10px }
-  .stat span { display:block; font-size:15px; color:var(--muted) } .stat strong { font-size:22px }
-  ol.story { padding-left:24px; font-size:17px } ol.story li { margin:3px 0 }
-  input, select { font:inherit; padding:9px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--ink); width:100% }
-  pre { white-space:pre-wrap; font-size:14px; max-height:360px; overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px }
-  .tabs button[aria-pressed="true"] { border-color:var(--accent); color:var(--accent) }
+  .reasons { color:var(--muted); font-size:0.875rem; margin:0.375rem 0 0 }
+  .lines { font-size:0.9375rem; margin:0.375rem 0 0; padding-left:1.125rem }
+  button { font:inherit; font-weight:600; border-radius:99px; border:1px solid var(--line); background:var(--field); color:var(--ink);
+      padding:0.5rem 1rem; min-height:2.75rem; cursor:pointer; transition:transform 0.12s ease, filter 0.12s ease }
+  button:active { transform:scale(0.98) }
+  @media (prefers-reduced-motion: reduce) { button { transition:none } button:active { transform:none } }
+  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline:3px solid var(--accent); outline-offset:2px }
+  button.primary { border-color:transparent; color:var(--on-accent); background:linear-gradient(135deg, var(--accent2), var(--accent));
+      box-shadow:0 8px 18px -10px var(--accent), inset 0 1px 0 rgba(255,255,255,0.28) }
+  button.small { min-height:2.25rem; padding:0.25rem 0.75rem; font-size:0.875rem; font-weight:550 }
+  button:disabled { opacity:0.55 }
+  .row { display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.625rem }
+  .row > button { flex:1 1 auto }
+  .empty { color:var(--muted); margin:0 }
+  .stats { margin:0 }
+  .stats div { display:flex; justify-content:space-between; gap:0.5rem; padding:0.375rem 0; border-bottom:1px solid var(--line); font-size:0.9375rem }
+  .stats dt { color:var(--muted) } .stats dd { margin:0; font-weight:650; text-align:right; font-variant-numeric:tabular-nums }
+  input, select { font:inherit; padding:0.5rem 0.875rem; border-radius:0.875rem; border:1px solid var(--line); background:var(--field); color:var(--ink); width:100%; min-height:2.75rem }
+  .pin { display:flex; gap:0.25rem 0.5rem; align-items:center; flex-wrap:wrap; margin:0 0.25rem 0.625rem }
+  .pin label { white-space:nowrap; font-weight:550 } .pin input { width:7rem; flex:none } .pin .meta { flex:1 1 9rem }
+  summary { cursor:pointer; padding:0.875rem; font-weight:600; list-style:none; display:flex; justify-content:space-between; align-items:center; gap:0.5rem; border-radius:1.25rem }
+  summary::-webkit-details-marker { display:none }
+  summary::after { content:"+"; color:var(--accent); font-weight:400; font-size:1.25rem; line-height:1 }
+  details[open] > summary::after { content:"\2212" }
+  summary .meta { font-weight:400; margin-left:auto; text-align:right }
+  .inside { padding:0 0.875rem 0.875rem }
+  ul.plain { list-style:none; margin:0; padding:0 }
+  .log li { display:flex; gap:0.75rem; padding:0.375rem 0; border-top:1px solid var(--line); font-size:0.9375rem }
+  .log li:first-child { border-top:0 } .log time { color:var(--pink); font-variant-numeric:tabular-nums; font-size:0.8125rem; padding-top:0.125rem; flex:none }
+  .check li { display:flex; gap:0.625rem; align-items:flex-start; padding:0.4375rem 0; border-top:1px solid var(--line); font-size:0.9375rem }
+  .check .mark { flex:none; min-width:2.75rem; text-align:center; font-weight:700; font-size:0.75rem; padding:0.0625rem 0.375rem; border-radius:99px;
+      background:color-mix(in srgb, currentColor 13%, transparent); margin-top:0.125rem }
+  .check small { display:block; color:var(--muted); font-size:0.8125rem }
+  pre { white-space:pre-wrap; word-break:break-word; font-size:0.75rem; max-height:20rem; overflow:auto; margin:0; background:var(--field); border:1px solid var(--line); border-radius:0.875rem; padding:0.625rem }
   .alarm { color:var(--bad); font-weight:700 }
+  .roles { display:flex; gap:0.25rem; padding:0.25rem; margin:0.875rem 0 0.25rem; border-radius:99px; background:var(--glass); border:1px solid var(--edge);
+      box-shadow:var(--shadow); -webkit-backdrop-filter:blur(22px) saturate(170%); backdrop-filter:blur(22px) saturate(170%) }
+  .roles button { flex:1 1 0; min-width:0; border:0; background:transparent; padding:0.3125rem 0.25rem; line-height:1.15; min-height:2.75rem }
+  .roles small { display:block; font-weight:400; font-size:0.6875rem; color:var(--muted) }
+  .roles button[aria-selected="true"] { color:var(--on-accent); background:linear-gradient(135deg, var(--accent2), var(--accent)) }
+  .roles button[aria-selected="true"] small { color:inherit; opacity:0.85 }
+  section[data-role] { display:none }
+  html[data-as="chef"] section[data-role~="chef"], html[data-as="kitchen"] section[data-role~="kitchen"],
+  html[data-as="valio"] section[data-role~="valio"] { display:block }
+  #result:empty { display:none }
+  #result { position:fixed; left:50%; bottom:1rem; transform:translateX(-50%); z-index:5; margin:0; width:max-content; max-width:calc(100vw - 2rem);
+      padding:0.625rem 1rem; border-radius:1.25rem; color:var(--ink); font-size:0.9375rem; background:var(--glass); border:1px solid var(--edge);
+      box-shadow:var(--shadow); -webkit-backdrop-filter:blur(22px) saturate(170%); backdrop-filter:blur(22px) saturate(170%) }
 </style>
 </head>
 <body>
-<main>
+<div class="app">
+<aside class="side">
   <header>
-    <h1>Safe Kitchen Agent</h1>
-    <span class="meta" id="ruleset"></span>
-    <button id="size" aria-pressed="false">Larger text</button>
+    <div>
+      <h1>Safe Kitchen <span>Agent</span></h1>
+      <div class="meta" id="ruleset"></div>
+    </div>
+    <button id="size" class="small" aria-pressed="false">Larger text</button>
   </header>
-
-  <h2>Kitchen</h2>
-  <div class="stats" id="stats"></div>
-
-  <h2>Waiting for you</h2>
-  <div class="card" style="display:flex;gap:8px;align-items:center">
-    <label for="pin" style="white-space:nowrap">Your PIN</label>
-    <input id="pin" type="password" inputmode="numeric" autocomplete="off" style="max-width:140px" aria-describedby="pinHelp">
-    <span class="meta" id="pinHelp">Needed to approve. Your name in the log comes from it.</span>
+  <!-- Three people use this system. Each one sees only the own part. -->
+  <div class="roles" role="tablist" aria-label="Who you are">
+    <button role="tab" data-pick="chef">Head chef<small>approves orders</small></button>
+    <button role="tab" data-pick="kitchen">Kitchen<small>asks for products</small></button>
+    <button role="tab" data-pick="valio">Wholesaler<small>admits agents</small></button>
   </div>
-  <div id="approvals" aria-live="polite"><p class="empty">Nothing to approve.</p></div>
+  <p class="meta sidenote">One system, three people. The head chef uses a phone. The kitchen and the wholesaler use a screen.</p>
+</aside>
+<main>
+  <p class="reasons" id="result" role="status" aria-live="polite"></p>
 
-  <h2>Ask for something</h2>
-  <div class="card">
-    <input id="text" value="1,000 litres of lactose-free milk by Monday" aria-label="Request">
-    <div class="row">
-      <button class="primary" id="send">Send request</button>
+  <section data-role="chef" class="lead">
+    <h2>Waiting for your approval</h2>
+    <div class="pin">
+      <label for="pin">Your PIN</label>
+      <input id="pin" type="password" inputmode="numeric" autocomplete="off" aria-describedby="pinHelp">
+      <span class="meta" id="pinHelp">Your name in the log comes from it.</span>
     </div>
-    <div class="row">
-      <select id="force" aria-label="Force a product">
-        <option value="MOCK-ALMOND-1L">Force: Almond drink (nuts)</option>
-        <option value="MOCK-MILK-REG-1L">Force: Semi-skimmed milk (not lactose-free)</option>
-        <option value="MOCK-MILK-LF-1L-X">Force: Import milk (no allergen data)</option>
-        <option value="MOCK-YOG-GRANOLA">Force: Granola yogurt (nut traces)</option>
-      </select>
-      <input id="forceCode" placeholder="or a product code" aria-label="Product code" style="max-width:200px">
-      <button id="forceBtn">Try to order 20</button>
+    <div id="approvals" aria-live="polite"><div class="card"><p class="empty">Nothing to approve.</p></div></div>
+  </section>
+
+  <section data-role="chef">
+    <h2>Your kitchen</h2>
+    <div class="card">
+      <dl class="stats" id="stats"></dl>
+      <p class="meta" id="shelf" style="margin:0.5rem 0 0"></p>
     </div>
-    <p class="reasons" id="result" role="status" aria-live="polite"></p>
-  </div>
+  </section>
 
-  <h2>Deliveries</h2>
-  <div class="card">
-    <div id="deliveries"><p class="empty">No delivery checked yet. Hold the knob on the box for 2 seconds when a delivery arrives.</p></div>
-    <div id="reliability"></div>
-  </div>
-
-  <h2>Agent Driving Test</h2>
-  <div class="card">
-    <p class="meta" style="margin-top:0">An outside buying agent must pass these tests in a sandbox copy of the catalog before it may order for real.</p>
-    <div class="row">
-      <button class="primary" data-test="safe-kitchen">Test our agent</button>
-      <button data-test="naive">Test a naive agent</button>
+  <section data-role="kitchen" class="lead">
+    <h2>Ask the agent to order</h2>
+    <div class="card">
+      <label class="meta" for="who">Your name</label>
+      <input id="who" placeholder="For example: Aino, morning shift" autocomplete="off" style="margin:0.25rem 0 0.625rem">
+      <label class="meta" for="text">What the kitchen needs</label>
+      <input id="text" value="1,000 litres of lactose-free milk by Monday" style="margin-top:0.25rem">
+      <div class="row"><button class="primary" id="send">Send request</button></div>
+      <p class="meta" style="margin:0.625rem 0 0">A small order goes out alone. A large one waits for the head chef.</p>
     </div>
-    <div id="dtest"></div>
-  </div>
+    <details>
+      <summary>Try a product that the rules forbid</summary>
+      <div class="inside">
+        <select id="force" aria-label="Product to force"></select>
+        <input id="forceCode" placeholder="Product code" aria-label="Product code" style="margin-top:0.5rem">
+        <div class="row"><button id="forceBtn">Try to order 20</button></div>
+      </div>
+    </details>
+  </section>
 
-  <h2>Audit log</h2>
-  <div class="row tabs">
-    <button id="tStory" aria-pressed="true">Story</button>
-    <button id="tJson" aria-pressed="false">Data</button>
-  </div>
-  <ol class="story" id="story"></ol>
-  <pre id="json" hidden></pre>
+  <section data-role="kitchen">
+    <h2>Deliveries</h2>
+    <details id="delBox" open>
+      <summary>Checked at the door <span class="meta" id="delCount">none checked</span></summary>
+      <div class="inside">
+        <div id="deliveries"><p class="empty">Hold the knob on the box for 2 seconds when a delivery arrives.</p></div>
+        <div id="reliability"></div>
+      </div>
+    </details>
+  </section>
+
+  <section data-role="valio" class="lead">
+    <h2>Admit an outside agent</h2>
+    <div class="card">
+      <p class="meta" style="margin:0">Step 1. The wholesaler tests the agent: six scenarios on a copy of the catalog.</p>
+      <div class="row">
+        <button class="primary" data-test="safe-kitchen">Test our agent</button>
+        <button data-test="naive">Test a naive agent</button>
+      </div>
+      <div id="dtest" aria-live="polite"></div>
+      <div id="grant" hidden>
+        <p class="meta" style="margin:0.75rem 0 0.375rem">Step 2. The head chef grants the licence. It lets the agent order for this kitchen, up to the kitchen's limit.</p>
+        <div class="pin" style="margin:0">
+          <label for="grantPin">Head chef's PIN</label>
+          <input id="grantPin" type="password" inputmode="numeric" autocomplete="off">
+          <button class="primary" id="grantBtn" style="flex:1 1 8rem">Grant licence</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section data-role="valio">
+    <h2>Licences</h2>
+    <details id="licBox" open>
+      <summary>Agents that may order <span class="meta" id="licCount">none</span></summary>
+      <div class="inside"><ul class="plain check" id="licences"></ul></div>
+    </details>
+  </section>
+
+  <section data-role="chef valio">
+    <h2>Audit log</h2>
+    <div class="card">
+      <ul class="plain log" id="story"></ul>
+      <div class="row"><button class="small" id="more" aria-expanded="false">Show more</button></div>
+    </div>
+  </section>
+  <section data-role="valio">
+    <details id="dataBox">
+      <summary>The same entries as data</summary>
+      <div class="inside"><pre id="json"></pre></div>
+    </details>
+  </section>
 </main>
+</div>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const label = (r) => r.replace("_", " ");
-let view = "story";
+const WHO = {device: "the shelf camera", chef: "the kitchen", agent: "the agent"};  // log names to plain words
+const SHORT = 5;  // log lines shown before "Show more"
+let showAll = false, forceFor = null;
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -119,11 +245,12 @@ function renderApprovals(list) {
   const key = JSON.stringify(list.map(a => [a.id, a.options.map(o => o.total_eur)]));
   if (key === shownApprovals) return;
   shownApprovals = key;
-  if (!list.length) { $("approvals").innerHTML = '<p class="empty">Nothing to approve.</p>'; return; }
+  if (!list.length) { $("approvals").innerHTML = '<div class="card"><p class="empty">Nothing to approve.</p></div>'; return; }
   $("approvals").innerHTML = list.map(a => `
     <div class="card">
       <b>${esc(a.what)}${a.slot ? " · slot " + a.slot : ""}</b>
-      <div class="meta">Asked ${esc(a.created.slice(11,16))} · approver ${esc(a.approver)}</div>
+      <div class="meta">${a.asked_by ? `Asked by ${esc(WHO[a.asked_by] || a.asked_by)}` : "Asked"} at ${esc(a.created.slice(11,16))}</div>
+      ${a.request ? `<div class="meta">“${esc(a.request)}”</div>` : ""}
       ${a.options.map((o, i) => `
         <div class="opt">
           <span class="tag ${o.result}">${esc(o.label)}</span><span class="tag ${o.result}">${label(o.result)}</span>
@@ -133,9 +260,9 @@ function renderApprovals(list) {
           <p class="reasons">${o.reasons.map(esc).join("; ")}</p>
           ${o.reasons.some(r => r.includes("check the label")) ? `<p class="reasons"><b>Read the label before you approve.</b>
             The agent keeps your answer and does not ask again for this product.</p>` : ""}
-          <div class="row"><button class="${i===0?"primary":""}" data-a="${a.id}" data-o="${i}">${i===0?"Approve":"Choose this"}</button></div>
+          <div class="row"><button class="${i===0?"primary":""}" data-a="${a.id}" data-o="${i}">${i===0?"Approve":"Choose this"}</button>
+            ${i===a.options.length-1 ? `<button data-a="${a.id}" data-skip="1">Skip</button>` : ""}</div>
         </div>`).join("")}
-      <div class="row"><button data-a="${a.id}" data-skip="1">Skip</button></div>
     </div>`).join("");
 }
 
@@ -152,11 +279,15 @@ $("approvals").addEventListener("click", async (e) => {
 });
 
 $("send").onclick = async () => {
-  const r = await post("/request", {text: $("text").value});
-  $("result").textContent = `Result: ${label(r.status)}.`; tick();
+  const r = await post("/request", {text: $("text").value, asked_by: $("who").value.trim() || null});
+  $("result").textContent = r.status === "ordered" ? `Ordered: ${r.order_id}, €${r.total_eur.toFixed(2)}.`
+    : r.status === "needs_approval" ? "Sent to the head chef for approval."
+    : r.status === "no_match" ? "The agent found no product for this request." : `Result: ${label(r.status)}.`;
+  tick();
 };
 $("forceBtn").onclick = async () => {
-  const r = await post("/request", {text: "20 forced item", product_id: $("forceCode").value.trim() || $("force").value});
+  const r = await post("/request", {text: "20 forced item", product_id: $("forceCode").value.trim() || $("force").value,
+                                    asked_by: $("who").value.trim() || null});
   $("result").innerHTML = r.status === "forbidden"
     ? `<span class="forbidden">Blocked by rule set v${r.rule_set_version}:</span> ${esc(r.reasons.join("; "))}`
     : `Result: ${label(r.status)}.`;
@@ -165,44 +296,100 @@ $("forceBtn").onclick = async () => {
 try { $("pin").value = sessionStorage.getItem("pin") || ""; } catch (e) {}
 $("pin").addEventListener("change", () => { try { sessionStorage.setItem("pin", $("pin").value); } catch (e) {} });
 
-document.querySelectorAll("[data-test]").forEach(b => b.onclick = async () => {
-  b.disabled = true; $("dtest").innerHTML = '<p class="meta">Running six scenarios…</p>';
-  const r = await post("/sandbox/test", {agent: b.dataset.test});
-  b.disabled = false;
-  $("dtest").innerHTML = `<p><b class="${r.passed ? "allowed" : "forbidden"}">${esc(r.summary)}</b></p>
-    <ul class="lines">${r.results.map(x => `<li><span class="${x.passed ? "allowed" : "forbidden"}">${x.passed ? "Pass" : "Fail"}</span>
-      ${esc(x.title)}: ${esc(x.observed)}</li>`).join("")}</ul>
-    ${r.licence ? `<p class="meta">Licence for ${esc(r.licence.scope.product_groups.join(", "))}, up to €${r.licence.scope.spend_limit_eur}, until ${esc(r.licence.expires.slice(0,16).replace("T"," "))}.</p>` : ""}`;
+let lastTest = null;
+async function runTest(agentKey, pin) {
+  $("dtest").innerHTML = '<p class="meta">Running six scenarios…</p>'; $("grant").hidden = true;
+  const resp = await fetch("/sandbox/test", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({agent: agentKey, pin})});
+  const r = await resp.json();
+  if (!resp.ok) { $("dtest").innerHTML = `<p class="reasons forbidden">${esc(r.detail || "The test did not run.")}</p>`; $("grant").hidden = !lastTest; return; }
+  lastTest = agentKey;
+  const ok = r.results.filter(x => x.passed).length, lic = r.licence;
+  const outcome = !r.passed ? "No licence. The agent stays in the sandbox."
+    : lic ? `${esc(lic.granted_by)} granted the licence: up to €${lic.scope.spend_limit_eur} for each order, for 24 hours.`
+    : "Passed the test. It has no licence yet.";
+  $("dtest").innerHTML = `<p style="margin:0.75rem 0 0.25rem"><b class="${r.passed ? "allowed" : "forbidden"}">${esc(r.agent)}: ${ok} of ${r.results.length} passed</b></p>
+    <p class="meta" style="margin:0 0 0.5rem">${outcome}</p>
+    <ul class="plain check">${r.results.map(x => `<li><span class="mark ${x.passed ? "allowed" : "forbidden"}">${x.passed ? "Pass" : "Fail"}</span>
+      <span>${esc(x.title)}<small>${esc(x.observed[0].toUpperCase() + x.observed.slice(1))}.</small></span></li>`).join("")}</ul>`;
+  $("grant").hidden = !(r.passed && !lic);
+  tick();
+}
+document.querySelectorAll("[data-test]").forEach(b => b.onclick = async () => { b.disabled = true; await runTest(b.dataset.test, ""); b.disabled = false; });
+$("grantBtn").onclick = async () => { if ($("grantPin").value.trim()) await runTest(lastTest, $("grantPin").value.trim()); else $("grantPin").focus(); };
+$("licences").addEventListener("click", async (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  const pin = ($("grantPin").value || $("pin").value).trim();
+  const resp = await fetch(`/sandbox/licences/${b.dataset.end}/revoke`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({pin})});
+  $("result").textContent = resp.ok ? "The licence is ended." : "To end a licence, enter the head chef's PIN in step 2 first.";
   tick();
 });
 
-$("tStory").onclick = () => { view = "story"; $("tStory").setAttribute("aria-pressed","true"); $("tJson").setAttribute("aria-pressed","false"); tick(); };
-$("tJson").onclick = () => { view = "json"; $("tJson").setAttribute("aria-pressed","true"); $("tStory").setAttribute("aria-pressed","false"); tick(); };
+function setRole(role) {
+  document.documentElement.dataset.as = role;
+  document.querySelectorAll("[data-pick]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.pick === role)));
+  $("result").textContent = "";
+  try { localStorage.setItem("role", role); } catch (e) {}
+}
+document.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => setRole(b.dataset.pick));
+{ // A phone starts as the head chef, a wide screen as the wholesaler. "?as=kitchen" in the address picks a role.
+  let role = new URLSearchParams(location.search).get("as");
+  try { role = role || localStorage.getItem("role"); } catch (e) {}
+  setRole(["chef", "kitchen", "valio"].includes(role) ? role : (matchMedia("(max-width: 40rem)").matches ? "chef" : "valio"));
+}
+try { $("who").value = localStorage.getItem("who") || ""; } catch (e) {}
+$("who").addEventListener("change", () => { try { localStorage.setItem("who", $("who").value); } catch (e) {} });
+
+$("more").onclick = () => { showAll = !showAll; tick(); };
+$("dataBox").addEventListener("toggle", tick);
+
+function forceOptions(catalog) {
+  // The stand-in catalog has four products that show a refusal. On the real catalog, type a product code.
+  if (forceFor === catalog) return;
+  forceFor = catalog;
+  const standIn = catalog.includes("stand-in");
+  $("force").hidden = !standIn;
+  $("force").innerHTML = standIn ? [["MOCK-ALMOND-1L", "Almond drink (nuts)"], ["MOCK-MILK-REG-1L", "Semi-skimmed milk (not lactose-free)"],
+    ["MOCK-MILK-LF-1L-X", "Import milk (no allergen data)"], ["MOCK-YOG-GRANOLA", "Granola yogurt (nut traces)"]]
+    .map(([v, t]) => `<option value="${v}">${t}</option>`).join("") : "";
+  $("forceCode").placeholder = standIn ? "or a product code" : "Product code from the Valio catalog";
+}
 
 async function tick() {
   try {
     const [approvals, dev, log, dels, rel] = await Promise.all([
-      api("/approvals/open"), api("/device"), api(view === "story" ? "/log?format=story&limit=60" : "/log?format=json&limit=60"),
+      api("/approvals/open"), api("/device"), api("/log?format=story&limit=60"),
       api("/deliveries"), api("/suppliers/reliability")]);
+    const lics = await api("/sandbox/licences");
+    const live = lics.filter(l => !l.revoked && new Date(l.expires) > new Date());
+    $("licCount").textContent = live.length ? `${live.length} in force` : "none in force";
+    $("licences").innerHTML = lics.slice().reverse().slice(0, 8).map(l => { const on = live.includes(l); return `<li>
+      <span class="mark ${on ? "allowed" : "forbidden"}">${on ? "Live" : "Ended"}</span>
+      <span style="flex:1">${esc(l.agent)}<small>Up to €${l.scope.spend_limit_eur} for each order. Granted by ${esc(l.granted_by || "nobody")} at ${esc(l.issued.slice(11,16))}.</small></span>
+      ${on ? `<button class="small" data-end="${esc(l.id)}">End</button>` : ""}</li>`; }).join("") || '<li class="empty">No licence yet.</li>';
+    $("delCount").textContent = dels.length ? `${dels.length} checked` : "none checked";
     if (dels.length) $("deliveries").innerHTML = `<ul class="lines">${dels.slice(0, 5).map(d =>
       `<li class="${d.problems.length ? "forbidden" : "allowed"}">${esc(d.summary)}</li>`).join("")}</ul>`;
     $("reliability").innerHTML = rel.length ? `<p class="meta">Supplier record: ${rel.map(r =>
       `${esc(r.supplier)} ${Math.round(r.score * 100)}% good (${r.good} of ${r.deliveries})`).join(" · ")}</p>` : "";
-    if (!dev.pins_set) $("pinHelp").textContent = "No PINs are set on the laptop. Put APPROVER_PINS in valio-challenge/.env.";
+    if (!dev.pins_set) $("pinHelp").textContent = "No PIN is set. Put APPROVER_PINS in valio-challenge/.env.";
     renderApprovals(approvals);
-    $("ruleset").textContent = `Rule set v${dev.rule_set_version}, signed by ${dev.signed_by}`;
-    const slots = Object.entries(dev.slots).map(([k, v]) => `${k}: ${v.state}`).join(", ") || "no data";
+    $("ruleset").textContent = `Rule set v${dev.rule_set_version} · ${dev.catalog.includes("stand-in") ? "stand-in catalog" : "live Valio catalog"}`;
+    forceOptions(dev.catalog);
     $("stats").innerHTML = [
       ["Cold room", dev.temperature_c == null ? "–" : `<span class="${dev.alarm ? "alarm" : ""}">${dev.temperature_c.toFixed(1)} °C</span>`],
-      ["Auto limit (knob)", dev.auto_limit_eur == null ? "–" : `€${dev.auto_limit_eur}`],
+      ["Limit (knob)", dev.auto_limit_eur == null ? "–" : `€${dev.auto_limit_eur}`],
       ["Spent this week", `€${dev.weekly_spent_eur.toFixed(2)}`],
-      ["Shelf", esc(slots)],
-      ["Shelf box", dev.online ? "online" : (dev.last_seen ? `<span class="alarm">offline since ${esc(dev.last_seen.slice(11,16))}</span>` : "never seen")],
-      ["Catalog", esc(dev.catalog)],
-    ].map(([k, v]) => `<div class="stat"><span>${k}</span><strong>${v}</strong></div>`).join("");
-    if (view === "story") { $("json").hidden = true; $("story").hidden = false;
-      $("story").innerHTML = log.story.slice().reverse().map(l => `<li>${esc(l)}</li>`).join(""); }
-    else { $("story").hidden = true; $("json").hidden = false; $("json").textContent = JSON.stringify(log.slice().reverse(), null, 2); }
+      ["Shelf box", dev.online ? "online" : (dev.last_seen ? `<span class="alarm">offline ${esc(dev.last_seen.slice(11,16))}</span>` : "never seen")],
+    ].map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
+    const slots = Object.entries(dev.slots).map(([k, v]) => `slot ${k} ${v.state}`).join(" · ");
+    $("shelf").textContent = slots ? `Shelf: ${slots}` : "Shelf: no data from the camera yet.";
+    const lines = log.story.slice().reverse();
+    $("story").innerHTML = lines.slice(0, showAll ? lines.length : SHORT).map(l =>
+      `<li><time>${esc(l.slice(0, 5))}</time><span>${esc(l.slice(6))}</span></li>`).join("") || '<li class="empty">Nothing yet.</li>';
+    $("more").hidden = lines.length <= SHORT;
+    $("more").textContent = showAll ? "Show the latest only" : `Show ${lines.length - SHORT} more`;
+    $("more").setAttribute("aria-expanded", String(showAll));
+    if ($("dataBox").open) $("json").textContent = JSON.stringify((await api("/log?format=json&limit=20")).slice().reverse(), null, 1);
   } catch (e) { $("result").textContent = "Backend not reachable."; }
 }
 function setSize(large) {

@@ -28,8 +28,9 @@ purchasable products again.
 
 ## 2. Known failures and limits (say them out loud)
 
-1. **Demo step 1:** the Driving Test fails 5 of 6 on integration (sandbox runs the stand-in catalogue with the real
-   rule set). Fix on `fix/sandbox-harness` (03608dd, Alejo's files), not merged.
+1. **Demo step 1: fixed by the merge of `review-14-nov` (19a24a8) on 14 Nov at 11:30.** The Driving Test passes 6 of 6
+   with the real rule set, checked on the live API. `fix/sandbox-harness` (03608dd) fixes the same fault and adds
+   argument validation. It is not merged, and it now overlaps this fix.
 2. **Every live order goes to a person:** the mock API gives a delivery date without a time (decision G).
 3. **"Stock is short" cannot happen live:** the mock API reports 9,999,999,999 available (decision I).
 4. **Demo step 4** needs a new signed rule set (weekly limit and no allergen-free usual product).

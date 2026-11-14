@@ -2,7 +2,7 @@
 
     GET  /gateway/products?q=...     lookup: products with their source, time and hash
     POST /gateway/quotes             price, stock, delivery date and the rule decision, nothing ordered
-    POST /gateway/orders             order a quote: placed, sent to a person, or refused
+    POST /gateway/orders             order a quote: placed, sent to a person, or refused. Never above the quoted price
     GET  /gateway/orders/{run_id}    what became of an order request
     GET  /gateway/audit?run_id=...   the log entries of one order request
     GET  /gateway/key                the public key that checks the signature on quotes and order answers
@@ -14,12 +14,19 @@ same rule check, approval and audit log as an order from the kitchen itself.
 
 A restart of the backend keeps licences, placed orders and open approvals: they come back from
 the audit log. It forgets quotes, which live 15 minutes, and the answers of refused requests.
+
+What the wholesaler keeps to itself: a quote shows no more stock than the quantity asked for, and
+no raw record of the product. One licence gets a fixed number of lookups and quotes per minute,
+because each quote costs two calls to the wholesaler's systems and a fast agent can read the
+stock of the whole catalog.
 """
 
 from __future__ import annotations
 
 import hashlib
+import time as clock
 import uuid
+from collections import defaultdict, deque
 from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Header, HTTPException
@@ -30,11 +37,12 @@ from .agent import DRY, NEEDED_HOUR
 from .rules import TZ
 
 QUOTE_VALID = timedelta(minutes=15)
-PUBLIC = ("id", "name", "product_group", "properties", "allergens", "traces", "supplier", "origin", "pack",
+LOOKUPS_PER_MINUTE = 60  # lookups and quotes of one licence
+PUBLIC = ("id", "gtin", "name", "product_group", "properties", "allergens", "traces", "supplier", "origin", "pack",
           "max_temp_c", "delivery_reliability", "carbon_kg_co2e_per_kg", "sales_unit", "lot_size", "units",
           "deposits", "mass_kg")
 HTTP_STATUS = {"ordered": 201, "needs_approval": 202, "forbidden": 403, "no_match": 404, "not_orderable": 409,
-               "blocked": 409, "invalid_quantity": 422, "error": 502}
+               "blocked": 409, "price_changed": 409, "invalid_quantity": 422, "error": 502}
 RELIABILITY_MEANING = ("historical share of the ordered quantity that was delivered (Valio challenge file); "
                        "not an on-time delivery probability")
 
@@ -88,6 +96,7 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
     router = APIRouter(prefix="/gateway", tags=["gateway"])
     quotes: dict[str, dict] = {}
     refused: dict[str, dict] = {}  # run id -> the answer of a request that ended with no order and no approval
+    asked: dict[str, deque] = defaultdict(deque)  # licence id -> the times of its lookups and quotes
 
     def licence(authorization: str | None) -> dict:
         token = (authorization or "").removeprefix("Bearer ").strip()
@@ -95,6 +104,16 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
         if lic is None:
             raise HTTPException(401, "A valid licence is needed. An agent gets one when it passes POST /sandbox/test.")
         return lic
+
+    def throttle(lic: dict) -> None:
+        """Refuse a licence that asks more often than LOOKUPS_PER_MINUTE."""
+        times, now = asked[lic["id"]], clock.monotonic()
+        while times and now - times[0] > 60:
+            times.popleft()
+        if len(times) >= LOOKUPS_PER_MINUTE:
+            raise HTTPException(429, f"More than {LOOKUPS_PER_MINUTE} lookups and quotes in a minute. Wait and ask again.",
+                                headers={"Retry-After": "60"})
+        times.append(now)
 
     def deadline(day: date | None) -> datetime | None:
         """A date with no time means the same hour as "by Monday" in a text request."""
@@ -125,7 +144,7 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
 
     @router.get("/products")
     def products(q: str, authorization: str | None = Header(default=None)):
-        licence(authorization)
+        throttle(licence(authorization))
         claim = catalog.search(q)
         return {"query": q, "products": [public(p) for p in claim.value],
                 "source": {"endpoint": claim.endpoint, "checked_at": claim.checked_at, "sha256": claim.sha256}}
@@ -133,6 +152,7 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
     @router.post("/quotes")
     def quote(body: QuoteRequest, authorization: str | None = Header(default=None)):
         lic = licence(authorization)
+        throttle(lic)
         q = agent.quote_exact(body.product_id, body.quantity, deadline(body.needed_by), **who(lic))
         if q["status"] != "quote":
             why = f": {q['reason']}" if q.get("reason") else ""
@@ -144,7 +164,8 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
                 "the end of the price's validity (validTo)": _when(line.get("price_valid_to"))}
         limit, valid_until = min(((k, v) for k, v in ends.items() if v is not None), key=lambda kv: kv[1])
         quotes[quote_id] = {"licence_id": lic["id"], "product_id": body.product_id, "quantity": body.quantity,
-                            "needed_by": body.needed_by, "valid_until": valid_until}
+                            "needed_by": body.needed_by, "valid_until": valid_until,
+                            "unit_price_eur": q["unit_price_eur"]}
         deposits = q["charges"]["deposits"]
         return signer.sign({
             "quote_id": quote_id, "valid_until": valid_until.isoformat(timespec="seconds"), "valid_until_set_by": limit,
@@ -160,7 +181,9 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
             "delivery_charge": q["charges"]["delivery"],
             "deposit_charge": deposits.get(body.product_id, "none listed in the product data"),
             "comparison": comparison(q["product"], body.quantity),
-            "source": q["source"], "decision": q["decision"].to_dict(), "claims": q["claims"]})
+            "source": q["source"], "decision": q["decision"].to_dict(),
+            # Where and when the gateway got the product and the price. The raw records stay inside.
+            "claims": [{k: c[k] for k in ("endpoint", "checked_at", "sha256")} for c in q["claims"]]})
 
     @router.post("/orders")
     def order(body: OrderRequest, authorization: str | None = Header(default=None)):
@@ -180,7 +203,7 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
                               "licence_id": lic["id"], "product_id": q["product_id"], "quantity": q["quantity"]},
                   lic["agent"], agent.rules["version"], run_id=run)
         result = agent.order_exact(q["product_id"], q["quantity"], run, deadline=deadline(q["needed_by"]),
-                                   actor=lic["agent"], **who(lic))
+                                   actor=lic["agent"], max_unit_price_eur=q["unit_price_eur"], **who(lic))
         if result["status"] not in ("ordered", "needs_approval"):
             refused[run] = result
         return answer(run, result)

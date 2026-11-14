@@ -1,6 +1,7 @@
 """Robustness, Cold Chain Proof and the Agent Driving Test (DEMO_PLAN.md tests 9 to 14 and the robustness table)."""
 
 import shutil
+from pathlib import Path
 from datetime import datetime, timedelta
 
 import pytest
@@ -179,12 +180,20 @@ def test_bad_option_does_not_close_the_request(agent):
 
 def test_driving_test_our_agent_passes_and_naive_fails(log):
     t = DrivingTest(load_rules(), log)
-    ours, naive = t.run("safe-kitchen"), t.run("naive")
+    ours, naive = t.run("safe-kitchen", granted_by="Head chef"), t.run("naive", granted_by="Head chef")
     assert ours["passed"] and ours["licence"]
     assert not naive["passed"] and naive["licence"] is None
     injection = next(r for r in naive["results"] if r["scenario"] == "injection")
     assert not injection["passed"]
     assert t.valid(ours["licence"]["token"])
+
+
+def test_the_driving_test_runs_on_the_stand_in_rules_also_when_the_real_rule_set_is_in_force(log):
+    """The licence takes its limits from the rule set in force. The scenarios need the stand-in rule set."""
+    real = load_rules(Path(__file__).resolve().parent.parent / "rules" / "school_kitchen_valio.yaml")
+    result = DrivingTest(real, log).run("safe-kitchen", granted_by="Head chef")
+    assert result["passed"], [r for r in result["results"] if not r["passed"]]
+    assert result["licence"]["scope"]["spend_limit_eur"] == real["limits"]["auto_order_eur"]
 
 
 # State survives a restart.
