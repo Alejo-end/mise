@@ -511,7 +511,7 @@ def _scan_answer(product: dict) -> dict:
     """What the catalog and this kitchen's rules say about one product, for a person who holds the pack."""
     forbidden, person = R.safety(product, ruleset)
     verdict = "forbidden" if forbidden else "read_label" if person else "allowed"
-    limit = product.get("max_temp_c")
+    limit = _limit_for(product)
     now = datetime.now(TZ)
     air = exposure(cold_log.readings(now - timedelta(hours=24)), limit, _allowed_minutes(), None, now)
     slot = next((t["slot"] for t in ruleset["targets"] if str(t.get("product_id")) == str(product["id"])), None)
@@ -562,7 +562,37 @@ cold_alerted: set[tuple[int, str]] = set()  # (slot, start of the breach): one a
 
 
 def _allowed_minutes() -> int:
-    return int((ruleset.get("cold_chain") or {}).get("max_minutes_above", DEFAULT_ALLOWED_MIN))
+    """The kitchen's limit from the rule set. COLD_ALLOWED_MINUTES replaces it for a demo, so the alert shows in minutes."""
+    demo = os.getenv("COLD_ALLOWED_MINUTES", "").strip()
+    return int(demo) if demo.isdigit() else int((ruleset.get("cold_chain") or {}).get("max_minutes_above", DEFAULT_ALLOWED_MIN))
+
+
+def _limit_for(product: dict) -> float | None:
+    """The storage limit of a product: the manufacturer's from the catalog, or else the kitchen's own from the rule set."""
+    if product.get("max_temp_c") is not None:
+        return product["max_temp_c"]
+    own = next((t.get("keep_at_or_below_c") for t in ruleset["targets"]
+                if product.get("id") is not None and str(t.get("product_id")) == str(product["id"])), None)
+    return own if own is not None else COLD_LIMITS.get(str(product.get("id")))
+
+
+def _own_cold_limits() -> dict[str, float]:
+    """COLD_LIMITS="464316:6,463335:6": the kitchen's own limit for products whose catalog entry has none.
+
+    The right home for these is a rule set target (`keep_at_or_below_c`), which the code reads first. A new
+    rule set version changes the ids that the shelf box calibrates against, so for now a setting carries them.
+    """
+    out = {}
+    for pair in os.getenv("COLD_LIMITS", "").split(","):
+        pid, _, value = pair.partition(":")
+        try:
+            out[pid.strip()] = float(value)
+        except ValueError:
+            continue
+    return out
+
+
+COLD_LIMITS = _own_cold_limits()
 
 
 def _cold_products(since: datetime | None = None) -> list[dict]:
@@ -570,7 +600,7 @@ def _cold_products(since: datetime | None = None) -> list[dict]:
     readings, now, out = cold_log.readings(since), datetime.now(TZ), []
     for t in sorted(ruleset["targets"], key=lambda t: t["slot"]):
         product = (catalog.product(t["product_id"]).value if t.get("product_id") else None) or {}
-        e = exposure(readings, product.get("max_temp_c"), _allowed_minutes(), since, now)
+        e = exposure(readings, _limit_for(product | {"id": t.get("product_id")}), _allowed_minutes(), since, now)
         out.append(e.to_dict() | {"slot": t["slot"], "product": t.get("product")})
     return out
 
@@ -642,7 +672,7 @@ def order_chain(order_id: str):
     stored = {"step": "stored", "done": False, "time": None, "who": "cold log", "text": "The storage record starts after the delivery check."}
     if delivery is not None and delivered_at:
         since = datetime.fromisoformat(delivered_at)
-        limits = [(catalog.product(l["product_id"]).value or {}).get("max_temp_c") for l in order["lines"]]
+        limits = [_limit_for((catalog.product(l["product_id"]).value or {}) | {"id": l["product_id"]}) for l in order["lines"]]
         limit = min((x for x in limits if x is not None), default=None)
         e = exposure(cold_log.readings(since), limit, _allowed_minutes(), since, datetime.now(TZ))
         stored = {"step": "stored", "done": e.state != "unknown", "time": e.measured_at, "who": "cold log", "state": e.state,

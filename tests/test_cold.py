@@ -125,3 +125,19 @@ def test_the_cold_room_state_comes_with_the_scanned_product(client):
     client.post("/cold/reading", json={"temperature_c": 9.0})
     milk = client.get("/scan/31").json()["matches"][0]
     assert milk["cold_room"]["state"] == "warm" and milk["cold_room"]["limit_c"] == 6
+
+
+def test_the_kitchens_own_limit_stands_in_when_the_catalog_has_none(client, monkeypatch):
+    import backend.app as m
+    product = {"id": "X1", "name": "Test cream", "max_temp_c": None}
+    assert m._limit_for(product) is None
+    monkeypatch.setattr(m, "COLD_LIMITS", {"X1": 6.0})
+    assert m._limit_for(product) == 6.0
+    assert m._limit_for(product | {"max_temp_c": 4}) == 4  # the manufacturer's limit comes first
+
+
+def test_the_demo_setting_shortens_the_time_before_the_alert(client, monkeypatch):
+    import backend.app as m
+    assert m._allowed_minutes() == 120
+    monkeypatch.setenv("COLD_ALLOWED_MINUTES", "2")
+    assert m._allowed_minutes() == 2

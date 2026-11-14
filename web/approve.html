@@ -96,6 +96,10 @@
   .options .price { font-family:var(--round); font-weight:700; font-size:1.375rem; font-variant-numeric:tabular-nums; white-space:nowrap }
   .lines { font-size:0.9375rem; margin:0.375rem 0 0; padding-left:1.125rem }
   .ticket > footer { padding:0 1rem 1rem }
+  details.alt { background:none; box-shadow:none; border-radius:0; margin:0 }
+  details.alt > summary { padding:0; font-weight:400 } details.alt > summary::after { margin-left:0.5rem }
+  details.alt > summary .price { margin-left:auto; font-size:1.125rem }
+  .options > li:has(details.alt:not([open])) { padding-top:0.625rem; padding-bottom:0.625rem }
 
   /* The shelf: one edge label for each slot, with the level and the reorder mark. */
   .slots { list-style:none; margin:0; padding:0; display:grid; gap:0.75rem }
@@ -120,7 +124,8 @@
   .alert { background:var(--pink); color:#fff; border-radius:0.375rem 0.375rem 1rem 1rem; padding:0.875rem 1rem; margin-bottom:1.25rem; box-shadow:var(--lift) }
   .alert h3 { color:inherit } .alert p { margin:0.375rem 0 0 }
   /* The way of one order: five steps on a line. A step that happened is filled. */
-  .way { background:var(--paper); border-radius:1rem; padding:0.875rem 1rem; box-shadow:var(--lift); margin-bottom:0.75rem }
+  .way { background:var(--paper); border-radius:1rem; box-shadow:var(--lift); margin:0 0 0.75rem }
+  .way > summary { font-weight:400 } .way > ol { padding:0 1rem 0.5rem !important }
   .way ol { list-style:none; margin:0.625rem 0 0; padding:0; display:grid; gap:0 }
   .way li { position:relative; padding:0 0 0.625rem 1.5rem; font-size:0.9375rem }
   .way li::before { content:""; position:absolute; left:0.25rem; top:0.3125rem; width:0.625rem; height:0.625rem; border-radius:50%; border:0.125rem solid var(--blue); background:var(--paper) }
@@ -177,6 +182,16 @@
     #result { bottom:1.5rem }
     .foot { max-width:82rem; padding:0 2.5rem 2.5rem }
   }
+  @media (min-width:84rem) {
+    .app { max-width:none; grid-template-columns:13rem minmax(0,1fr); gap:2rem; padding:1.5rem 2rem 1.5rem }
+    main { grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr); gap:0 1.75rem; grid-auto-flow:row dense }
+    main > section { grid-column:auto; margin-bottom:1.5rem }
+    main > section.lead { grid-column:1; grid-row:1 / span 8 }
+    main > section:not(.lead) + section:not(.lead) h2 { margin-top:0 }
+    main h2 { font-size:1.125rem; margin-bottom:0.5rem } main section h2:not(:first-child) { margin-top:1.25rem }
+    .sheet, .way { padding:0.75rem 0.875rem } .slots { gap:0.5rem } .slots li { padding:0.5rem 0.75rem }
+    .foot { max-width:none; padding:0 2rem 1.5rem }
+  }
   @media (prefers-reduced-motion: reduce) { button:active { transform:none } }
 </style>
 </head>
@@ -213,6 +228,24 @@
     <div id="approvals" aria-live="polite"><p class="empty">Nothing waits for you.</p></div>
   </section>
 
+  <section data-role="kitchen">
+    <h2>Scan a product</h2>
+    <div class="sheet">
+      <label class="meta" for="code">The number under the barcode of the pack</label>
+      <input id="code" inputmode="numeric" autocomplete="off" placeholder="For example 6408430000296">
+      <div class="row">
+        <button class="primary" data-scan="door">It arrived at the door</button>
+        <button data-scan="shelf">It is on the shelf</button>
+      </div>
+      <div id="scanOut" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <section data-role="kitchen">
+    <h2>On the shelf</h2>
+    <ul class="slots" id="slots"><li class="empty">No shelf data yet.</li></ul>
+  </section>
+
   <section data-role="chef kitchen">
     <h2>Cold room</h2>
     <div class="sheet">
@@ -235,8 +268,7 @@
     <h2>The knob on the box</h2>
     <div class="sheet">
       <div class="therm"><span class="num" id="knobNow">–</span><span class="meta">the most that the agent may order alone</span></div>
-      <p style="margin:0.5rem 0 0">Turn the knob to change this limit, in steps of €10. An order above it waits for your approval. At €0 every order waits.</p>
-      <p class="meta" style="margin:0.5rem 0 0">Hold the knob for 2 seconds when a delivery arrives. The box then checks the delivery: the count and the temperature at the door.</p>
+      <p class="meta" style="margin:0.5rem 0 0">Turn it to change the limit, €10 a step. An order above it waits for you. Hold it 2 seconds to check a delivery at the door.</p>
       <p class="meta" id="knobNote" style="margin:0.5rem 0 0"></p>
     </div>
     <h2>Your kitchen</h2>
@@ -264,24 +296,6 @@
         <div class="row"><button id="forceBtn">Try to order 20</button></div>
       </div>
     </details>
-  </section>
-
-  <section data-role="kitchen">
-    <h2>Scan a product</h2>
-    <div class="sheet">
-      <label class="meta" for="code">The number under the barcode of the pack</label>
-      <input id="code" inputmode="numeric" autocomplete="off" placeholder="For example 6408430000296">
-      <div class="row">
-        <button class="primary" data-scan="door">It arrived at the door</button>
-        <button data-scan="shelf">It is on the shelf</button>
-      </div>
-      <div id="scanOut" aria-live="polite"></div>
-    </div>
-  </section>
-
-  <section data-role="kitchen">
-    <h2>On the shelf</h2>
-    <ul class="slots" id="slots"><li class="empty">No shelf data yet.</li></ul>
   </section>
 
   <section data-role="kitchen">
@@ -346,7 +360,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const label = (r) => r.replace("_", " ");
 const WHO = {device: "the shelf camera", chef: "the kitchen", agent: "the agent"};  // log names to plain words
-const SHORT = 5;  // log lines shown before "Show more"
+const SHORT = 4;  // log lines shown before "Show more"
 let showAll = false, forceFor = null;
 
 async function api(path, opts) {
@@ -409,8 +423,8 @@ function renderApprovals(list) {
       </header>
       ${a.stock ? shelfNow(a.stock, first && first.delivery) : ""}
       <ol class="options">${a.options.map((o, i) => `
-        <li>
-          <div class="top"><span class="name">${esc(NAMES[o.label] || o.label)}</span><span class="price">${euro(o.total_eur)}</span></div>
+        <li>${i === 0 ? "" : `<details class="alt"><summary><span class="name">${esc(NAMES[o.label] || o.label)}</span><span class="price">${euro(o.total_eur)}</span></summary>`}
+          ${i === 0 ? `<div class="top"><span class="name">${esc(NAMES[o.label] || o.label)}</span><span class="price">${euro(o.total_eur)}</span></div>` : ""}
           <ul class="lines">${o.lines.map(l => `<li>${l.quantity} × ${esc(l.name)} at ${euro(l.unit_price_eur)}</li>`).join("")}</ul>
           <p class="reasons">${esc(o.trade_off)} Price checked at ${esc(o.lines[0].price_checked_at.slice(11,16))}.</p>
           <p class="reasons">Why you decide: ${o.reasons.map(esc).join("; ")}.</p>
@@ -418,7 +432,7 @@ function renderApprovals(list) {
             The agent keeps your answer and does not ask again for this product.</p>` : ""}
           ${a.stock && a.stock.options[i] ? optionStock(a.stock.options[i]) : ""}
           <div class="row"><button class="${i===0?"primary":""}" data-a="${a.id}" data-o="${i}">${i===0?"Approve this order":"Choose this one"}</button></div>
-        </li>`).join("")}</ol>
+        ${i === 0 ? "" : "</details>"}</li>`).join("")}</ol>
       ${a.options.length ? "" : `<div class="shelfnow"><p style="margin:0"><b class="forbidden">The agent found nothing that it may order.</b>
         The kitchen still needs this product. Order it another way, or change the rules.</p></div>`}
       <footer><div class="row"><button data-a="${a.id}" data-skip="1">${a.options.length ? "Order nothing" : "I have seen this"}</button></div></footer>
@@ -536,10 +550,12 @@ async function drawChains(orders) {
   const key = JSON.stringify(ways);
   if (key === shownChains) return;
   shownChains = key;
-  $("chains").innerHTML = ways.map((w, i) => `<div class="way"><b>${esc(last[i].lines.map(l => `${l.quantity} × ${l.name}`).join(", "))}</b>
-      <div class="meta">Order ${esc(w.order_id)}, €${last[i].total_eur.toFixed(2)}</div>
+  const open = new Set([...document.querySelectorAll("#chains details[open]")].map(d => d.dataset.id));
+  $("chains").innerHTML = ways.map((w, i) => { const done = w.steps.filter(x => x.done).length; return `<details class="way" data-id="${esc(w.order_id)}" ${open.has(w.order_id) || (!open.size && i === 0) ? "open" : ""}>
+      <summary><span><b>${esc(last[i].lines.map(l => `${l.quantity} × ${l.name}`).join(", "))}</b>
+        <span class="meta" style="display:block">€${last[i].total_eur.toFixed(2)}, step ${done} of ${w.steps.length}: ${STEP[w.steps[done - 1].step].toLowerCase()}</span></span></summary>
       <ol>${w.steps.map(x => `<li class="${x.done ? "done" : ""} ${x.state === "breach" || (x.step === "delivered" && x.done && /above|missing|after/.test(x.text)) ? "bad" : ""}">
-        <b>${STEP[x.step]}</b>${x.time ? ` <span class="meta">${esc(x.time.slice(11, 16))}${x.who ? ", " + esc(WHO[x.who] || x.who) : ""}</span>` : ""}<br>${esc(x.text)}</li>`).join("")}</ol></div>`).join("")
+        <b>${STEP[x.step]}</b>${x.time ? ` <span class="meta">${esc(x.time.slice(11, 16))}${x.who ? ", " + esc(WHO[x.who] || x.who) : ""}</span>` : ""}<br>${esc(x.text)}</li>`).join("")}</ol></details>`; }).join("")
     || '<p class="empty">No order yet.</p>';
 }
 
