@@ -6,3 +6,4 @@ The open implementation decisions A to I stay in `../PARALLEL_WORK.md`.
 | Note | Status |
 |---|---|
 | [Continuous observation, scheduled replenishment](2026-11-14-continuous-observation-scheduled-replenishment.md) | Proposed by Anatoly, 14 November 2026 — pending team agreement |
+| [Demo shelf setup: one camera, one visible row per product](2026-11-14-proposed-demo-capture-setup.md) | Proposed by Anatoly, 14 November 2026 — pending team agreement |

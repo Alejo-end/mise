@@ -2,6 +2,9 @@
 
 **Draft procedure — scripts tested; end-to-end physical capture not yet validated by Anatoly; subject to revision.**
 
+The shelf layout of section 3a (one camera, one visible row per product) is a **proposed demo setup, pending team
+agreement** (`decisions/2026-11-14-proposed-demo-capture-setup.md`).
+
 This replaces the capture parts of `experiments/recognition/MISSING_DATA.md` (branch `exp/recognition`, written
 for bread and yoghurt) and the instructions scattered over the 14 Nov chat. Products, commands and clip names
 below were checked against the code on branch `valio/integration-unattended` at the commit that adds this file.
@@ -17,9 +20,10 @@ below were checked against the code on branch `valio/integration-unattended` at 
 | Exact-GTIN enrolment, owner-confirmed search, previous orders | Yes (synthetic records) | Lookups of real barcodes in the downloaded catalogue | No |
 | Pre-upload check and upload to Modal | Yes | Upload to a scratch Volume path, then removed | No |
 | Recording mode (no purchasing side effects) | Yes (`tests/test_app.py`) | Live backend runs in it | No |
-| Calibration and capture with the real products, dim light, light change | No | No | **No: untested** |
+| Board and laptop on the same network | — | Checked 10:08: laptop 172.20.10.4, board answers, backend sees the board online | — |
+| Calibration and capture with the real products, one-row layout, dim light, light change | No | No | **No: untested** |
 
-## 1. Last-known versions and the current blocker
+## 1. Last-known versions and network status
 
 - **Board** (Arduino UNO Q, app `safe-kitchen-test`, laptop-camera variant): `main.py` c60b68271b87,
   `shelf_detect.py` 7095fd9ead9a, `index.html` 8fdd4027b2fb = commit 0d93b6a (tag `deploy/live-0d93b6a`), checked
@@ -27,9 +31,9 @@ below were checked against the code on branch `valio/integration-unattended` at 
 - **Backend** (laptop, port 8000): integration code at 851a992 (later commits are documentation), audit database
   `junction2026/valio-challenge/data/audit.sqlite`, **recording mode on** (`RECORDING_SESSION=shelf-recordings-20261114`),
   signed rule set v6 with all three slots unmapped for purchasing.
-- **Blocker at 09:43:** the laptop is not on the iPhone hotspot (it has 10.0.34.44 on another network). The board
-  therefore cannot reach the backend (`backend_url` http://172.20.10.4:8000), and the laptop cannot open the board
-  page. Fix: connect the laptop to "Anatoly’s iPhone" again (it must get 172.20.10.4), keep the board on USB.
+- **Network (historical):** at 09:43 the laptop was briefly on another network (10.0.34.44), so the board could not
+  reach the backend. Resolved: Anatoly confirmed the same network, and at 10:08 the laptop had 172.20.10.4, the board
+  answered and the backend saw it online. Keep running the reachability checks of section 2 before each session.
 
 ## 2. Setup and preflight
 
@@ -64,6 +68,20 @@ errors `[]`.
 
 Source: `tools/recording_products.json`. Observed identity and purchasing eligibility are separate: no recording
 can lead to an order (recording mode, and the slots are unmapped).
+
+## 3a. Proposed demo setup (pending team agreement)
+
+- One stationary camera; the three zones above.
+- Several units of one product stand **side by side in one visible row** inside its zone, with small gaps: no
+  stacking, no unit behind another.
+- The camera sees every unit and its identifying packaging. Check this on the board page before saving the photos.
+- At least one product is tested with 2 or 3 identical units (whatever is available, for example 3 milk cartons).
+
+This is a **visibility constraint for the prototype**, not a capability. The board's template detector compares a
+zone with its empty and full photos; it estimates a fill level and is **not a validated object counter**. Stock
+that is fully hidden (stacked, behind another unit, outside the view) may be unobservable: the system cannot know it
+is there and does not reliably notice that something is hidden. Depth estimation and a second camera are future
+options; no hardware is added now.
 
 ## 4. Optional: catalogue enrolment (separate from recognition labels)
 
@@ -131,10 +149,41 @@ mv data/recordings/evaluation/NAME data/recordings/evaluation/NAME.failed-$(date
 
 ### Extension: several identical units of one product
 
-Use two or three identical units in one slot (for example three identical milk cartons in slot 3; type `1 1 3`):
+Use two or three identical units in one zone, side by side in one visible row with small gaps (for example three
+identical milk cartons in zone 3; type `1 1 3`):
 `ref-counts-day` (one unit out of each slot at 5, 10, 15 s), `eval-removal-one-s3-day-a/-b` (3 to 2),
 `eval-removal-all-s3-day-a/-b` (3 to empty). Other supported clips: `eval-swap-s2-s3-day-a/-b`,
 `eval-move-s3-to-s2-day-a/-b`.
+
+### Counting in the one-row setup: what the existing commands cover
+
+Every guided clip asks for the **actual number of units** in each zone before it starts (type what is there, never
+the target stock); the marked steps then change the counts. With the existing commands:
+
+| Need | Supported clip | Count change |
+|---|---|---|
+| Actual counts, untouched | `ref-full-day`, `eval-identity-day-a/-b` | none |
+| Removal of one unit | `eval-removal-one-s3-day-a/-b`; `ref-counts-day` (one unit from each zone) | n to n-1 |
+| Removal of all units | `eval-removal-all-s3-day-a/-b` | n to 0 |
+| Orientation, count unchanged | `ref-s1/s2/s3-poses-day`, `eval-barcode-hidden-day-a/-b` | none (units turned in place) |
+
+**Not supported yet (needs a recorder change, `tools/recording_plan.py`):**
+- *Return:* take one unit out and put it back within the same clip (count n, n-1, n). No such clip exists. A
+  removal clip followed by a separate clip after putting the unit back is not equivalent: the return itself
+  happens between clips and is not recorded.
+- *Rearrangement without a count change:* shuffle the units or change their gaps within the zone. No such clip
+  exists (`eval-swap-s2-s3-day` exchanges zones, which changes the identity per zone).
+- *Layout tag:* labels do not yet carry "clean layout" or "stress"; until they do, the separation below is by clip
+  name.
+
+### Clean-layout counting versus stress tests: evaluate separately
+
+| Group | Clips | Use |
+|---|---|---|
+| Clean layout (one visible row, no hands) | `ref-*` (normal light), `eval-identity-day`, `eval-removal-one-s3-day`, `eval-removal-all-s3-day`, `eval-barcode-hidden-day` | counting and identity results |
+| Stress (kept out of the counting results) | `eval-hand-day` (obstruction), `eval-unfamiliar-s3-day` (unfamiliar product), `eval-move-s3-to-s2-day` and `eval-swap-s2-s3-day` (relocation), dim and light-change clips | uncertainty and robustness results |
+
+The obstruction, unfamiliar-product and relocation tests stay as they are.
 
 ### Untested conditions
 
