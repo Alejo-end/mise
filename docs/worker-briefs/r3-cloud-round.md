@@ -10,8 +10,12 @@ writer: detached Modal jobs, durable files on Modal Volumes, resumable from chec
   `/Users/bigboss/Ai/Claudecode/junction2026-int/valio-challenge/`, then your own brief section below.
 - Write only inside your worktree, only in your owned paths and your `STATUS.md`. Never touch the board, the
   live backend (port 8000), `junction2026-int`, `junction2026` (main checkout) or another worktree. Read-only
-  access elsewhere is fine. Commit to your branch with the repository's configured identity (do not change
-  git config). Never push, never merge, never rebase other branches.
+  access elsewhere is fine.
+- **Patch delivery (from 08:30, replaces committing):** `.git` is read-only in your sandbox. Do not commit, do not
+  stage, and never work around it (no alternate `GIT_INDEX_FILE`, no `commit-tree`, `update-ref`, `hash-object -w`
+  or other plumbing; earlier workarounds left stale indexes). Leave your changes in the working tree, list them
+  in `STATUS.md` under "Delivered changes" (files, tests run with exact counts, what is excluded from git), and
+  end. Integration reviews and commits through its own workflow. Read-only git commands are fine.
 - No Valio API calls, no orders, no price or availability requests. Valio data files
   (`/Users/bigboss/Ai/Claudecode/valio-source-data/2026-11-14/`, read-only) are sponsor challenge data: use them
   only for this challenge, may be copied to a private Modal Volume, never committed.
