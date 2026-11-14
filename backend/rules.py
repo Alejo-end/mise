@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
@@ -60,14 +61,94 @@ def load_rules(path: Path | str = DEFAULT_RULES, verify: bool = True) -> dict:
     return rules
 
 
+def _signature_record(version: int, signed_by: str | None, sha256: str) -> dict:
+    return {"version": version, "signed_by": signed_by, "sha256": sha256,
+            "signed_at": datetime.now(TZ).isoformat(timespec="seconds")}
+
+
 def sign(path: Path | str) -> dict:
     """Record the version, signer and hash of a rule file. The head chef runs this after reading it."""
     path = Path(path)
     rules = load_rules(path, verify=False)
-    record = {"version": rules["version"], "signed_by": rules.get("signed_by"), "sha256": rules["sha256"],
-              "signed_at": datetime.now(TZ).isoformat(timespec="seconds")}
+    record = _signature_record(rules["version"], rules.get("signed_by"), rules["sha256"])
     signature_path(path).write_text(json.dumps(record, indent=2) + "\n")
     return record
+
+
+# Versions the backend writes. A shelf change (which product a slot holds, its target and reorder level)
+# is a new rule set version: version + 1, signed with the same record as sign(), in a folder of its own.
+# The base file in rules/ is never rewritten. Each written version names the version and hash it was made
+# from (`based_on`), so the versions form a chain that starts at the base file.
+
+def version_path(base: Path | str, versions_dir: Path | str, version: int) -> Path:
+    return Path(versions_dir) / f"{Path(base).stem}.v{version}.yaml"
+
+
+def load_rule_chain(base: Path | str, versions_dir: Path | str | None = None) -> list[dict]:
+    """The base rule file, then every later version written from it, in order. The last one is active.
+
+    Each file must match the hash signed for its version, and each later version must name the
+    version and hash before it. Anything else (a changed or unsigned file, a gap, a version made
+    from a different base) raises RuleSetChanged, so the backend refuses to start.
+    """
+    base = Path(base)
+    chain = [load_rules(base)]
+    if versions_dir is None or not Path(versions_dir).is_dir():
+        return chain
+    pattern = re.compile(rf"{re.escape(base.stem)}\.v(\d+)\.yaml")
+    found = {int(m.group(1)): p for p in Path(versions_dir).iterdir() if (m := pattern.fullmatch(p.name))}
+    v = chain[0]["version"]
+    older = sorted(n for n in found if n <= v)
+    if older:
+        raise RuleSetChanged(
+            f"{versions_dir} holds shelf changes up to v{max(older)}, but {base.name} itself is now v{v}. "
+            "They were made from an older rule set. Move that folder away to start from the file, "
+            "then make the shelf changes again.")
+    while v + 1 in found:
+        r = load_rules(found[v + 1])
+        parent = chain[-1]
+        if r["version"] != v + 1 or r.get("based_on") != {"version": parent["version"], "sha256": parent["sha256"]}:
+            raise RuleSetChanged(f"{found[v + 1].name} was not made from v{parent['version']} of {base.name} "
+                                 f"(sha256 {parent['sha256'][:12]}). Move {versions_dir} away to start from the file.")
+        chain.append(r)
+        v += 1
+    later = sorted(n for n in found if n > v)
+    if later:
+        raise RuleSetChanged(f"{versions_dir} holds v{later[0]} of {base.name}, but v{v + 1} is missing.")
+    return chain
+
+
+def load_active_rules(base: Path | str, versions_dir: Path | str | None = None) -> dict:
+    return load_rule_chain(base, versions_dir)[-1]
+
+
+def write_version(parent: dict, base: Path | str, versions_dir: Path | str, targets: list[dict],
+                  signed_by: str, change: str) -> dict:
+    """Write rule set version parent + 1 with new targets, sign it like sign(), and return it as load_rules reads it.
+
+    Everything but the targets is copied from the parent. The signature is written before the rule
+    file, so a crash in between leaves no unsigned version behind.
+    """
+    v = parent["version"] + 1
+    path = version_path(base, versions_dir, v)
+    if path.exists():
+        raise RuleSetChanged(f"{path.name} exists already: another change was signed first")
+    new = {k: val for k, val in parent.items() if k not in ("sha256", "based_on", "change")}
+    new.update(version=v, signed_by=signed_by, based_on={"version": parent["version"], "sha256": parent["sha256"]},
+               change=change, targets=targets)
+    raw = (f"# Rule set v{v}, written and signed by the backend for {signed_by}. It is v{parent['version']} with "
+           "one shelf change.\n# Do not edit it: the backend refuses a changed file. Change the shelf with "
+           "PUT /shelf/{slot}.\n" + yaml.safe_dump(new, sort_keys=False, allow_unicode=True)).encode()
+    record = _signature_record(v, signed_by, hashlib.sha256(raw).hexdigest())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for target, data in ((signature_path(path), (json.dumps(record, indent=2) + "\n").encode()), (path, raw)):
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_bytes(data)
+        tmp.replace(target)
+    loaded = load_rules(path)
+    if loaded["sha256"] != record["sha256"]:
+        raise RuleSetChanged(f"{path.name} did not read back as written")
+    return loaded
 
 
 def target_for_slot(rules: dict, slot: int) -> dict | None:
