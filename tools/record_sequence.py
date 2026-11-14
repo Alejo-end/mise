@@ -42,22 +42,30 @@ import recording_plan as rp  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 ADB = Path.home() / "Library/Arduino15/packages/arduino/tools/adb/32.0.0/adb"
-APP_DATA = "/home/arduino/ArduinoApps/safe-kitchen-test/data"
 
 
-def pull_board_files(out: Path, serial: str) -> list[str]:
-    """Copy config.json and the calibration photos from the board over adb."""
+def pull_board_files(out: Path, serial: str, app: str = "safe-kitchen-test", board: str = "172.20.10.2",
+                     via: str = "auto") -> list[str]:
+    """Copy config.json and the calibration photos of the running app from the board: over adb when the board is
+    on USB to this laptop, otherwise over SSH (asks for the board password unless a key or SSH_ASKPASS is set)."""
     cal = out / "calibration"
     cal.mkdir(parents=True, exist_ok=True)
-    names = subprocess.run([str(ADB), "-s", serial, "shell", f"ls {APP_DATA}"], capture_output=True, text=True,
-                           check=True).stdout.split()
+    data = f"/home/arduino/ArduinoApps/{app}/data"
+    use_adb = via == "adb" or (via == "auto" and serial in subprocess.run(
+        [str(ADB), "devices"], capture_output=True, text=True).stdout)
+    if use_adb:
+        names = subprocess.run([str(ADB), "-s", serial, "shell", f"ls {data}"], capture_output=True, text=True,
+                               check=True).stdout.split()
+        fetch = lambda n: subprocess.run([str(ADB), "-s", serial, "exec-out", f"cat {data}/{n}"], capture_output=True,
+                                         check=True).stdout
+    else:
+        ssh = ["ssh", "-o", "ConnectTimeout=15", f"arduino@{board}"]
+        names = subprocess.run(ssh + [f"ls {data}"], capture_output=True, text=True, check=True).stdout.split()
+        fetch = lambda n: subprocess.run(ssh + [f"cat {data}/{n}"], capture_output=True, check=True).stdout
     got = []
     for n in names:
-        dest = out / "config.json" if n == "config.json" else cal / n
         if n == "config.json" or n.endswith(".npy"):
-            data = subprocess.run([str(ADB), "-s", serial, "exec-out", f"cat {APP_DATA}/{n}"], capture_output=True,
-                                  check=True).stdout
-            dest.write_bytes(data)
+            (out / "config.json" if n == "config.json" else cal / n).write_bytes(fetch(n))
             got.append(n)
     return got
 
@@ -68,6 +76,9 @@ def main() -> None:
     p.add_argument("--seconds", type=float, default=15)
     p.add_argument("--board", default="172.20.10.2")
     p.add_argument("--serial", default="251305272", help="adb serial of the board")
+    p.add_argument("--app", default="safe-kitchen-test", choices=["safe-kitchen-test", "safe-kitchen-agent"],
+                   help="the running board app: safe-kitchen-test (laptop camera) or safe-kitchen-agent (USB camera on the board)")
+    p.add_argument("--via", default="auto", choices=["auto", "adb", "ssh"], help="how to copy the board files")
     p.add_argument("--note", default="", help="what happens in the sequence, for the README")
     p.add_argument("--session", default="", help="recording session id (default: role, occasion and date)")
     p.add_argument("--labeller", default="person at the shelf (Enter marks, confirmed after capture)")
@@ -87,7 +98,7 @@ def main() -> None:
     if out.exists():
         raise SystemExit(f"{out} exists; pick a new name")
     (out / "frames").mkdir(parents=True)
-    pulled = pull_board_files(out, a.serial)
+    pulled = pull_board_files(out, a.serial, a.app, a.board, a.via)
 
     meta = (out / "meta.jsonl").open("w")
     lock = threading.Lock()
@@ -161,6 +172,10 @@ def check_board_ready(board: str) -> None:
         problems.append("box editing is on: press Save boxes or Cancel on the board page")
     if st.get("recalibrate"):
         problems.append(f"spots {', '.join(sorted(st['recalibrate']))} moved: save the empty and the full photo")
+    uncal = sorted(k for k, v in ((st.get("health") or {}).get("slots") or {}).items()
+                   if (v or {}).get("calibration") not in (None, "ok"))
+    if uncal:
+        problems.append(f"spots {', '.join(uncal)} have no valid calibration photos: save the empty and the full photo")
     if problems:
         raise SystemExit("Not recording: " + "; ".join(problems))
 
