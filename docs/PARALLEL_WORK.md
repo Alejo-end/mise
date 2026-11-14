@@ -75,14 +75,24 @@ configuration. Version 1 events (no `fill`) keep working.
 
 - A frame is checked at most once. A state counts only after `confirm_frames` (default 3)
   different frames over at least `confirm_seconds` (default 3) agree.
-- A slot is `uncertain` when its view matches neither calibration photo:
-  `min(d_empty, d_full) > uncertain_ratio x d(empty photo, full photo)`. Uncertain resets the
-  confirmation and never becomes a stock change. `uncertain_ratio` is provisional until a
-  recorded occlusion sequence sets it.
+- A slot is `uncertain`, which resets the confirmation and never becomes a stock change, when:
+  1. its patch has too little detail: contrast (std of the 48 x 48 patch) below `min_detail`,
+     default 0.03 (covered or dark lens); or
+  2. its view does not match the calibration: `min(d_empty, d_full) > mismatch_ratio x
+     d(empty photo, full photo)`, default 0.85 (camera moved, or an unknown object in the slot).
+- Evidence for the defaults (05:15, `steady-01` and synthetic frames): real frames 0.89 to 1.24
+  on the ratio, because the camera had moved since calibration and shows a cup and a keyboard, so
+  rule 2 marks them uncertain, as it should; a painted "empty" slot 0.03; a flat or dark view 0.66
+  to 0.74 on the ratio (rule 2 misses it) but contrast 0.002 (rule 1 catches it); real frames have
+  contrast 0.23 to 0.31, calibration photos 0.17 to 0.21. A finger blurring the lens (contrast 0.15
+  to 0.24) is caught by neither rule; the 3-frame, 3-second confirmation must absorb it. Both
+  defaults are provisional until real-shelf recordings exist.
+- The first draft of this rule (ratio only, as `uncertain_ratio`) was wrong: it misses a covered
+  lens. Do not use it.
 - No camera frame for `CAMERA_GRACE_S` makes every slot uncertain.
 - Saving a calibration photo or the rectangles starts a quiet period (`calibration_quiet_s`,
   default 15): readings show on the page, no events go out.
-- New keys live in the device's `config.json`, owned by worktree 1. Defaults keep old configs valid.
+- New keys (`confirm_frames`, `confirm_seconds`, `min_detail`, `mismatch_ratio`, `calibration_quiet_s`) live in the device's `config.json`, owned by worktree 1. Defaults keep old configs valid.
 
 ### 3. Trigger contract in the backend (worktree 1, `handle_event`)
 
@@ -152,5 +162,5 @@ slot; the camera tab in the background; a light change.
 ## Handover and merge
 
 Ready when `uv run pytest` is green and every xfail the worktree fixed is a plain test. Merge
-order: worktree 2 first (the backend accepts version 2 events), then worktree 1. Integration then
+order: either first. The backend ignores unknown event fields, so version 2 events are safe before worktree 2 lands. Integration then
 deploys to the board, records a sequence, and runs the replay suite against it.
