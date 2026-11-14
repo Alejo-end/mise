@@ -6,6 +6,7 @@ The pipeline searches, compares and proposes. backend.rules decides.
 from __future__ import annotations
 
 import math
+import os
 import re
 import threading
 import uuid
@@ -22,11 +23,20 @@ NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10,
 
 
 class Agent:
-    def __init__(self, catalog, ruleset: dict, log: AuditLog):
+    def __init__(self, catalog, ruleset: dict, log: AuditLog, restock_min_s: float | None = None):
         self.catalog = catalog
         self.rules = ruleset
         self.log = log
         self.lock = threading.Lock()
+        # Guards the pending-slot check in handle_event. Separate from self.lock, which _ask takes
+        # inside the buying path, so holding this one while buying would deadlock.
+        self.trigger_lock = threading.Lock()
+        # A "full" reading sooner than this after a slot's trigger counts as a hand, a reflection or a
+        # recalibration, not a delivery. Default 0 keeps the behaviour of test_one_empty_shelf_makes_one_order
+        # (a refill makes the slot orderable at once) until decision C in docs/PARALLEL_WORK.md is made;
+        # the live backend runs with RESTOCK_MIN_S=120.
+        self.restock_min_s = float(os.getenv("RESTOCK_MIN_S", "0")) if restock_min_s is None else restock_min_s
+        self.pending_since: dict[int, datetime] = {}
         self.approvals: dict[str, dict] = {}
         self.orders: dict[str, dict] = {}  # order_id -> order entry, for delivery checks and weekly spend
         self.placed_runs: dict[str, dict] = {}  # run id -> result, so one run never orders twice
@@ -59,6 +69,7 @@ class Agent:
                 self.placed_runs[e["run_id"]] = {"status": "ordered", "order_id": e["order_id"], "total_eur": d["total_eur"]}
                 if d.get("slot") is not None:
                     self.pending_slots.add(d["slot"])
+                    self.pending_since[d["slot"]] = datetime.fromisoformat(e["time"])
                     self.last_order_qty[d["slot"]] = sum(l["quantity"] for l in d["lines"])
             elif step == "restock":
                 self.pending_slots.discard(d["slot"])
@@ -70,6 +81,7 @@ class Agent:
                 self.approvals[a["id"]] = a
                 if a.get("slot") is not None:
                     self.pending_slots.add(a["slot"])
+                    self.pending_since[a["slot"]] = datetime.fromisoformat(e["time"])
             elif step == "approval" and d.get("approval_id"):
                 decided.add(d["approval_id"])
             elif step == "alarm":
@@ -110,15 +122,26 @@ class Agent:
             return {"status": "ignored", "reason": f"slot {slot} has no target in the rule set"}
         state = "low" if kind == "manual_low" else ev.get("state")
         units = int(ev.get("estimated_units") or 0) if state != "empty" else 0
-        if state == "full" or (state == "low" and kind == "slot_state" and units >= target["reorder_below"]):
-            if slot in self.pending_slots and not any(a["slot"] == slot for a in self.open_approvals()):
-                self.pending_slots.discard(slot)
-                self.log.write("restock", {"slot": slot, "summary": f"Slot {slot} is stocked again."}, "device",
-                               self.rules["version"])
-            return {"status": "ok", "reason": "stock above the reorder level"}
-        if slot in self.pending_slots:
-            return {"status": "ignored", "reason": f"slot {slot} already has an order or a request in progress"}
-        self.pending_slots.add(slot)
+        # The check and the add below must be one step, or two events at once could both order.
+        with self.trigger_lock:
+            if state == "full" or (state == "low" and kind == "slot_state" and units >= target["reorder_below"]):
+                if slot in self.pending_slots and not any(a["slot"] == slot for a in self.open_approvals()):
+                    since = self.pending_since.get(slot)
+                    age = (datetime.now(R.TZ) - since).total_seconds() if since else None
+                    if age is not None and age < self.restock_min_s:
+                        self.log.write("device", {"slot": slot, "event": ev, "summary": (
+                            f"Slot {slot} reads {state} {age:.0f} s after its order. That is too soon for a delivery "
+                            f"(under {self.restock_min_s:.0f} s), so the order stays in progress.")},
+                            "device", self.rules["version"])
+                        return {"status": "ignored", "reason": f"too soon after the order to be a delivery ({age:.0f} s)"}
+                    self.pending_slots.discard(slot)
+                    self.log.write("restock", {"slot": slot, "summary": f"Slot {slot} is stocked again."}, "device",
+                                   self.rules["version"])
+                return {"status": "ok", "reason": "stock above the reorder level"}
+            if slot in self.pending_slots:
+                return {"status": "ignored", "reason": f"slot {slot} already has an order or a request in progress"}
+            self.pending_slots.add(slot)
+            self.pending_since[slot] = datetime.now(R.TZ)
 
         run = uuid.uuid4().hex[:8]
         how = "knob press" if kind == "manual_low" else "camera"

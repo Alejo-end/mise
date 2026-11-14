@@ -60,6 +60,9 @@ DEFAULT_CONFIG = {
     "empty_below": 0.20,
     # Without a "full" photo, a slot whose difference from the empty photo is above this is present.
     "present_diff": 0.10,
+    # When a reading becomes a stock change: confirm_frames, confirm_seconds, min_detail,
+    # mismatch_ratio, calibration_quiet_s. See shelf_detect.DEFAULTS and docs/PARALLEL_WORK.md.
+    **shelf_detect.DEFAULTS,
 }
 
 
@@ -86,6 +89,10 @@ state = {
     "buzzer": "off",
     "modulinos": None,
     "last_frame": None,
+    "frame_id": 0,  # grows with every new camera frame, so a frame is checked only once
+    "frame_time": None,  # arrival time of last_frame, in seconds
+    "last_checked_frame": None,
+    "quiet_until": 0.0,  # no stock events before this time (after a calibration or a slot move)
     "camera_ok": False,
     "camera_error": "",
     "delivery": None,  # {"ends": time, "temps": [...]} while a delivery check runs, else None
@@ -278,21 +285,37 @@ def load_ref(slot: int, kind: str):
 
 
 def classify(slot_cfg: dict, patch: np.ndarray):
+    """(state, fill, why). state may be "uncertain", which never becomes a stock change."""
     slot = slot_cfg["slot"]
     return shelf_detect.classify(patch, load_ref(slot, "empty"), load_ref(slot, "full"), config)
 
 
-def process_frame(img: Image.Image):
+def process_frame(img: Image.Image, frame_id: int, t: float):
+    quiet = time.time() < state["quiet_until"]
     for s in config["slots"]:
-        patch = crop(img, s["rect"])
-        st, fill = classify(s, patch)
+        st, fill, why = classify(s, crop(img, s["rect"]))
         slot = s["slot"]
         with lock:
             cur = state["slots"].setdefault(slot, shelf_detect.new_tracker())
-            changed = shelf_detect.observe(cur, st, fill, s["target_units"])
+            changed = shelf_detect.observe(cur, st, fill, s["target_units"], frame_id, t, config, quiet, why)
         if changed:
-            post_async({"type": "slot_state", "slot": slot, "product_hint": s["product_hint"], "state": st,
-                        "estimated_units": cur["units"]})
+            # Slot event version 2 (docs/PARALLEL_WORK.md, interface 1). The backend ignores fields it
+            # does not know yet, and "uncertain" is never sent.
+            post_async({"type": "slot_state", "slot": slot, "product_hint": s["product_hint"], "state": cur["state"],
+                        "estimated_units": cur["units"], "fill": cur["fill"], "frame_id": frame_id,
+                        "frame_time": datetime.fromtimestamp(t, TZ).isoformat(timespec="seconds")})
+
+
+def mark_uncertain(why: str):
+    """Every slot is uncertain, for example when no camera frame arrives."""
+    with lock:
+        for s in config["slots"]:
+            cur = state["slots"].setdefault(s["slot"], shelf_detect.new_tracker())
+            shelf_detect.observe(cur, "uncertain", None, s["target_units"], None, time.time(), config, why=why)
+
+
+def start_quiet_period():
+    state["quiet_until"] = time.time() + float(shelf_detect.setting(config, "calibration_quiet_s"))
 
 
 def sensors():
@@ -304,7 +327,8 @@ def sensors():
         "camera_ok": state["camera_ok"], "camera_error": state["camera_error"],
         "delivery_left_s": max(0, round(state["delivery"]["ends"] - time.time())) if state["delivery"] else None,
         "last_delivery": state["last_delivery"],
-        "slots": {str(k): {kk: vv for kk, vv in v.items() if kk in ("state", "fill", "units")} for k, v in state["slots"].items()},
+        "slots": {str(k): {kk: vv for kk, vv in v.items() if kk in ("state", "fill", "units", "uncertain")}
+                  for k, v in state["slots"].items()},
         "config": {k: config[k] for k in ("slots", "temperature_limit_c", "manual_slot")},
         "calibrated": {str(s["slot"]): [k for k in ("empty", "full") if ref_path(s["slot"], k).exists()] for s in config["slots"]},
     }
@@ -335,11 +359,20 @@ def on_calibrate(_sid, data):
         np.save(ref_path(s["slot"], kind), crop(img, s["rect"]))
         with lock:
             state["slots"].pop(s["slot"], None)
+    # Calibrating means hands and products moving in front of the camera: no stock events for a while.
+    start_quiet_period()
     logger.info(f"saved {kind} photo for slots {[s['slot'] for s in which]}")
     return {"ok": True, "slots": [s["slot"] for s in which], "kind": kind}
 
 
 def on_save_config(_sid, data):
+    if "slots" in data:
+        bad = shelf_detect.overlapping_slots(data["slots"])
+        if bad:
+            pairs = ", ".join(f"{a} and {b}" for a, b in bad)
+            return {"ok": False, "error": f"Spots {pairs} overlap, so one product would move both. "
+                                          "Move them apart and save again."}
+        start_quiet_period()
     for key in ("backend_url", "temperature_limit_c", "manual_slot", "slots"):
         if key in data:
             config[key] = data[key]
@@ -454,7 +487,10 @@ def camera_worker():
                 time.sleep(0.05)
                 continue
             last_frame_at = time.time()
-            state["last_frame"] = numpy_to_pil(frame)
+            img = numpy_to_pil(frame)
+            with lock:  # the frame and its number change together
+                state["last_frame"], state["frame_time"] = img, last_frame_at
+                state["frame_id"] += 1
             state["camera_ok"], state["camera_error"] = True, ""
         except Exception as e:
             state["camera_ok"], state["camera_error"] = False, str(e)[:160]
@@ -489,9 +525,14 @@ def loop():
             logger.info(f"modulinos: {state['modulinos']}")
         except Exception as e:
             logger.warning(f"modulino_status failed: {e}")
-    img = state["last_frame"]
+    with lock:
+        img, frame_id, t = state["last_frame"], state["frame_id"], state["frame_time"]
     if img is not None and state["camera_ok"]:
-        process_frame(img)
+        if frame_id != state["last_checked_frame"]:  # a frame is checked at most once
+            state["last_checked_frame"] = frame_id
+            process_frame(img, frame_id, t)
+    else:
+        mark_uncertain("no camera frame")
     ui.send_message("sensors", sensors())
     if time.time() - last_status > 10:
         last_status = time.time()

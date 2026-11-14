@@ -1,7 +1,6 @@
 """Repeated low-stock observations must not create duplicate orders.
 
-xfail(strict=True) marks a requirement the baseline breaks, with the evidence. Worktree 1
-owns the fix in backend/agent.py (handle_event, the trigger and restock part).
+Owned by worktree 1 (backend/agent.py handle_event). Contract: docs/PARALLEL_WORK.md, interface 3.
 """
 
 import pytest
@@ -15,9 +14,12 @@ YOGURT_EMPTY = {"type": "slot_state", "slot": 2, "state": "empty", "estimated_un
 YOGURT_FULL = {"type": "slot_state", "slot": 2, "state": "full", "estimated_units": 12, "auto_limit_eur": 40}
 
 
+LIVE_WINDOW_S = 120  # RESTOCK_MIN_S of the live backend (decision C, docs/PARALLEL_WORK.md)
+
+
 @pytest.fixture
 def agent(tmp_path):
-    return A.Agent(LocalCatalog(), load_rules(), AuditLog(tmp_path / "a.sqlite"))
+    return A.Agent(LocalCatalog(), load_rules(), AuditLog(tmp_path / "a.sqlite"), restock_min_s=LIVE_WINDOW_S)
 
 
 def slot_requests(agent, slot):
@@ -47,12 +49,43 @@ def test_the_pending_order_survives_a_backend_restart(agent, tmp_path):
     assert len(slot_requests(restarted, 2)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "baseline: one 'full' reading marks the slot restocked. Seen live on 14 Nov: 04:20:53 order "
-    "ORD-68CE0E08 (12 x yogurt), 04:20:56 'Slot 2 is stocked again', 04:21:19 order ORD-592FF708, "
-    "the same 12 x yogurt again."))
 def test_one_false_full_reading_between_lows_does_not_order_twice(agent):
+    """Seen live on 14 Nov: 04:20:53 order ORD-68CE0E08 (12 x yogurt), 04:20:56 'Slot 2 is stocked
+    again', 04:21:19 order ORD-592FF708, the same 12 x yogurt again."""
     agent.handle_event(dict(YOGURT_EMPTY))
     agent.handle_event(dict(YOGURT_FULL))  # 3 s later, a hand or the calibration, not a delivery
     agent.handle_event(dict(YOGURT_EMPTY))
+    assert len(slot_requests(agent, 2)) == 1
+
+
+def test_without_a_window_a_refill_reorders_at_once_as_in_test_requests(tmp_path):
+    """The code default (0 s) keeps Alejo's behaviour until decision C."""
+    agent = A.Agent(LocalCatalog(), load_rules(), AuditLog(tmp_path / "a.sqlite"))
+    agent.handle_event(dict(YOGURT_EMPTY))
+    agent.handle_event(dict(YOGURT_FULL))  # a real delivery, after the window
+    agent.handle_event(dict(YOGURT_EMPTY))
+    assert len([o for o in agent.orders.values() if o["slot"] == 2]) == 2
+
+
+def test_the_restock_window_survives_a_backend_restart(agent, tmp_path):
+    agent.handle_event(dict(YOGURT_EMPTY))
+    restarted = A.Agent(LocalCatalog(), load_rules(), AuditLog(tmp_path / "a.sqlite"), restock_min_s=LIVE_WINDOW_S)
+    assert restarted.handle_event(dict(YOGURT_FULL))["status"] == "ignored"
+    restarted.handle_event(dict(YOGURT_EMPTY))
+    assert len(slot_requests(restarted, 2)) == 1
+
+
+def test_simultaneous_events_for_one_slot_create_one_order(agent):
+    import threading
+    start = threading.Barrier(8)
+
+    def send():
+        start.wait()
+        agent.handle_event(dict(YOGURT_EMPTY))
+
+    threads = [threading.Thread(target=send) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
     assert len(slot_requests(agent, 2)) == 1
