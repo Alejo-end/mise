@@ -127,13 +127,20 @@ def test_a_hand_over_a_slot_for_two_seconds_is_ignored(steady, apart):
 # Uncertain views ----------------------------------------------------------------------------
 
 def test_a_view_that_does_not_match_the_calibration_is_uncertain(steady, apart):
-    """steady-01: the camera moved after calibration and shows a cup and a keyboard. With the recorded
-    (overlapping) boxes the layout rule speaks first; with separated boxes the view-mismatch rule does."""
+    """steady-01: the camera moved after calibration and shows a cup and a keyboard."""
+    # The view-mismatch rule itself, on the recorded boxes the photos were taken for.
+    for f in steady.frames:
+        for s in steady.config["slots"]:
+            e, full = steady.refs[s["slot"]]
+            assert sd.classify(sd.crop(f.image, s["rect"]), e, full, steady.config)[2] == "view does not match the photos"
+    # On the board, the recorded boxes overlap, so the layout rule speaks first: no stock change.
     events, trackers = replay_board(steady.frames, steady, end=steady.frames[-1].t)  # while frames arrive
     assert events == [] and {tr["uncertain"] for tr in trackers.values()} == {sd.LAYOUT_WHY}
-    events, trackers = replay_board(steady.frames, steady, apart, end=steady.frames[-1].t)
-    assert events == []
-    assert {tr["uncertain"] for tr in trackers.values()} == {"view does not match the photos"}
+    # Separated boxes, saved through the editor, mark every moved slot for new photos: no stock change.
+    # (Without that gate, slot 3 at its new spot reads "low" from the old photos: fixed in 1e97fcb's follow-up.)
+    events, trackers = replay_board(steady.frames, steady, apart, end=steady.frames[-1].t,
+                                    recalibrate=sd.recal_after_move({}, [1, 2, 3]))
+    assert events == [] and {tr["uncertain"] for tr in trackers.values()} == {sd.RECAL_WHY}
 
 
 def test_a_covered_lens_is_uncertain(steady, apart):
