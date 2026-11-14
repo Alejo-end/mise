@@ -154,7 +154,7 @@
       </section>
       <section class="mod" id="recog">
         <h2>recognize shelf <small>experimental · observes only, never orders</small></h2>
-        <p class="hint" style="margin-top:0">Looks anywhere on the monitored surface: the boxes only say where to look, not what must be there. Names come from your own enrolled photos; a product it does not know stays "unknown".</p>
+        <p class="hint" style="margin-top:0">"Recognize shelf" sends the current picture to a vision model (Kimi K3.1 Pro on Verda, via the laptop): it describes every visible package and proposes chips, energy drink or milk only when the description supports it; anything else stays "unknown". No empty photo or enrolment is needed. The two buttons below the picker feed the separate photo-enrolment pipeline.</p>
         <div class="keys">
           <button class="primary" id="recogBtn">Recognize shelf</button>
           <button id="bgBtn">Save empty surface</button>
