@@ -93,6 +93,24 @@ The limits:
 4. No real kitchen data exists yet. The tests use made-up readings, and the distance sensor is not connected.
 5. Order timing is unchanged: a low reading still starts a request at once. Anatoly's proposal moves orders to set times. His simulator, on a partial and synthetic run, shows the price of that: about half as many supplier orders, and about three times the hours with an empty shelf (57.7 against 177.4). An urgent path wins part of that back (127.5). The team has not decided.
 
+## The cold log, the scan and "use first"
+
+These three parts watch the food between the delivery and the plate. Each one records, and none of them orders.
+
+1. The cold log (`backend/cold.py`) keeps the temperature over time and compares it with the storage limit of each shelf product. The limit is the manufacturer's from the catalog. If the catalog has none, the kitchen's own limit stands in. A product is "cold enough", "too warm" or "check before use". At "check before use" the head chef gets an alert, and the audit log gets an entry.
+2. The scan (`POST /scan`) takes the number under the barcode of a pack. It finds the product in the Valio catalog and answers with the kitchen's verdict, the allergens and the storage limit. A case label in the GS1-128 form also carries the best-before date and the lot.
+3. "Use first" (`backend/batches.py`, `GET /insights`) lists the registered packs by their date. With the count and the use of the shelf slot it says how many units will be left on the date, so the kitchen can plan them into the menu or offer them.
+
+Each order also has a record of its way: asked, checked, ordered, delivered and stored (`GET /orders/{id}/chain`).
+
+The limits:
+
+1. The sensor measures the air, not the food. The alert says "check before use". It never says that a product is spoiled.
+2. The Valio file has no shelf life, so the date comes from the pack. A person types it, or the case label carries it. Nothing reads a label with a camera yet.
+3. 10,266 of the 17,546 products have a storage temperature in the catalog. The demo sets the kitchen's own limits and a short alert time in `.env` (`COLD_LIMITS`, `COLD_ALLOWED_MINUTES`).
+4. "The whole chain" is two points today: the door of the kitchen and its cold room. The warehouse and the truck need their own sensors.
+5. Nothing measures the electricity of a fridge. That needs a meter on the plug, which we do not have.
+
 ## What the Valio catalog looks like
 
 The Valio product file and the two API calls are synthetic. Valio built them for the challenge, and the brief says so (`CHALLENGE_BRIEFS.md`, lines 107, 108 and 121). So every count below describes the challenge file, not Valio's real suppliers. It shows what our rules do to a catalog with gaps. It does not show how large the gap is in Valio's real data.
@@ -208,6 +226,41 @@ In a warm room, the cold room alarm is on. Then the buzzer plays the alarm, and 
 4. Show the synthetic Valio catalog under the school's bans: 11% forbidden, 46% to a person, 42% clear. Say that the file is synthetic, so the count shows the rules, not Valio's data. Say that half of the 46% is not food. Then order one product with no allergen data. The chef reads the label once, and the second order goes through alone.
 5. Now the kitchen as one client. Take the milk off the shelf. The camera triggers the agent, and the box beeps. Stock is short, so a safe substitute needs approval.
 6. Show the audit log as a story and as data.
+
+## The buying agent from outside
+
+`backend/buyer_agent.py` is an agent of "another company". It runs as its own program and talks to the backend only over the network, with the same calls that any outside agent gets.
+
+```
+uv run python -m backend.buyer_agent "50 kg of chicken breast for Friday" --pin <the approver's PIN>
+```
+
+It does these steps, and it prints each one:
+
+1. It takes the Agent Driving Test over the network. With the PIN, the head chef grants its licence.
+2. It reads the request: the words to search, the amount, the unit and the day.
+3. It looks products up through the gateway and keeps those whose pack size it can turn into the amount.
+4. It asks for a quote for up to six of them, and it lists each with its total and its price for a kilogram or a litre. It names the products that it left out, with the reason of the gateway.
+5. It picks one, asks the price again, and orders with one key. The gateway checks the order against the kitchen's rules and sends it to the head chef if the rules say so.
+
+The split of work is the rule of this project. With `VERDA_INFERENCE_API_KEY` in `.env`, a language model on Verda (Kimi) reads the request and picks among the quoted options, with a reason. Plain code does the rest, and it uses a model's answer only if the answer is valid: a choice that is not among the quoted options falls back to the cheapest. Without a key, fixed rules take both steps.
+
+What we ran on the live Valio API on 14 November, first with fixed rules and then with Kimi on Verda: the agent passed the Driving Test 6 of 6, compared four chicken products between 7.78 and 9.32 € a kilogram, and its order went to the head chef. The model gave its reason: plain frozen fillets match the request best and have the lowest total. The run with the model took 33 seconds, the Driving Test included. That is one run of one request. The tests use a stand-in for the model.
+
+## The example cases of the demo
+
+`uv run python tools/demo_cases.py` loads seven cases into a running backend. Run it once on a fresh database. The products are real entries of the Valio catalog. The counts of the last two days and the dates on the packs are made up, and the log names them "demo case". The script orders nothing.
+
+| Case | What it loads | What the page then shows |
+|---|---|---|
+| 1. Milk runs short | Two days of counts for the three shelf slots | Send "24 lactose-free milk" in the Kitchen role. The head chef's ticket shows 11 on the shelf, about 18 a day, and about 29 hours with an empty shelf before the delivery |
+| 2. Chicken near its date | Kariniemen chicken breast fillet, date tomorrow | "Use it first, or plan it into the menu" |
+| 3. Yoghurt left over | Valio organic natural yoghurt, date in two days | "About 5 of 9 will be left. Plan them into the menu or offer them" |
+| 4. Soup past its date | Saarioinen chicken soup, date yesterday | "Take it off the shelf and record it" |
+| 5. Nuts at the door | A scan of a chocolate bar with nuts | "Not for this kitchen", with the reason |
+| 6. Sesame at the door | A scan of a crispbread with sesame | The same |
+| 7. Frozen in a warm room | A scan of frozen root vegetables, limit -18 °C | "Check before use", once the Thermo sends a reading |
+| 8. An outside agent buys chicken | Not loaded by the script. Run the buying agent in a terminal (see above) | The steps in the terminal, and a ticket on the head chef's page that names the agent |
 
 ## How the judges score
 

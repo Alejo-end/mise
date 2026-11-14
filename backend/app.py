@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
@@ -28,6 +28,7 @@ from .sandbox import AGENTS, DrivingTest
 from .settings import Settings
 from .shelf import Shelf, ShelfError, versions_dir_for
 from .signing import Signer
+from .batches import Batches, insight, parse_gs1
 from .cold import BREACH, DEFAULT_ALLOWED_MIN, ColdLog, exposure
 from .stock import StockHistory, against_delivery, outlook
 from .valio import ValioCatalog, make_client
@@ -64,6 +65,7 @@ catalog = make_client()
 log = AuditLog(os.getenv("AUDIT_DB", DATA / "audit.sqlite"))
 stock_history = StockHistory(os.getenv("AUDIT_DB", DATA / "audit.sqlite"))
 cold_log = ColdLog(os.getenv("AUDIT_DB", DATA / "audit.sqlite"))
+batches = Batches(os.getenv("AUDIT_DB", DATA / "audit.sqlite"))
 
 
 def _check_targets() -> None:
@@ -305,9 +307,12 @@ def _slot_outlook(slot: int):
 
 def _stock_for(approval: dict) -> dict | None:
     """What the stock timeline says about a request that a shelf slot started: the count, the use, and each option against it."""
-    if approval.get("slot") is None:
+    slot = approval.get("slot")
+    if slot is None:  # a request in words has no slot, but its product can have one
+        slot = next((t["slot"] for t in ruleset["targets"] if t.get("product") == approval.get("what")), None)
+    if slot is None:
         return None
-    _, o = _slot_outlook(int(approval["slot"]))
+    _, o = _slot_outlook(int(slot))
     if o.units is None:
         return None
     options = []
@@ -521,9 +526,10 @@ def _scan_answer(product: dict) -> dict:
 
 
 class Scan(BaseModel):
-    code: str = Field(min_length=4, max_length=40)
+    code: str = Field(min_length=4, max_length=80)  # a product number, or a case label such as (01)...(15)261120(10)L42
     where: Literal["door", "shelf"] = "door"
     scanned_by: str | None = Field(default=None, max_length=60)
+    best_before: date | None = None  # the date on the pack, if the code does not carry it
 
 
 @app.get("/scan/{code}")
@@ -539,21 +545,60 @@ def scan_lookup(code: str):
 def scan_record(s: Scan):
     """Record that a person or the box scanned a pack at the door or on the shelf. The audit log keeps the product,
     what this kitchen's rules say about it, and its storage limit."""
-    found = _by_code(s.code)
+    label = parse_gs1(s.code)
+    code = label.get("code", s.code)
+    found = _by_code(code)
     if not found:
-        log.write("scan", {"summary": f"A scanned code is not in the catalog: {_code(s.code)}.", "code": _code(s.code),
+        log.write("scan", {"summary": f"A scanned code is not in the catalog: {_code(code)}.", "code": _code(code),
                            "where": s.where}, s.scanned_by or "kitchen", ruleset["version"])
         raise HTTPException(404, "This code is not in the wholesaler's catalog.")
     answers = [_scan_answer(p) for p in found]
+    best_before = s.best_before.isoformat() if s.best_before else label.get("best_before")
+    registered = []
+    if best_before and len(found) == 1:  # a date belongs to one product; a code that names two cannot carry it
+        b = batches.add(found[0]["id"], found[0]["name"], best_before, label.get("lot"), s.scanned_by, datetime.now(TZ))
+        registered.append(b.to_dict())
+        log.write("batch", {"summary": f"{found[0]['name']} registered with the date {best_before}"
+                            + (f", lot {b.lot}" if b.lot else "") + ".", "batch_id": b.id, "product_id": b.product_id,
+                            "best_before": best_before}, s.scanned_by or "kitchen", ruleset["version"])
     words = {"allowed": "allowed in this kitchen", "read_label": "a person must read the label", "forbidden": "forbidden in this kitchen"}
     for a in answers:
         limit = a["keep_at_or_below_c"]
         log.write("scan", {"summary": f"{a['product']['name']} scanned at the {s.where}: {words[a['verdict']]}"
                            + (f" ({'; '.join(a['reasons'])})" if a["reasons"] else "")
                            + (f". Keep at {limit:g} °C or colder." if limit is not None else ". No storage limit in the catalog."),
-                           "code": _code(s.code), "product_id": a["product"]["id"], "where": s.where,
+                           "code": _code(code), "product_id": a["product"]["id"], "where": s.where,
                            "verdict": a["verdict"]}, s.scanned_by or "kitchen", ruleset["version"])
-    return {"code": _code(s.code), "where": s.where, "matches": answers}
+    return {"code": _code(code), "where": s.where, "matches": answers, "batches": registered}
+
+
+class CloseBatch(BaseModel):
+    how: Literal["used", "removed"]
+    by: str | None = Field(default=None, max_length=60)
+
+
+@app.post("/batches/{batch_id}/close")
+def batch_close(batch_id: int, c: CloseBatch):
+    """A person says that a registered pack is used up, or that it left the shelf as waste."""
+    if not batches.close(batch_id, c.how):
+        raise HTTPException(404, "No such open pack.")
+    log.write("batch", {"summary": f"Pack {batch_id} recorded as {c.how}.", "batch_id": batch_id, "how": c.how},
+              c.by or "kitchen", ruleset["version"])
+    return {"id": batch_id, "done": c.how}
+
+
+@app.get("/insights")
+def insights():
+    """What to use first: the registered packs by their date, with the count and the use of their shelf slot."""
+    today, out = datetime.now(TZ).date(), []
+    for b in batches.open():
+        slot = next((t["slot"] for t in ruleset["targets"] if str(t.get("product_id")) == b.product_id), None)
+        units = rate = None
+        if slot is not None:
+            _, o = _slot_outlook(slot)
+            units, rate = o.units, o.use_per_day
+        out.append(insight(b, today, units, rate))
+    return {"use_first": [i for i in out if i["level"] != "fine"], "fine": [i for i in out if i["level"] == "fine"]}
 
 
 # The cold log and the way of an order ------------------------------------------------------------

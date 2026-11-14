@@ -107,3 +107,12 @@ def test_a_camera_reading_goes_into_the_timeline(client):
     client.post("/events", json={"type": "slot_state", "slot": 2, "state": "full", "estimated_units": 9})
     slot = next(s for s in client.get("/stock").json() if s["slot"] == 2)
     assert (slot["units"], slot["source"]) == (9, "camera")
+
+
+def test_a_request_in_words_shows_the_stock_of_the_products_slot(client):
+    """Aino asks for milk in words. The ticket still tells the head chef what is on the milk shelf."""
+    client.post("/stock/3/count", json={"units": 6})
+    client.post("/events", json={"type": "status", "auto_limit_eur": 0})
+    assert client.post("/request", json={"text": "24 lactose-free milk", "asked_by": "Aino"}).json()["status"] == "needs_approval"
+    (ticket,) = client.get("/approvals/open").json()
+    assert ticket["slot"] is None and ticket["stock"]["units"] == 6 and ticket["stock"]["source"] == "person"

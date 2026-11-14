@@ -8,7 +8,6 @@ which overlap (see test_the_validator_flags_the_recorded_overlap).
 
 from __future__ import annotations
 
-import itertools
 
 import numpy as np
 import pytest

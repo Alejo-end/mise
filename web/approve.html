@@ -5,217 +5,221 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>mise</title>
 <style>
-  /* The look comes from the kitchen itself: an order is a paper ticket on the pass, the shelf has edge labels,
-     and the log is a till roll. Milk white, one deep blue, one berry pink. System fonts only: no network needed.
+  /* A working tool, not a poster: small type, hairlines, one blue for action and one pink for alarm.
+     The font of the engraved case is used for the name only. System fonts otherwise: no network needed.
      Every size is in rem, so "Larger text" scales the whole page. */
-  :root { --milk:#f4f7fd; --paper:#ffffff; --ink:#0b1e4f; --soft:#4d5d8c; --rule:#d5def3;
-          --blue:#1640c9; --blue-ink:#ffffff; --sky:#e3ebff; --pink:#d91c66; --blush:#ffe3ee;
-          --ok:#0d7458; --ok-bg:#dcf4ec; --warn:#8f5200; --warn-bg:#ffeed2; --bad:#b0202d;
-          --glass:rgba(255,255,255,0.72); --lift:0 1px 0 rgba(11,30,79,0.04), 0 18px 40px -22px rgba(22,64,201,0.45);
-          --round: ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", system-ui, sans-serif; font-size:100% }
-  @media (prefers-color-scheme: dark) { :root { --milk:#060e27; --paper:#101b42; --ink:#edf1ff; --soft:#a9b4dc; --rule:#26346a;
-          --blue:#8eaeff; --blue-ink:#06112e; --sky:#182759; --pink:#ff86b6; --blush:#3a1730;
-          --ok:#74d8b9; --ok-bg:#0f3a30; --warn:#f2b660; --warn-bg:#3d2b0c; --bad:#ff8f97;
-          --glass:rgba(16,27,66,0.72); --lift:0 20px 44px -22px rgba(0,0,0,0.8) } }
-  html.large { font-size:120% }
+  :root { --bg:#f6f7fa; --panel:#ffffff; --ink:#0c1530; --soft:#59627a; --faint:#8a92a6; --line:#e3e6ee; --line2:#eef0f5;
+          --blue:#1f4fd8; --blue-ink:#ffffff; --blue-soft:#eaf0ff; --pink:#d2175f; --pink-soft:#fde8f0;
+          --ok:#0a7450; --ok-soft:#e2f4ec; --warn:#8f5600; --warn-soft:#fdf0d9; --bad:#b21e2c;
+          --focus:#1f4fd8; font-size:100% }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0a0e19; --panel:#11172a; --ink:#e9edf7; --soft:#a2abc2; --faint:#7480a0; --line:#232b43; --line2:#1a2136;
+          --blue:#7f9fff; --blue-ink:#08112b; --blue-soft:#18244a; --pink:#ff7fb0; --pink-soft:#3a1529;
+          --ok:#6fd3b0; --ok-soft:#0f3329; --warn:#f0b65c; --warn-soft:#3a2a0c; --bad:#ff8c95; --focus:#7f9fff } }
+  html.large { font-size:118% }
   * { box-sizing:border-box }
-  body { margin:0; font:1rem/1.45 system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--milk); color:var(--ink); min-height:100vh }
-  /* One shape behind everything: a pour of blue with a pink edge, top right. */
-  body::before { content:""; position:fixed; z-index:-1; pointer-events:none; width:46rem; height:46rem; right:-20rem; top:-26rem; border-radius:50%;
-      background:radial-gradient(closest-side, var(--sky) 62%, var(--blush) 63% 78%, transparent 79%) }
+  body { margin:0; font:0.875rem/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; background:var(--bg); color:var(--ink);
+      min-height:100vh; -webkit-font-smoothing:antialiased; font-feature-settings:"tnum" 1, "cv11" 1 }
   @font-face { font-family:"Mise Name"; src:url("/fonts/name.ttf") format("truetype"); font-display:swap }
-  h1, h2, h3, .num { font-family:var(--round) }
-  /* The name, in the cursive of the engraving on the box. It is the same font file. */
-  .wordmark { font-family:"Mise Name", "Snell Roundhand", cursive; font-weight:400; color:var(--blue); letter-spacing:0 }
-  h1.wordmark { font-size:2.75rem; line-height:1.35; margin:-0.25rem 0 -0.75rem }
-  .foot { max-width:34rem; margin:0 auto; padding:0 1rem 6.5rem; display:flex; align-items:baseline; gap:0.75rem; flex-wrap:wrap }
-  .foot .wordmark { font-size:1.75rem; line-height:1.5 }
-  h1 { font-size:1.375rem; font-weight:700; letter-spacing:-0.01em; margin:0; line-height:1.15 }
-  h2 { font-size:1.375rem; font-weight:700; letter-spacing:-0.015em; margin:1.75rem 0 0.75rem; line-height:1.15 }
-  h3 { font-size:1.25rem; font-weight:700; margin:0; line-height:1.2 }
-  .meta { color:var(--soft); font-size:0.875rem }
-  .app { max-width:34rem; margin:0 auto; padding:0.875rem 1rem 1.5rem }
-  .side header { display:flex; justify-content:space-between; align-items:center; gap:0.75rem }
-  #ruleset { display:flex; flex-wrap:wrap; gap:0.375rem; margin-top:0.375rem }
-  .chip { display:inline-flex; align-items:center; gap:0.3125rem; font-size:0.8125rem; font-weight:600; padding:0.125rem 0.5625rem; border-radius:99px; background:var(--sky); color:var(--ink) }
-  .chip.live { background:var(--ok-bg); color:var(--ok) } .chip.live::before { content:""; width:0.4375rem; height:0.4375rem; border-radius:50%; background:currentColor }
-  .sidenote { display:none }
+  .wordmark { font-family:"Mise Name", "Snell Roundhand", cursive; font-weight:400; color:var(--blue); line-height:1.5 }
+  .brand .wordmark { font-size:2.75rem; line-height:1.35 }
+  h1 { font-size:1rem; font-weight:650; letter-spacing:-0.01em; margin:0 }
+  h2 { font-size:0.75rem; font-weight:600; color:var(--soft); margin:0 0 0.5rem; letter-spacing:0.01em }
+  h3 { font-size:0.9375rem; font-weight:650; letter-spacing:-0.01em; margin:0; line-height:1.3 }
+  .meta { color:var(--soft); font-size:0.8125rem }
+  b, .num { font-weight:650 }
 
-  /* Who you are: a bar under the thumb on a phone, a rail on a wide screen. This is the one piece of glass. */
-  .roles { position:fixed; z-index:6; left:0.75rem; right:0.75rem; bottom:0.75rem; display:flex; gap:0.25rem; padding:0.3125rem; border-radius:1.5rem;
-      background:var(--glass); border:1px solid var(--rule); box-shadow:var(--lift);
-      -webkit-backdrop-filter:blur(20px) saturate(180%); backdrop-filter:blur(20px) saturate(180%) }
-  .roles button { flex:1 1 0; min-width:0; border:0; background:transparent; color:var(--ink); padding:0.4375rem 0.25rem; border-radius:1.1875rem;
-      font:700 0.9375rem/1.15 var(--round); min-height:3rem; cursor:pointer }
-  .roles small { display:block; font:400 0.6875rem/1.2 system-ui, sans-serif; color:var(--soft) }
-  .roles button[aria-selected="true"] { background:var(--blue); color:var(--blue-ink) } .roles button[aria-selected="true"] small { color:inherit; opacity:0.85 }
+  /* Shell */
+  .app { max-width:34rem; margin:0 auto; padding:0 0.875rem 1rem }
+  .brand { padding:0.75rem 0 0 }
+  .sidenote { display:none }
+  .topbar { display:flex; align-items:center; gap:0.75rem; padding:0.25rem 0 0.875rem; flex-wrap:wrap }
+  .topbar h1 { margin-right:auto }
+  #ruleset { display:flex; flex-wrap:wrap; gap:0.375rem }
+  .chip { display:inline-flex; align-items:center; gap:0.3125rem; font-size:0.75rem; font-weight:550; padding:0.125rem 0.5rem; border-radius:99px;
+      border:1px solid var(--line); background:var(--panel); color:var(--soft) }
+  .chip.live { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 30%, var(--line)) }
+  .chip.live::before { content:""; width:0.375rem; height:0.375rem; border-radius:50%; background:currentColor }
+  .roles { position:fixed; z-index:6; left:0; right:0; bottom:0; display:flex; padding:0.25rem 0.5rem calc(0.25rem + env(safe-area-inset-bottom));
+      background:color-mix(in srgb, var(--panel) 88%, transparent); border-top:1px solid var(--line);
+      -webkit-backdrop-filter:blur(16px) saturate(160%); backdrop-filter:blur(16px) saturate(160%) }
+  .roles button { flex:1 1 0; min-width:0; border:0; background:transparent; color:var(--soft); padding:0.375rem 0.25rem; border-radius:0.5rem;
+      font:600 0.8125rem/1.2 inherit; min-height:3rem; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:0.125rem }
+  .roles svg { width:1.125rem; height:1.125rem; flex:none }
+  .roles small { display:block; font-weight:400; font-size:0.6875rem; color:var(--faint) }
+  .roles button[aria-selected="true"] { color:var(--blue) } .roles button[aria-selected="true"] small { color:inherit; opacity:0.8 }
   section[data-role] { display:none }
   html[data-as="chef"] section[data-role~="chef"], html[data-as="kitchen"] section[data-role~="kitchen"],
   html[data-as="valio"] section[data-role~="valio"] { display:block }
+  section[hidden] { display:none !important }
+  main section { margin-bottom:1.25rem }
+  .foot { max-width:34rem; margin:0 auto; padding:0 0.875rem 5.5rem; display:flex; align-items:baseline; gap:0.625rem; flex-wrap:wrap; color:var(--faint) }
+  .foot .wordmark { font-size:1.25rem; color:var(--faint) } .foot .meta { color:var(--faint) }
 
-  button { font:inherit; font-weight:650; border-radius:0.875rem; border:1.5px solid var(--rule); background:var(--paper); color:var(--ink);
-      padding:0.5rem 1rem; min-height:2.875rem; cursor:pointer }
-  button:active { transform:translateY(1px) }
-  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline:3px solid var(--pink); outline-offset:2px }
-  button.primary { background:var(--blue); border-color:var(--blue); color:var(--blue-ink) }
-  button.small { min-height:2.25rem; padding:0.25rem 0.75rem; font-size:0.875rem; font-weight:600 }
+  /* Controls */
+  button { font:inherit; font-weight:550; border-radius:0.4375rem; border:1px solid var(--line); background:var(--panel); color:var(--ink);
+      padding:0.375rem 0.75rem; min-height:2.25rem; cursor:pointer; box-shadow:0 1px 0 rgba(12,21,48,0.03) }
+  button:hover { border-color:color-mix(in srgb, var(--ink) 22%, var(--line)) }
+  button:active { transform:translateY(0.5px) }
+  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline:2px solid var(--focus); outline-offset:2px }
+  button.primary { background:var(--blue); border-color:var(--blue); color:var(--blue-ink) } button.primary:hover { filter:brightness(1.06) }
+  button.small { min-height:1.875rem; padding:0.1875rem 0.625rem; font-size:0.8125rem }
   button:disabled { opacity:0.5 }
   .row { display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem } .row > button { flex:1 1 auto }
-  input, select { font:inherit; padding:0.5rem 0.75rem; border-radius:0.75rem; border:1.5px solid var(--rule); background:var(--paper); color:var(--ink); width:100%; min-height:2.875rem }
-  label.meta { display:block; margin-bottom:0.25rem }
-  .pin { display:flex; gap:0.25rem 0.625rem; align-items:center; flex-wrap:wrap; margin-bottom:0.875rem }
-  .pin label { white-space:nowrap; font-weight:650 } .pin input { width:7rem; flex:none } .pin .meta { flex:1 1 9rem }
-  .empty { color:var(--soft); margin:0 }
-  .demopins { margin:-0.25rem 0 0.875rem; font-size:0.875rem; color:var(--soft) } .demopins button { margin-left:0.25rem }
-  .sheet { background:var(--paper); border-radius:1rem; padding:1rem; box-shadow:var(--lift) }
-  .reasons { color:var(--soft); font-size:0.875rem; margin:0.375rem 0 0 }
+  input, select { font:inherit; padding:0.375rem 0.625rem; border-radius:0.4375rem; border:1px solid var(--line); background:var(--panel); color:var(--ink); width:100%; min-height:2.25rem }
+  input::placeholder { color:var(--faint) }
+  label.meta { display:block; margin-bottom:0.25rem; font-weight:550; color:var(--ink) }
+  .pin { display:flex; gap:0.25rem 0.5rem; align-items:center; flex-wrap:wrap; margin-bottom:0.625rem }
+  .pin label { white-space:nowrap; font-weight:550 } .pin input { width:6rem; flex:none } .pin .meta { flex:1 1 9rem }
+  .demopins { margin:-0.125rem 0 0.75rem; font-size:0.8125rem; color:var(--soft) } .demopins button { margin-left:0.25rem }
+  .empty { color:var(--faint); margin:0 }
+  .reasons { color:var(--soft); font-size:0.8125rem; margin:0.375rem 0 0 }
   .allowed { color:var(--ok) } .needs_approval { color:var(--warn) } .forbidden { color:var(--bad) }
-  .alarm { color:var(--bad); font-weight:700 }
+  .alarm { color:var(--bad); font-weight:650 }
 
-  /* The ticket: one request to the head chef. Paper, with the holes of the ticket rail along the top. */
-  .ticket { background:var(--paper); border-radius:0.375rem 0.375rem 1rem 1rem; box-shadow:var(--lift); margin-bottom:1.25rem; position:relative; padding-top:0.875rem }
-  .ticket::before { content:""; position:absolute; left:0; right:0; top:0; height:0.875rem; border-radius:0.375rem 0.375rem 0 0; background:
-      radial-gradient(circle at 0.75rem 0.4375rem, var(--milk) 0.1875rem, transparent 0.21875rem) 0 0 / 1.5rem 100% repeat-x, var(--blue) }
-  .ticket > header { padding:0.875rem 1rem 0.75rem }
-  .ticket .quote { margin:0.375rem 0 0; font-size:0.9375rem; color:var(--soft) }
-  .shelfnow { margin:0 1rem; padding:0.75rem 0 0.875rem; border-top:1.5px dashed var(--rule) }
-  .shelfnow .big { display:flex; align-items:baseline; gap:0.5rem; flex-wrap:wrap }
-  .shelfnow .num { font-size:2.25rem; font-weight:700; line-height:1; letter-spacing:-0.02em }
-  .gap { margin-top:0.75rem }
-  .gap .track { position:relative; height:0.625rem; border-radius:99px; background:var(--sky) }
-  .gap .dry { position:absolute; top:0; bottom:0; border-radius:99px; background:var(--pink) }
-  .gap .dot { position:absolute; top:50%; width:1rem; height:1rem; margin:-0.5rem 0 0 -0.5rem; border-radius:50%; border:0.1875rem solid var(--paper) }
-  .gap .dot.out { background:var(--pink) } .gap .dot.in { background:var(--blue) }
-  .gap .ends { display:flex; justify-content:space-between; gap:0.75rem; margin-top:0.375rem; font-size:0.8125rem; color:var(--soft) }
-  .gap .ends b { display:block; color:var(--ink); font-size:0.875rem }
-  .gap .verdict { margin:0.5rem 0 0; font-weight:650 }
-  .options { list-style:none; margin:0; padding:0 }
-  .options > li { padding:0.875rem 1rem 1rem; border-top:1.5px dashed var(--rule) }
-  .options .top { display:flex; justify-content:space-between; align-items:baseline; gap:0.75rem }
-  .options .name { font-weight:700; font-family:var(--round); font-size:1.0625rem }
-  .options .price { font-family:var(--round); font-weight:700; font-size:1.375rem; font-variant-numeric:tabular-nums; white-space:nowrap }
-  .lines { font-size:0.9375rem; margin:0.375rem 0 0; padding-left:1.125rem }
-  .ticket > footer { padding:0 1rem 1rem }
-  details.alt { background:none; box-shadow:none; border-radius:0; margin:0 }
-  details.alt > summary { padding:0; font-weight:400 } details.alt > summary::after { margin-left:0.5rem }
-  details.alt > summary .price { margin-left:auto; font-size:1.125rem }
-  .options > li:has(details.alt:not([open])) { padding-top:0.625rem; padding-bottom:0.625rem }
-
-  /* The shelf: one edge label for each slot, with the level and the reorder mark. */
-  .slots { list-style:none; margin:0; padding:0; display:grid; gap:0.75rem }
-  .slots li { background:var(--paper); border-radius:0.375rem; border-left:0.375rem solid var(--blue); padding:0.75rem 0.875rem; box-shadow:var(--lift) }
-  .slots li.lowslot { border-left-color:var(--pink) }
-  .slots .head { display:flex; justify-content:space-between; gap:0.75rem; align-items:baseline }
-  .slots .num { font-size:1.5rem; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap } .slots .num small { font-size:0.875rem; font-weight:600; color:var(--soft) }
-  .level { position:relative; height:0.625rem; border-radius:99px; background:var(--sky); margin:0.5rem 0 0.375rem }
-  .level i { position:absolute; left:0; top:0; bottom:0; border-radius:99px; background:var(--blue) } .lowslot .level i { background:var(--pink) }
-  .level b { position:absolute; top:-0.1875rem; bottom:-0.1875rem; width:0.125rem; background:var(--ink); opacity:0.55 }
-  .slots .count { display:flex; gap:0.5rem; margin-top:0.5rem } .slots .count input { width:5.5rem; flex:none; min-height:2.25rem }
-
-  /* The cold room: one large reading, then each product against its own limit. */
-  .therm { display:flex; align-items:baseline; gap:0.625rem; flex-wrap:wrap }
-  .therm .num { font-size:2.5rem; font-weight:700; line-height:1; letter-spacing:-0.02em }
-  .coldlist li { display:flex; justify-content:space-between; gap:0.75rem; align-items:baseline; padding:0.4375rem 0; border-top:1.5px dashed var(--rule) }
-  .coldlist li:first-child { margin-top:0.625rem }
-  .state { font-weight:700; font-size:0.8125rem; padding:0.125rem 0.5rem; border-radius:99px; white-space:nowrap }
-  .state.ok { background:var(--ok-bg); color:var(--ok) } .state.warm { background:var(--warn-bg); color:var(--warn) }
-  .state.breach { background:var(--pink); color:#fff } .state.unknown { background:var(--sky); color:var(--soft) }
-  .sheet .count { display:flex; gap:0.5rem; margin-top:0.75rem } .sheet .count input { width:5.5rem; flex:none; min-height:2.25rem }
-  .alert { background:var(--pink); color:#fff; border-radius:0.375rem 0.375rem 1rem 1rem; padding:0.875rem 1rem; margin-bottom:1.25rem; box-shadow:var(--lift) }
-  .alert h3 { color:inherit } .alert p { margin:0.375rem 0 0 }
-  /* The way of one order: five steps on a line. A step that happened is filled. */
-  .way { background:var(--paper); border-radius:1rem; box-shadow:var(--lift); margin:0 0 0.75rem }
-  .way > summary { font-weight:400 } .way > ol { padding:0 1rem 0.5rem !important }
-  .way ol { list-style:none; margin:0.625rem 0 0; padding:0; display:grid; gap:0 }
-  .way li { position:relative; padding:0 0 0.625rem 1.5rem; font-size:0.9375rem }
-  .way li::before { content:""; position:absolute; left:0.25rem; top:0.3125rem; width:0.625rem; height:0.625rem; border-radius:50%; border:0.125rem solid var(--blue); background:var(--paper) }
-  .way li.done::before { background:var(--blue) } .way li.bad::before { background:var(--pink); border-color:var(--pink) }
-  .way li::after { content:""; position:absolute; left:0.5rem; top:1.0625rem; bottom:0; width:0.125rem; background:var(--rule) } .way li:last-child::after { display:none }
-  .way li b { font-family:var(--round) } .way li:not(.done) { color:var(--soft) }
-
-  /* A scanned product: what the catalog says, and what this kitchen may do with it. */
-  .found { margin-top:0.875rem; padding-top:0.875rem; border-top:1.5px dashed var(--rule) }
-  .found h3 { font-size:1.0625rem } .found .state { display:inline-block; margin:0.5rem 0 0.25rem }
-  .state.allowed { background:var(--ok-bg); color:var(--ok) } .state.read_label { background:var(--warn-bg); color:var(--warn) }
-  .state.forbidden { background:var(--pink); color:#fff }
-
-  /* Folded parts and the facts list. */
-  details { background:var(--paper); border-radius:1rem; box-shadow:var(--lift); margin-top:0.75rem }
-  summary { cursor:pointer; padding:0.875rem 1rem; font-weight:650; list-style:none; display:flex; justify-content:space-between; align-items:center; gap:0.5rem }
+  /* Panels */
+  .sheet, details, .ticket, .way, .roll { background:var(--panel); border:1px solid var(--line); border-radius:0.625rem }
+  .sheet { padding:0.875rem }
+  details { margin-top:0.5rem }
+  summary { cursor:pointer; padding:0.625rem 0.875rem; font-weight:550; list-style:none; display:flex; justify-content:space-between; align-items:center; gap:0.5rem }
   summary::-webkit-details-marker { display:none }
-  summary::after { content:"+"; color:var(--blue); font-size:1.25rem; line-height:1 } details[open] > summary::after { content:"\2212" }
+  summary::after { content:""; width:0.4375rem; height:0.4375rem; border-right:1.5px solid var(--faint); border-bottom:1.5px solid var(--faint); transform:rotate(-45deg); flex:none; transition:transform 0.12s ease }
+  details[open] > summary::after { transform:rotate(45deg) }
   summary .meta { font-weight:400; margin-left:auto }
-  .inside { padding:0 1rem 1rem }
-  .stats { margin:0 }
-  .stats div { display:flex; justify-content:space-between; gap:0.75rem; padding:0.4375rem 0; border-bottom:1.5px dashed var(--rule) } .stats div:last-child { border-bottom:0 }
-  .stats dt { color:var(--soft) } .stats dd { margin:0; font-weight:700; font-family:var(--round); font-variant-numeric:tabular-nums }
+  details.fold { margin-top:0 } details.fold > summary { font-weight:400 }
+  .inside { padding:0 0.875rem 0.875rem }
   ul.plain { list-style:none; margin:0; padding:0 }
-  .check li { display:flex; gap:0.625rem; align-items:flex-start; padding:0.5rem 0; border-top:1.5px dashed var(--rule) } .check li:first-child { border-top:0 }
-  .check .mark { flex:none; min-width:3rem; text-align:center; font-weight:700; font-size:0.8125rem; padding:0.125rem 0.375rem; border-radius:99px; margin-top:0.0625rem }
-  .check .mark.allowed { background:var(--ok-bg) } .check .mark.forbidden { background:var(--blush); color:var(--pink) }
-  .check small { display:block; color:var(--soft); font-size:0.8125rem }
 
-  /* The log: a till roll. Narrow, dashed, newest at the top, torn at the bottom. */
-  .roll { background:var(--paper); padding:0.75rem 1rem 1.25rem; box-shadow:var(--lift); max-width:26rem;
-      -webkit-mask:conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / 0.75rem 51% repeat-x, linear-gradient(#000 0 0) top / 100% 51% no-repeat;
-      mask:conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / 0.75rem 51% repeat-x, linear-gradient(#000 0 0) top / 100% 51% no-repeat }
-  .log li { display:flex; gap:0.75rem; padding:0.4375rem 0; border-top:1.5px dashed var(--rule); font-size:0.9375rem } .log li:first-child { border-top:0 }
-  .log time { color:var(--pink); font-weight:700; font-variant-numeric:tabular-nums; font-size:0.8125rem; padding-top:0.125rem; flex:none }
-  pre { white-space:pre-wrap; word-break:break-word; font-size:0.75rem; max-height:20rem; overflow:auto; margin:0; background:var(--milk); border-radius:0.5rem; padding:0.625rem }
+  /* The strip of numbers */
+  .glance { display:grid; grid-template-columns:repeat(auto-fit, minmax(7.5rem, 1fr)); gap:0.75rem 1.5rem; margin:0 }
+  .glance div { display:flex; flex-direction:column }
+  .glance dt { color:var(--soft); font-size:0.75rem; order:-1 } .glance dd { margin:0; font-size:1.25rem; font-weight:650; letter-spacing:-0.02em; line-height:1.3 }
 
+  /* An approval request */
+  .ticket { margin-bottom:0.875rem; overflow:hidden }
+  .ticket > header { padding:0.875rem 0.875rem 0.75rem }
+  .ticket .quote { margin:0.25rem 0 0; color:var(--soft) }
+  .shelfnow { padding:0.75rem 0.875rem; border-top:1px solid var(--line2); background:color-mix(in srgb, var(--blue-soft) 40%, var(--panel)) }
+  .shelfnow .big { display:flex; align-items:baseline; gap:0.5rem; flex-wrap:wrap }
+  .shelfnow .num { font-size:1.5rem; letter-spacing:-0.02em; line-height:1.2 }
+  .gap { margin-top:0.625rem }
+  .gap .track { position:relative; height:0.375rem; border-radius:99px; background:var(--line) }
+  .gap .dry { position:absolute; top:0; bottom:0; border-radius:99px; background:var(--pink) }
+  .gap .dot { position:absolute; top:50%; width:0.75rem; height:0.75rem; margin:-0.375rem 0 0 -0.375rem; border-radius:50%; border:2px solid var(--panel) }
+  .gap .dot.out { background:var(--pink) } .gap .dot.in { background:var(--blue) }
+  .gap .ends { display:flex; justify-content:space-between; gap:0.75rem; margin-top:0.375rem; font-size:0.75rem; color:var(--soft) }
+  .gap .ends b { display:block; color:var(--ink); font-size:0.8125rem }
+  .gap .verdict { margin:0.375rem 0 0; font-weight:600; font-size:0.8125rem }
+  .options { list-style:none; margin:0; padding:0 }
+  .options > li { padding:0.75rem 0.875rem; border-top:1px solid var(--line2) }
+  .options .top, details.alt > summary { display:flex; justify-content:space-between; align-items:baseline; gap:0.75rem }
+  .options .name { font-weight:600 } .options .price { font-weight:650; font-size:1rem; white-space:nowrap }
+  .lines { margin:0.25rem 0 0; padding-left:1rem; color:var(--ink) }
+  .ticket > footer { padding:0 0.875rem 0.875rem } .ticket > footer .row { margin-top:0 }
+  details.alt { background:none; border:0; border-radius:0; margin:0 }
+  details.alt > summary { padding:0; font-weight:400 } details.alt > summary .price { margin-left:auto; font-size:0.875rem }
+
+  /* An alert: a banner, not a wall */
+  .alert { background:var(--pink-soft); color:var(--ink); border:1px solid color-mix(in srgb, var(--pink) 35%, var(--line)); border-left:3px solid var(--pink);
+      border-radius:0.5rem; padding:0.625rem 0.875rem; margin-bottom:0.875rem }
+  .alert h3 { color:var(--pink); font-size:0.875rem } .alert p { margin:0.25rem 0 0; font-size:0.8125rem; color:var(--soft) }
+
+  /* Lists inside panels: rows with hairlines */
+  .slots { list-style:none; margin:0; padding:0; background:var(--panel); border:1px solid var(--line); border-radius:0.625rem }
+  .slots li { padding:0.625rem 0.875rem; border-top:1px solid var(--line2) } .slots li:first-child { border-top:0 }
+  .slots .head { display:flex; justify-content:space-between; gap:0.75rem; align-items:baseline }
+  .slots .num { white-space:nowrap } .slots .num small { font-weight:400; color:var(--soft); font-size:0.8125rem }
+  .level { position:relative; height:0.25rem; border-radius:99px; background:var(--line); margin:0.375rem 0 }
+  .level i { position:absolute; left:0; top:0; bottom:0; border-radius:99px; background:var(--blue) } .lowslot .level i { background:var(--pink) }
+  .level b { position:absolute; top:-0.1875rem; bottom:-0.1875rem; width:1.5px; background:var(--faint) }
+  .lowslot .num { color:var(--pink) }
+  .slots .count, .sheet .count { display:flex; gap:0.375rem; margin-top:0.5rem }
+  .slots .count input, .sheet .count input { width:5.5rem; flex:none; min-height:1.875rem; padding:0.1875rem 0.5rem }
+  .usefirst { background:var(--panel); border:1px solid var(--line); border-radius:0.625rem }
+  .usefirst li { padding:0.625rem 0.875rem; border-top:1px solid var(--line2); border-left:3px solid var(--warn) } .usefirst li:first-child { border-top:0; border-top-left-radius:0.5rem }
+  .usefirst li:last-child { border-bottom-left-radius:0.5rem }
+  .usefirst li.past { border-left-color:var(--pink) } .usefirst li.soon { border-left-color:var(--blue) }
+  .usefirst .whenleft { font-weight:650; font-size:0.8125rem } .usefirst .row { margin-top:0.5rem } .usefirst .row > button { flex:0 0 auto }
+  .therm { display:flex; align-items:baseline; gap:0.5rem; flex-wrap:wrap } .therm .num { font-size:1.5rem; letter-spacing:-0.02em }
+  .coldlist li { display:flex; justify-content:space-between; gap:0.75rem; align-items:baseline; padding:0.4375rem 0; border-top:1px solid var(--line2) }
+  .coldlist li:first-child { margin-top:0.5rem }
+  .state { font-weight:600; font-size:0.75rem; padding:0.0625rem 0.5rem; border-radius:99px; white-space:nowrap; display:inline-block }
+  .state.ok, .state.allowed { background:var(--ok-soft); color:var(--ok) } .state.warm, .state.read_label { background:var(--warn-soft); color:var(--warn) }
+  .state.breach, .state.forbidden { background:var(--pink-soft); color:var(--pink) } .state.unknown { background:var(--line2); color:var(--soft) }
+  .found { margin-top:0.75rem; padding-top:0.75rem; border-top:1px solid var(--line2) } .found .state { margin:0.375rem 0 0.125rem }
+  .check li { display:flex; gap:0.625rem; align-items:flex-start; padding:0.4375rem 0; border-top:1px solid var(--line2) } .check li:first-child { border-top:0 }
+  .check .mark { flex:none; min-width:2.75rem; text-align:center; font-weight:600; font-size:0.75rem; padding:0.0625rem 0.375rem; border-radius:99px }
+  .check .mark.allowed { background:var(--ok-soft) } .check .mark.forbidden { background:var(--pink-soft); color:var(--pink) }
+  .check small { display:block; color:var(--soft); font-size:0.75rem }
+  .way { margin:0 0 0.5rem } .way > summary { font-weight:400 } .way > ol { list-style:none; margin:0; padding:0 0.875rem 0.5rem }
+  .way li { position:relative; padding:0 0 0.5rem 1.25rem; font-size:0.8125rem }
+  .way li::before { content:""; position:absolute; left:0.125rem; top:0.3125rem; width:0.5rem; height:0.5rem; border-radius:50%; border:1.5px solid var(--blue); background:var(--panel) }
+  .way li.done::before { background:var(--blue) } .way li.bad::before { background:var(--pink); border-color:var(--pink) }
+  .way li::after { content:""; position:absolute; left:0.3125rem; top:0.9375rem; bottom:0; width:1.5px; background:var(--line) } .way li:last-child::after { display:none }
+  .way li:not(.done) { color:var(--faint) }
+  .roll { padding:0.25rem 0.875rem 0.75rem }
+  .log li { display:flex; gap:0.75rem; padding:0.4375rem 0; border-top:1px solid var(--line2); font-size:0.8125rem } .log li:first-child { border-top:0 }
+  .log time { color:var(--faint); flex:none; font-variant-numeric:tabular-nums }
+  pre { white-space:pre-wrap; word-break:break-word; font:0.6875rem/1.5 ui-monospace, "SF Mono", Menlo, monospace; max-height:20rem; overflow:auto; margin:0;
+      background:var(--bg); border:1px solid var(--line2); border-radius:0.375rem; padding:0.5rem }
+
+  /* A short notice after an action */
   #result:empty { display:none }
-  #result { position:fixed; left:50%; bottom:5.25rem; transform:translateX(-50%); z-index:7; margin:0; width:max-content; max-width:calc(100vw - 2rem);
-      padding:0.625rem 1rem; border-radius:0.875rem; background:var(--ink); color:var(--milk); font-size:0.9375rem; box-shadow:var(--lift) }
+  #result { position:fixed; left:50%; bottom:4.75rem; transform:translateX(-50%); z-index:7; margin:0; width:max-content; max-width:calc(100vw - 2rem);
+      padding:0.5rem 0.875rem; border-radius:0.5rem; background:var(--ink); color:var(--bg); font-size:0.8125rem; box-shadow:0 8px 24px -8px rgba(12,21,48,0.45) }
 
-  /* A wide screen: the roles become a rail on the left, and the work sits in two columns. */
+  /* A wide screen: a sidebar, a top bar, and two columns of work */
   @media (min-width:64rem) {
-    .app { max-width:82rem; display:grid; grid-template-columns:15rem minmax(0,1fr); gap:3rem; padding:2rem 2.5rem 2rem; align-items:start }
-    .side { position:sticky; top:2rem }
-    .side header { flex-direction:column; align-items:flex-start }
-    .roles { position:static; flex-direction:column; margin-top:1.5rem; padding:0.375rem; border-radius:1.25rem }
-    .roles button { text-align:left; padding:0.625rem 0.875rem; border-radius:0.9375rem; flex:none }
-    .roles small { font-size:0.8125rem }
-    .sidenote { display:block; margin:1.25rem 0.25rem 0; font-size:0.8125rem }
-    main { display:grid; grid-template-columns:minmax(0,34rem) minmax(0,26rem); gap:0 3rem; align-items:start }
-    main > section { grid-column:2 } main > section.lead { grid-column:1; grid-row:1 / span 8 }
-    main h2 { margin-top:0 } main > section:not(.lead) + section:not(.lead) h2 { margin-top:1.75rem }
-    #result { bottom:1.5rem }
-    .foot { max-width:82rem; padding:0 2.5rem 2.5rem }
+    .app { max-width:none; margin:0; padding:0; display:grid; grid-template-columns:14.5rem minmax(0,1fr); min-height:100vh }
+    .side { position:sticky; top:0; align-self:start; height:100vh; padding:1rem 0.75rem; border-right:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column }
+    .brand { padding:0.25rem 0.5rem 1rem }
+    .roles { position:static; flex-direction:column; gap:0.125rem; padding:0; background:none; border:0; -webkit-backdrop-filter:none; backdrop-filter:none }
+    .roles button { flex:none; flex-direction:row; align-items:center; gap:0.625rem; text-align:left; padding:0.4375rem 0.5rem; min-height:0; color:var(--ink); font-weight:550 }
+    .roles button:hover { background:var(--line2) }
+    .roles button[aria-selected="true"] { background:var(--blue-soft); color:var(--blue) }
+    .roles small { font-size:0.75rem } .roles svg { color:var(--soft) } .roles button[aria-selected="true"] svg { color:var(--blue) }
+    .sidenote { display:block; margin:auto 0.5rem 0; font-size:0.75rem; color:var(--faint) }
+    .work { padding:0 2rem 2rem; max-width:74rem }
+    .topbar { position:sticky; top:0; z-index:5; padding:0.875rem 0; margin-bottom:1rem; background:color-mix(in srgb, var(--bg) 88%, transparent); border-bottom:1px solid var(--line);
+        -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px) }
+    main { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(0,1fr); gap:0 2rem; align-items:start }
+    main > .strip { grid-column:1 / -1 }
+    #result { bottom:1.25rem }
+    .foot { max-width:none; margin-left:14.5rem; padding:0 2rem 1.5rem }
   }
-  @media (min-width:84rem) {
-    .app { max-width:none; grid-template-columns:13rem minmax(0,1fr); gap:2rem; padding:1.5rem 2rem 1.5rem }
-    main { grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr); gap:0 1.75rem; grid-auto-flow:row dense }
-    main > section { grid-column:auto; margin-bottom:1.5rem }
-    main > section.lead { grid-column:1; grid-row:1 / span 8 }
-    main > section:not(.lead) + section:not(.lead) h2 { margin-top:0 }
-    main h2 { font-size:1.125rem; margin-bottom:0.5rem } main section h2:not(:first-child) { margin-top:1.25rem }
-    .sheet, .way { padding:0.75rem 0.875rem } .slots { gap:0.5rem } .slots li { padding:0.5rem 0.75rem }
-    .foot { max-width:none; padding:0 2rem 1.5rem }
-  }
-  @media (prefers-reduced-motion: reduce) { button:active { transform:none } }
+  @media (prefers-reduced-motion: reduce) { button:active { transform:none } summary::after { transition:none } }
 </style>
 </head>
 <body>
 <div class="app">
 <aside class="side">
-  <header>
-    <div>
-      <h1 class="wordmark" aria-label="mise">mise</h1>
-      <div class="meta" id="ruleset"></div>
-    </div>
-    <button id="size" class="small" aria-pressed="false">Larger text</button>
-  </header>
+  <div class="brand"><span class="wordmark" aria-label="mise">mise</span></div>
   <!-- Three people use this system. Each one sees only the own part. -->
   <nav class="roles" role="tablist" aria-label="Who you are">
-    <button role="tab" data-pick="chef">Head chef<small>approves orders</small></button>
-    <button role="tab" data-pick="kitchen">Kitchen<small>asks for products</small></button>
-    <button role="tab" data-pick="valio">Wholesaler<small>admits agents</small></button>
+    <button role="tab" data-pick="chef"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm3 5.1-3.6 3.9a.6.6 0 0 1-.9 0L5 8.9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Head chef<small>approves orders</small></span></button>
+    <button role="tab" data-pick="kitchen"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5.2 8 2l6 3.2v5.6L8 14l-6-3.2V5.2Zm0 0L8 8.4m0 0 6-3.2M8 8.4V14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span>Kitchen<small>asks for products</small></span></button>
+    <button role="tab" data-pick="valio"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8 13 3.6v4c0 3-2 5.200-5 6.600-3-1.400-5-3.600-5-6.600v-4L8 1.800Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span>Wholesaler<small>admits agents</small></span></button>
   </nav>
   <p class="meta sidenote">One system, three people. The head chef uses a phone. The kitchen and the wholesaler use a screen.</p>
 </aside>
+<div class="work">
+<div class="topbar">
+  <h1 id="pageTitle">Head chef</h1>
+  <div class="meta" id="ruleset"></div>
+  <button id="size" class="small" aria-pressed="false">Larger text</button>
+</div>
 <main>
   <p class="reasons" id="result" role="status" aria-live="polite"></p>
 
+  <section data-role="chef" class="strip">
+    <div class="sheet">
+      <dl class="glance" id="stats"></dl>
+      <p class="meta" style="margin:0.625rem 0 0">Turn the knob on the box to change what the agent may order alone, €10 a step. Hold it 2 seconds to check a delivery at the door. <span id="knobNote"></span></p>
+      <p class="meta" id="shelf" style="margin:0.25rem 0 0"></p>
+    </div>
+  </section>
+
+  <!-- Left: what this person does. Right: what this person needs to see. -->
+  <div class="do">
   <section data-role="chef" class="lead">
     <h2>Waiting for you</h2>
     <div class="pin">
@@ -229,52 +233,17 @@
   </section>
 
   <section data-role="kitchen">
-    <h2>Scan a product</h2>
+    <h2>A delivery arrived</h2>
     <div class="sheet">
       <label class="meta" for="code">The number under the barcode of the pack</label>
-      <input id="code" inputmode="numeric" autocomplete="off" placeholder="For example 6408430000296">
+      <input id="code" autocomplete="off" placeholder="For example 6408430000296">
+      <label class="meta" for="bestBefore" style="margin-top:0.625rem">Best before, from the pack (a case label carries it in its code)</label>
+      <input id="bestBefore" type="date">
       <div class="row">
         <button class="primary" data-scan="door">It arrived at the door</button>
         <button data-scan="shelf">It is on the shelf</button>
       </div>
       <div id="scanOut" aria-live="polite"></div>
-    </div>
-  </section>
-
-  <section data-role="kitchen">
-    <h2>On the shelf</h2>
-    <ul class="slots" id="slots"><li class="empty">No shelf data yet.</li></ul>
-  </section>
-
-  <section data-role="chef kitchen">
-    <h2>Cold room</h2>
-    <div class="sheet">
-      <div class="therm"><span class="num" id="coldNow">–</span><span id="coldWhen" class="meta">No reading yet.</span></div>
-      <ul class="plain coldlist" id="coldProducts"></ul>
-      <div class="count">
-        <input id="tempIn" type="number" step="0.1" inputmode="decimal" placeholder="°C" aria-label="Temperature that you measured">
-        <button class="small" id="tempSave">Save a measured temperature</button>
-      </div>
-      <p class="meta" style="margin:0.5rem 0 0">The sensor measures the air, not the food. A limit is the storage temperature that the manufacturer gave.</p>
-    </div>
-  </section>
-
-  <section data-role="kitchen valio">
-    <h2>Each order, step by step</h2>
-    <div id="chains"><p class="empty">No order yet.</p></div>
-  </section>
-
-  <section data-role="chef">
-    <h2>The knob on the box</h2>
-    <div class="sheet">
-      <div class="therm"><span class="num" id="knobNow">–</span><span class="meta">the most that the agent may order alone</span></div>
-      <p class="meta" style="margin:0.5rem 0 0">Turn it to change the limit, €10 a step. An order above it waits for you. Hold it 2 seconds to check a delivery at the door.</p>
-      <p class="meta" id="knobNote" style="margin:0.5rem 0 0"></p>
-    </div>
-    <h2>Your kitchen</h2>
-    <div class="sheet">
-      <dl class="stats" id="stats"></dl>
-      <p class="meta" id="shelf" style="margin:0.5rem 0 0"></p>
     </div>
   </section>
 
@@ -294,17 +263,6 @@
         <select id="force" aria-label="Product to force"></select>
         <input id="forceCode" placeholder="Product code" aria-label="Product code" style="margin-top:0.5rem">
         <div class="row"><button id="forceBtn">Try to order 20</button></div>
-      </div>
-    </details>
-  </section>
-
-  <section data-role="kitchen">
-    <h2>Deliveries</h2>
-    <details id="delBox" open>
-      <summary>Checked at the door <span class="meta" id="delCount">none checked</span></summary>
-      <div class="inside">
-        <div id="deliveries"><p class="empty">Hold the knob on the box for 2 seconds when a delivery arrives.</p></div>
-        <div id="reliability"></div>
       </div>
     </details>
   </section>
@@ -329,6 +287,39 @@
       </div>
     </div>
   </section>
+  </div>
+
+  <div class="see">
+  <section data-role="chef kitchen" id="useFirstBox" hidden>
+    <h2>Use first</h2>
+    <ul class="plain usefirst" id="useFirst"></ul>
+  </section>
+
+
+  <section data-role="kitchen">
+    <h2>On the shelf</h2>
+    <ul class="slots" id="slots"><li class="empty">No shelf data yet.</li></ul>
+  </section>
+
+  <section data-role="chef kitchen">
+    <details class="fold" id="coldBox">
+      <summary><span><b>Cold room</b> <span id="coldLine" class="meta">no reading yet</span></span></summary>
+      <div class="inside">
+      <div class="therm"><span class="num" id="coldNow">–</span><span id="coldWhen" class="meta">No reading yet.</span></div>
+      <ul class="plain coldlist" id="coldProducts"></ul>
+      <div class="count">
+        <input id="tempIn" type="number" step="0.1" inputmode="decimal" placeholder="°C" aria-label="Temperature that you measured">
+        <button class="small" id="tempSave">Save a measured temperature</button>
+      </div>
+      <p class="meta" style="margin:0.5rem 0 0">The sensor measures the air, not the food. A limit is the storage temperature that the manufacturer gave.</p>
+      </div>
+    </details>
+  </section>
+
+  <section data-role="kitchen valio">
+    <h2>Each order, step by step</h2>
+    <div id="chains"><p class="empty">No order yet.</p></div>
+  </section>
 
   <section data-role="valio">
     <h2>Licences</h2>
@@ -345,13 +336,26 @@
       <div class="row"><button class="small" id="more" aria-expanded="false">Show more</button></div>
     </div>
   </section>
+
+  <section data-role="kitchen">
+    <details class="fold" id="delBox">
+      <summary><span><b>Deliveries checked at the door</b></span> <span class="meta" id="delCount">none checked</span></summary>
+      <div class="inside">
+        <div id="deliveries"><p class="empty">Hold the knob on the box for 2 seconds when a delivery arrives.</p></div>
+        <div id="reliability"></div>
+      </div>
+    </details>
+  </section>
+
   <section data-role="valio">
     <details id="dataBox">
       <summary>The same entries as data</summary>
       <div class="inside"><pre id="json"></pre></div>
     </details>
   </section>
+  </div>
 </main>
+</div>
 </div>
 <!-- The name is "mise" on the lid of the box and "en place" on its base. The page follows the box. -->
 <footer class="foot"><span class="wordmark">en place</span> <span class="meta">Everything in its place before service: the stock, the rules and the orders.</span></footer>
@@ -515,7 +519,7 @@ function drawStock(slots) {
         ${s.on_order ? ` <b>${s.on_order} on order.</b>` : s.request_open ? " <b>A request waits for the head chef.</b>" : ""}
         ${s.use_per_day ? ` About ${s.use_per_day} a day, so empty ${esc(when(s.runs_out_at))}. A full shelf lasts ${s.days_of_use_when_full} days.` : ""}</div>
       <div class="count"><input type="number" min="0" inputmode="numeric" placeholder="Count" aria-label="Count for ${esc(name)}" data-count="${s.slot}">
-        <button class="small" data-save="${s.slot}">Save count</button></div></li>`; }).join("") || '<li class="empty">No shelf slots in the rule set.</li>';
+        <button class="small" data-save="${s.slot}">Save</button></div></li>`; }).join("") || '<li class="empty">No shelf slots in the rule set.</li>';
 }
 $("slots").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-save]"); if (!b) return;
@@ -533,7 +537,10 @@ function drawCold(c) {
   $("coldProducts").innerHTML = c.products.map(p => `<li><span>${esc(cap(p.product || "Slot " + p.slot))}
       <span class="meta">${p.limit_c == null ? "" : `keep at ${p.limit_c} °C or colder`}${p.minutes_above_now ? `, above it for ${p.minutes_above_now} min` : ""}</span></span>
       <span class="state ${p.state}">${STATE[p.state]}</span></li>`).join("");
-  const bad = c.products.filter(p => p.state === "breach");
+  const bad = c.products.filter(p => p.state === "breach"), warm = c.products.filter(p => p.state === "warm");
+  $("coldLine").innerHTML = c.temperature_c == null ? "no reading yet" : `${c.temperature_c.toFixed(1)} °C, ` +
+    (bad.length ? `<b class="forbidden">${bad.length} product${bad.length > 1 ? "s" : ""} to check</b>`
+     : warm.length ? `<b class="needs_approval">${warm.length} too warm</b>` : "every product cold enough");
   $("coldAlert").innerHTML = bad.length ? `<div class="alert"><h3>Check ${bad.map(p => esc(p.product)).join(" and ")} before use</h3>
       <p>The cold room is at ${c.temperature_c.toFixed(1)} °C. It was above the limit for ${Math.max(...bad.map(p => p.minutes_above_now))} minutes,
       and this kitchen allows ${c.allowed_minutes}. The sensor measures the air, so measure the product itself.</p></div>` : "";
@@ -543,6 +550,26 @@ $("tempSave").onclick = async () => {
   await post("/cold/reading", {temperature_c: Number($("tempIn").value), measured_by: $("who").value.trim() || null});
   $("tempIn").value = ""; $("result").textContent = "Temperature saved in the cold log."; tick();
 };
+let shownUse = null;
+function drawUseFirst(ins) {
+  const key = JSON.stringify(ins.use_first);
+  if (key === shownUse) return;
+  shownUse = key;
+  $("useFirstBox").hidden = !ins.use_first.length;
+  const left = (d) => d < 0 ? `${-d} day${d === -1 ? "" : "s"} past the date` : d === 0 ? "Date is today" : d === 1 ? "Date is tomorrow" : `${d} days left`;
+  $("useFirst").innerHTML = ins.use_first.map(i => `<li class="${i.level}">
+      <div class="whenleft">${left(i.days_left)}</div>
+      <div>${esc(i.text)}</div>
+      <div class="meta">Date on the pack: ${esc(i.best_before)}${i.lot ? ", lot " + esc(i.lot) : ""}. Registered by ${esc(i.registered_by || "the kitchen")}.</div>
+      <div class="row"><button class="small" data-batch="${i.id}" data-how="used">It is used up</button>
+        <button class="small" data-batch="${i.id}" data-how="removed">It left as waste</button></div></li>`).join("");
+}
+$("useFirst").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-batch]"); if (!b) return;
+  await post(`/batches/${b.dataset.batch}/close`, {how: b.dataset.how, by: $("who").value.trim() || null});
+  $("result").textContent = b.dataset.how === "used" ? "Recorded as used." : "Recorded as waste."; shownUse = null; tick();
+});
+
 let shownChains = null;
 async function drawChains(orders) {
   const last = orders.slice(-3).reverse();
@@ -564,7 +591,7 @@ document.querySelectorAll("[data-scan]").forEach(b => b.onclick = async () => {
   const code = $("code").value.trim();
   if (!code) { $("code").focus(); return; }
   const resp = await fetch("/scan", {method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({code, where: b.dataset.scan, scanned_by: $("who").value.trim() || null})});
+    body: JSON.stringify({code, where: b.dataset.scan, scanned_by: $("who").value.trim() || null, best_before: $("bestBefore").value || null})});
   const r = await resp.json();
   $("scanOut").innerHTML = !resp.ok ? `<div class="found"><b class="forbidden">${esc(r.detail || "Not found.")}</b>
       <p class="reasons">The scan is in the log. Check the number, or ask the wholesaler about this pack.</p></div>`
@@ -578,6 +605,7 @@ document.querySelectorAll("[data-scan]").forEach(b => b.onclick = async () => {
         : `Keep it at ${m.keep_at_or_below_c} °C or colder. ` + (c.temperature_c == null ? "The cold room has no reading yet."
           : `The cold room is at ${c.temperature_c.toFixed(1)} °C: ${STATE[c.state].toLowerCase()}.`)}</p>
       ${m.shelf_slot ? `<p class="reasons">It belongs in shelf slot ${m.shelf_slot}.</p>` : ""}
+      ${(r.batches || []).map(x => `<p class="reasons"><b>Registered with the date ${esc(x.best_before)}${x.lot ? ", lot " + esc(x.lot) : ""}.</b></p>`).join("")}
     </div>`; }).join("");
   tick();
 });
@@ -601,6 +629,7 @@ document.addEventListener("click", (e) => {
 
 function setRole(role) {
   document.documentElement.dataset.as = role;
+  $("pageTitle").textContent = {chef: "Head chef", kitchen: "Kitchen", valio: "Wholesaler"}[role];
   document.querySelectorAll("[data-pick]").forEach(b => b.setAttribute("aria-selected", String(b.dataset.pick === role)));
   $("result").textContent = "";
   try { localStorage.setItem("role", role); } catch (e) {}
@@ -637,6 +666,7 @@ async function tick() {
     drawStock(await api("/stock"));
     drawCold(await api("/cold"));
     drawChains(await api("/orders"));
+    drawUseFirst(await api("/insights"));
     const lics = await api("/sandbox/licences");
     const live = lics.filter(l => !l.revoked && new Date(l.expires) > new Date());
     $("licCount").textContent = live.length ? `${live.length} in force` : "none in force";
@@ -656,11 +686,11 @@ async function tick() {
       <span class="chip">Rule set ${dev.rule_set_version}</span>`;
     forceOptions(dev.catalog);
     $("stats").innerHTML = [
-      ["Cold room", dev.temperature_c == null ? "–" : `<span class="${dev.alarm ? "alarm" : ""}">${dev.temperature_c.toFixed(1)} °C</span>`],
-      ["Spent this week", `€${dev.weekly_spent_eur.toFixed(2)}`],
-      ["Shelf box", dev.online ? "online" : (dev.last_seen ? `<span class="alarm">offline ${esc(dev.last_seen.slice(11,16))}</span>` : "never seen")],
-    ].map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
-    $("knobNow").textContent = dev.auto_limit_eur == null ? "–" : `€${dev.auto_limit_eur}`;
+      ["the agent may order alone", dev.auto_limit_eur == null ? "–" : `€${dev.auto_limit_eur}`],
+      ["air in the cold room", dev.temperature_c == null ? "–" : `<span class="${dev.alarm ? "alarm" : ""}">${dev.temperature_c.toFixed(1)} °C</span>`],
+      ["spent this week", `€${dev.weekly_spent_eur.toFixed(0)}`],
+      ["the shelf box", dev.online ? "online" : `<span class="alarm">offline</span>`],
+    ].map(([k, v]) => `<div><dd>${v}</dd><dt>${k}</dt></div>`).join("");
     $("knobNote").textContent = dev.auto_limit_eur == null ? "The box did not send its limit yet, so the limit of the rule set counts."
       : dev.online ? "" : "The box is offline. This is the last limit that it sent.";
     const slots = Object.entries(dev.slots).map(([k, v]) => `slot ${k} ${v.state}`).join(" · ");
