@@ -229,7 +229,7 @@ Valio's brief starts with "without exposing real systems". Every idea in the ori
 
 1. An external buying agent gets access to a sandbox first: a copy of the catalog (`LocalCatalog` with the fixtures) behind the same interface.
 2. The sandbox runs a fixed set of scenarios against the agent and scores the result.
-3. An agent that passes gets a licence: a token with a scope (product groups, spend limit) and an expiry. Only a licensed agent reaches the real interface.
+3. An agent that passes can get a licence: a token with a scope (product groups, spend limit) and an expiry. An approver grants it with the PIN, and an approver can end it. Only a licensed agent reaches the real interface.
 4. An agent that fails stays in the sandbox, and the report says why.
 
 Scenarios:
@@ -284,7 +284,9 @@ A second review found eight more faults in `backend/agent.py`, `backend/sandbox.
 | `POST /request` | A text request from the chef, for example "1,000 litres of lactose-free milk by Monday" |
 | `POST /deliveries/{order_id}/check` | Delivery check: counts and temperature against the order |
 | `GET /suppliers/reliability` | Reliability score per supplier |
-| `POST /sandbox/test` | Run the Agent Driving Test against an external agent |
+| `POST /sandbox/test` | Run the Agent Driving Test on an agent that the backend holds. With the PIN of an approver, a pass gives a licence |
+| `POST /sandbox/sessions`, then `/sandbox/sessions/{id}/{scenario}/...` and `/finish` | The Agent Driving Test over the network, for an agent of another company |
+| `POST /sandbox/licences/{id}/revoke` | End a licence now. Needs the PIN of an approver |
 | `GET /gateway/products?q=` | Lookup for an outside agent. Needs a licence, like every `/gateway` call |
 | `POST /gateway/quotes` | Price, stock, delivery date and the rule decision for one product. Nothing is ordered |
 | `POST /gateway/orders` | Order a quote: 201 placed, 202 sent to the chef, 403 refused with the reason |
@@ -372,7 +374,7 @@ Do not claim that no other team has these ideas. The originality tests only show
 
 The demo length is not known yet. Each step works without live input from a judge. `HANDBOOK.md` has the same steps.
 
-1. The Driving Test: the naive agent fails, and our agent gets a licence.
+1. The Driving Test: the naive agent fails, and our agent passes. Enter the PIN to grant its licence.
 2. With the licence, an outside agent asks the gateway for a quote for "1,000 litres of lactose-free milk by Monday". Show the price, its time and the signature. Change one digit, and the signature fails.
 3. The agent orders the quote. The order is over its limit, so the chef approves on the phone.
 4. The real catalog count: 11% forbidden, 46% to a person, 42% clear. Then a product with no allergen data: the chef reads the label once, and the second order goes through alone.

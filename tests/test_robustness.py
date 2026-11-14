@@ -179,7 +179,7 @@ def test_bad_option_does_not_close_the_request(agent):
 
 def test_driving_test_our_agent_passes_and_naive_fails(log):
     t = DrivingTest(load_rules(), log)
-    ours, naive = t.run("safe-kitchen"), t.run("naive")
+    ours, naive = t.run("safe-kitchen", granted_by="Head chef"), t.run("naive", granted_by="Head chef")
     assert ours["passed"] and ours["licence"]
     assert not naive["passed"] and naive["licence"] is None
     injection = next(r for r in naive["results"] if r["scenario"] == "injection")

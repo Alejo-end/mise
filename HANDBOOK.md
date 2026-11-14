@@ -15,13 +15,24 @@ The design rule: a language model can search, compare and explain. Plain code de
 
 An outside agent does these steps. The calls are in `docs/valio-api/gateway-openapi.json`, an OpenAPI file that any agent builder can read.
 
-1. Take the Agent Driving Test: `POST /sandbox/test`. An agent that passes all six scenarios gets a licence with a spend limit, product groups and an end time.
+1. Take the Agent Driving Test over the network. Open a session with `POST /sandbox/sessions`, make the calls for each of the six scenarios, and close it with `POST /sandbox/sessions/{id}/finish`. An agent that passes all six can get a licence with a spend limit, product groups and an end time. An approver grants the licence with the PIN.
 2. Look up products: `GET /gateway/products?q=`.
 3. Ask for a quote: `POST /gateway/quotes`. The answer has the price, the stock, the delivery date and the rule decision. It is valid for 15 minutes.
 4. Order the quote: `POST /gateway/orders` with an idempotency key (a name for this order, so a repeated call never orders twice). The order is placed, sent to the chef, or refused with the reason.
 5. Read the state and the log of the order: `GET /gateway/orders/{run_id}` and `GET /gateway/audit?run_id=`.
 
+The session gives the agent the requests and the kitchen's rules, and no hint about what each scenario tests. The sandbox judges the agent by the calls that it made, not by what it says. Three agents that this backend holds can also take the test with `POST /sandbox/test`: our agent, a scripted naive agent and a real language model.
+
 The gateway signs every quote and every order answer with an Ed25519 key. The public key is at `GET /gateway/key`. So the agent can keep an answer and prove later what the wholesaler told it. A hash alone cannot do that, because the server can make any hash. In this prototype the gateway makes its own key. In production the key belongs to Valio.
+
+The gateway never orders above the price of the signed quote. If the price rose, it places no order and answers `price_changed`. The agent then asks for a new quote and orders it with a new key.
+
+The gateway also protects the wholesaler:
+
+1. A quote shows no more stock than the quantity that the agent asked for, and no raw product record.
+2. One licence gets 60 lookups and quotes per minute. Each quote costs two calls to Valio's systems.
+3. An approver can end a licence at once: `POST /sandbox/licences/{id}/revoke`.
+4. A product carries its GTIN, the GS1 product number that a buyer's own system knows. 14,478 of the 17,546 products have one.
 
 A product outside the product groups of the licence goes to the chef. A restart of the backend keeps licences, placed orders and open approvals, because they come back from the audit log. It forgets open quotes.
 
@@ -69,11 +80,41 @@ Two cases always go to the chef. The first is a product that the wholesaler cann
 
 Almost half of the catalog has no allergen data. So on the real catalog, "unknown" must go to a person, not to "forbidden". The rule-set key `unknown_allergens` sets this. The stand-in rule set keeps the strict value.
 
+About half of that gap is not food. Of the 8,110 products with no allergen data, 3,974 are in category groups that we read as not food: kitchen equipment, cleaning goods, disposables and office supplies. The other 4,136 are food, which is 24% of the catalog. The data has no category names, so this is our reading of the product names. Ask the Valio mentors.
+
+A rule set can name such groups with the key `non_food_groups`. A product in a named group needs no allergen data, so nobody reads the label of a paper towel. Rule set version 4 does not use the key yet, because Valio did not confirm the category meanings.
+
+The gap sits with few suppliers. The 8,110 products come from 459 of the 648 suppliers, and 29 suppliers hold half of them. 264 suppliers give no allergen data on any product. A wholesaler closes this gap with its suppliers, not with the chef.
+
 To count again, run `uv run python -m backend.dirty_data`. A test holds the same numbers. The command also prints 20 clear products for a hand check.
 
 46% does not mean that the chef approves every second order. The chef reads the label of each such product once, on its first order. We do not know how many of these products a real kitchen orders in a week. Ask the Valio mentors.
 
 The ingredient text scan knows nuts, peanuts and sesame only. If a rule set bans another allergen, the backend writes a notice in the log at the start, and `/device/state` lists the gap. For that allergen, only the allergen codes protect.
+
+## The view from the wholesaler's side
+
+We reviewed the entry as the manager of a large retailer reads it. Four findings are fixed: the price guard, the limits on what a quote shows, the PIN for a licence and the end of a licence. The rest are limits of the prototype.
+
+Why a wholesaler wants this: under the allergen rules alone, an agent can order 7,435 products with no person. 4,136 food products need a person only because their data is missing. Each product with clean data is a product that an agent can buy alone. So the data quality of a supplier becomes sales.
+
+What the prototype does not have:
+
+1. More than one buyer. Every licence orders for the one school kitchen, under its rule set, and its chef approves. A real gateway holds one account for each customer, with the rules, approvers and delivery address of that customer.
+2. The wholesaler's own trading rules. It has no customer price list, no credit limit, no minimum order and no order cut-off time. Nothing stops one agent from taking all the stock of a scarce product.
+3. A change or a cancel of an order.
+4. A report. The audit log holds the data for a pilot scorecard: orders placed with no person, the wait for an approval, substitutes offered and chosen, and refused requests. Nobody wrote the report yet.
+
+The gateway adds one new call and fits standards that buyers already use for the rest. Peppol BIS 3 is an open European standard for order documents (`https://docs.peppol.eu/poacc/upgrade-3/`). The Finnish State Treasury publishes a Peppol ordering guide for the Finnish retail sector (`https://www.valtiokonttori.fi/en/maaraykset-ja-ohjeet/peppol-ordering-implementation-guide-for-finnish-retail-sector/`). We did not build these messages.
+
+| Gateway call | Peppol BIS 3 message |
+|---|---|
+| Product lookup | Catalogue (T19) |
+| Quote | None. A live question about price and stock is the new part |
+| Order | Order (T01) |
+| Order answer: placed, sent to a person, refused | Order Response (T76) |
+| Change and cancel, not built | Order Change (T114), Order Cancellation (T115) |
+| Delivery check | Despatch Advice (T16) |
 
 ## Run it
 
@@ -82,7 +123,7 @@ Run every command from `valio-challenge/`. You need `uv`.
 1. Put the approver PINs in `.env`, for example `APPROVER_PINS=4821:Head chef`.
 2. Start the backend: `uv run uvicorn backend.app:app --host 0.0.0.0 --port 8000`.
 3. Open `http://localhost:8000/approve`. On a phone, use the laptop's address on the same hotspot.
-4. Run the tests: `uv run pytest`. 147 tests pass.
+4. Run the tests: `uv run pytest`. 155 tests pass.
 
 To run on the real Valio catalog, add three lines to `.env` and start the backend again:
 
@@ -111,10 +152,10 @@ In a warm room, the cold room alarm is on. Then the buzzer plays the alarm, and 
 
 ## Demo in six steps
 
-1. Start with the gateway. Run the Agent Driving Test on the naive agent and on our agent. Only our agent gets a licence.
+1. Start with the gateway. Run the Agent Driving Test on the naive agent and on our agent. Only our agent passes. Enter the PIN to grant its licence.
 2. With that licence, an outside agent asks for a quote for "1,000 litres of lactose-free milk by Monday". Show the price, the time of the price and the signature. Change one digit of the answer, and the signature fails.
 3. The agent orders the quote. The order is over its limit, so it waits for the chef. Approve it on the phone with the PIN.
-4. Show the real catalog under the school's bans: 11% forbidden, 46% to a person, 42% clear. Then order one product with no allergen data. The chef reads the label once, and the second order goes through alone.
+4. Show the real catalog under the school's bans: 11% forbidden, 46% to a person, 42% clear. Say that half of the 46% is not food. Then order one product with no allergen data. The chef reads the label once, and the second order goes through alone.
 5. Now the kitchen as one client. Take the milk off the shelf. The camera triggers the agent, and the box beeps. Stock is short, so a safe substitute needs approval.
 6. Show the audit log as a story and as data.
 
@@ -137,8 +178,8 @@ In a warm room, the cold room alarm is on. Then the buzzer plays the alarm, and 
 | Shelf box on 14 November at 02:40 | The app talks to the backend. No Modulino answered on the Qwiic port, and no camera was plugged in. So the knob, the Thermo, the buzzer and the camera are not tested with this version |
 | Real catalog adapter (`backend/valio.py`, `backend/allergens.py`) | Built and tested on the real product file with a fake API. Not tested against the live API: no API key is on this laptop |
 | Buying pipeline on the real catalog | Works on the real product file with rule set version 4. Tests use a stand-in for the two live calls. Nobody ran it against the live API yet |
-| Gateway calls for an outside agent | Built, with tests: lookup, quote, order, order state and audit under `/gateway`. Each call needs the licence of the Driving Test. Quotes and order answers are signed. Licences and orders survive a restart |
-| Agent Driving Test | Works. The "naive agent" is a script, not a language model. An agent that does nothing fails. A real model can take the test (`backend/model_agent.py`), but nobody ran it yet: no model key is on this laptop |
+| Gateway calls for an outside agent | Built, with tests: lookup, quote, order, order state and audit under `/gateway`. Each call needs the licence of the Driving Test. Quotes and order answers are signed. Licences and orders survive a restart. An order never goes above the quoted price. One licence gets 60 lookups per minute, and an approver can end it |
+| Agent Driving Test | Works. The "naive agent" is a script, not a language model. An agent that does nothing fails. A pass gives a licence only with the PIN of an approver. An agent of another company takes the test over the network, and a test agent in our test suite does so. No agent of a real company took it yet. A real model can take the test (`backend/model_agent.py`), but nobody ran it yet: no model key is on this laptop |
 | Delivery check (Cold Chain Proof) | Works on the stand-in catalog. The Thermo measures air, not food |
 
 ## Limits to say out loud
@@ -151,6 +192,12 @@ In a warm room, the cold room alarm is on. Then the buzzer plays the alarm, and 
 6. We wrote the six scenarios of the Driving Test. A pass shows that an agent handles these six cases, not that it is safe in general.
 7. A substitute must have the same pack size as the usual product. So a 1.5 l carton is not offered for a request in litres. The approval request says how many products the agent did not consider for this reason.
 8. A label check is kept until the name, the allergen data or the rule set changes. A recipe change with no data change is not seen.
+9. The prototype has one buyer, the school kitchen. It has none of the wholesaler's own trading rules: price list per customer, credit limit, minimum order, cut-off time.
+10. Anyone can open a Driving Test session, and a session lives in memory for 30 minutes. The person with the PIN decides who gets a licence. No agent of a real company took the test yet.
+11. The price guard covers the order call. After an approval, the order uses the fresh price. If the order still needs approval and the total rose, a person looks again.
+12. The signature shows what the gateway said and when. The allergen data inside comes from the supplier, and the signature does not make it true.
+13. The lookup limit lives in the memory of one backend process.
+14. "Not food" is our reading of the product names in five category groups. Valio did not confirm it.
 
 ## Where things are
 

@@ -270,3 +270,17 @@ def test_real_catalog_counts_under_the_school_bans():
     assert c["products"] == 17546
     assert c["results"] == {"forbidden": 1962, "needs_approval": 8149, "allowed": 7435}
     assert c["to_a_person"] == {"no allergen data": 8110, "undeclared": 22, "only the ingredient text names it": 17}
+    assert c["no_data"] == {"non_food": 3974, "food": 4136, "suppliers": 648, "suppliers_with_a_gap": 459,
+                            "suppliers_for_half": 29, "suppliers_with_no_data_at_all": 264, "their_products": 4983}
+
+
+def test_a_product_in_a_non_food_group_needs_no_allergen_data():
+    """A paper towel has no allergen data. The rule set can name its group, so nobody reads its label."""
+    from backend import rules as R
+    rules = {"banned_allergens": ["nuts"], "unknown_allergens": "needs_approval", "non_food_groups": ["63"]}
+    towel = {"id": "t", "name": "Test paper towel", "product_group": "63010", "allergens": None, "traces": None}
+    soup = towel | {"name": "Test soup", "product_group": "17020"}
+    assert R.safety(towel, rules) == ([], [])
+    assert "no allergen data" in R.safety(soup, rules)[1][0]
+    assert R.safety(towel | {"allergens": ["nuts"], "traces": []}, rules)[0]  # a declared ban still forbids
+    assert R.safety(towel, rules | {"non_food_groups": []})[1]

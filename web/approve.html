@@ -167,11 +167,12 @@ $("pin").addEventListener("change", () => { try { sessionStorage.setItem("pin", 
 
 document.querySelectorAll("[data-test]").forEach(b => b.onclick = async () => {
   b.disabled = true; $("dtest").innerHTML = '<p class="meta">Running six scenarios…</p>';
-  const r = await post("/sandbox/test", {agent: b.dataset.test});
+  const r = await post("/sandbox/test", {agent: b.dataset.test, pin: $("pin").value});
   b.disabled = false;
   $("dtest").innerHTML = `<p><b class="${r.passed ? "allowed" : "forbidden"}">${esc(r.summary)}</b></p>
     <ul class="lines">${r.results.map(x => `<li><span class="${x.passed ? "allowed" : "forbidden"}">${x.passed ? "Pass" : "Fail"}</span>
       ${esc(x.title)}: ${esc(x.observed)}</li>`).join("")}</ul>
+    ${r.passed && !r.licence ? `<p class="meta">Enter the PIN and run the test again to grant the licence.</p>` : ""}
     ${r.licence ? `<p class="meta">Licence for ${esc(r.licence.scope.product_groups.join(", "))}, up to €${r.licence.scope.spend_limit_eur}, until ${esc(r.licence.expires.slice(0,16).replace("T"," "))}.</p>` : ""}`;
   tick();
 });

@@ -418,8 +418,13 @@ class Agent:
                 "total_eur": line.total_eur, "decision": d, "claims": q["claims"], "stock_known": q["stock_known"]}
 
     def buy_exact(self, product_id: str, qty: int, run: str, deadline: datetime | None = None,
-                  mandate_eur: float | None = None, scope_groups: list[str] | None = None, actor: str = "agent") -> dict:
-        """Order one named product, through the same rule check as every other order."""
+                  mandate_eur: float | None = None, scope_groups: list[str] | None = None, actor: str = "agent",
+                  max_unit_price_eur: float | None = None) -> dict:
+        """Order one named product, through the same rule check as every other order.
+
+        max_unit_price_eur is the price of the quote that the buyer holds. If the price is higher now,
+        nothing is ordered and the status is "price_changed".
+        """
         v = self.rules["version"]
         q = self.quote_exact(product_id, qty, deadline, mandate_eur, scope_groups, run)
         if q["status"] == "no_match":
@@ -429,6 +434,11 @@ class Agent:
             self.log.write("blocked", {"summary": f"{q['name']} has no price or no delivery date now."}, "agent", v, run_id=run)
             return {"status": "not_orderable"}
         d, name = q["decision"], q["name"]
+        if max_unit_price_eur is not None and q["unit_price_eur"] > max_unit_price_eur:
+            self.log.write("blocked", {"summary": f"The price of {name} rose from {max_unit_price_eur} to "
+                                       f"{q['unit_price_eur']} after the quote. Nothing is ordered."}, "agent", v, run_id=run)
+            return {"status": "price_changed", "quoted_unit_price_eur": max_unit_price_eur,
+                    "unit_price_eur": q["unit_price_eur"]}
         self.log.write("rule_check", {"subject": f"{qty} × {name}", **d.to_dict()}, "rule_check", v, run_id=run)
         if d.result == R.FORBIDDEN:
             self.log.write("blocked", {"summary": f"{name} is forbidden: {'; '.join(d.reasons)}. "

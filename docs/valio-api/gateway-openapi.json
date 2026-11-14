@@ -34,6 +34,17 @@
     "title": "OrderRequest",
     "type": "object"
    },
+   "Pin": {
+    "properties": {
+     "pin": {
+      "default": "",
+      "title": "Pin",
+      "type": "string"
+     }
+    },
+    "title": "Pin",
+    "type": "object"
+   },
    "QuoteRequest": {
     "properties": {
      "needed_by": {
@@ -66,15 +77,94 @@
     "title": "QuoteRequest",
     "type": "object"
    },
+   "SandboxOrder": {
+    "properties": {
+     "idempotency_key": {
+      "maxLength": 80,
+      "minLength": 1,
+      "title": "Idempotency Key",
+      "type": "string"
+     },
+     "product_id": {
+      "title": "Product Id",
+      "type": "string"
+     },
+     "quantity": {
+      "maximum": 100000.0,
+      "minimum": 1.0,
+      "title": "Quantity",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "product_id",
+     "quantity",
+     "idempotency_key"
+    ],
+    "title": "SandboxOrder",
+    "type": "object"
+   },
+   "SandboxQuestion": {
+    "properties": {
+     "reason": {
+      "default": "",
+      "maxLength": 500,
+      "title": "Reason",
+      "type": "string"
+     }
+    },
+    "title": "SandboxQuestion",
+    "type": "object"
+   },
+   "SandboxQuote": {
+    "properties": {
+     "product_id": {
+      "title": "Product Id",
+      "type": "string"
+     },
+     "quantity": {
+      "maximum": 100000.0,
+      "minimum": 1.0,
+      "title": "Quantity",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "product_id",
+     "quantity"
+    ],
+    "title": "SandboxQuote",
+    "type": "object"
+   },
    "SandboxRun": {
     "properties": {
      "agent": {
       "default": "safe-kitchen",
       "title": "Agent",
       "type": "string"
+     },
+     "pin": {
+      "default": "",
+      "title": "Pin",
+      "type": "string"
      }
     },
     "title": "SandboxRun",
+    "type": "object"
+   },
+   "SessionStart": {
+    "properties": {
+     "agent": {
+      "maxLength": 60,
+      "minLength": 1,
+      "title": "Agent",
+      "type": "string"
+     }
+    },
+    "required": [
+     "agent"
+    ],
+    "title": "SessionStart",
     "type": "object"
    },
    "ValidationError": {
@@ -444,8 +534,384 @@
     "summary": "Sandbox Licences"
    }
   },
+  "/sandbox/licences/{licence_id}/revoke": {
+   "post": {
+    "description": "End a licence now, for example when an agent orders in a way that nobody expected.",
+    "operationId": "sandbox_revoke_sandbox_licences__licence_id__revoke_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "licence_id",
+      "required": true,
+      "schema": {
+       "title": "Licence Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Pin"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Sandbox Revoke"
+   }
+  },
+  "/sandbox/sessions": {
+   "post": {
+    "description": "Start the Driving Test for an agent that runs somewhere else. The answer lists the scenarios and the\nkitchen's rules. It does not say what each scenario tests.",
+    "operationId": "sandbox_open_sandbox_sessions_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SessionStart"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Sandbox Open",
+    "tags": [
+     "sandbox"
+    ]
+   }
+  },
+  "/sandbox/sessions/{session_id}/finish": {
+   "post": {
+    "description": "Judge the session by the calls that the agent made. With the PIN of an approver, a pass gives a licence.",
+    "operationId": "sandbox_finish_sandbox_sessions__session_id__finish_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Pin"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Sandbox Finish",
+    "tags": [
+     "sandbox"
+    ]
+   }
+  },
+  "/sandbox/sessions/{session_id}/{scenario}/ask-human": {
+   "post": {
+    "description": "The agent sends the request to a person and does not order.",
+    "operationId": "sandbox_ask_sandbox_sessions__session_id___scenario__ask_human_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "scenario",
+      "required": true,
+      "schema": {
+       "title": "Scenario",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SandboxQuestion"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Sandbox Ask",
+    "tags": [
+     "sandbox"
+    ]
+   }
+  },
+  "/sandbox/sessions/{session_id}/{scenario}/orders": {
+   "post": {
+    "operationId": "sandbox_order_sandbox_sessions__session_id___scenario__orders_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "scenario",
+      "required": true,
+      "schema": {
+       "title": "Scenario",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SandboxOrder"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Sandbox Order",
+    "tags": [
+     "sandbox"
+    ]
+   }
+  },
+  "/sandbox/sessions/{session_id}/{scenario}/products": {
+   "get": {
+    "operationId": "sandbox_products_sandbox_sessions__session_id___scenario__products_get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "scenario",
+      "required": true,
+      "schema": {
+       "title": "Scenario",
+       "type": "string"
+      }
+     },
+     {
+      "in": "query",
+      "name": "q",
+      "required": true,
+      "schema": {
+       "title": "Q",
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Sandbox Products",
+    "tags": [
+     "sandbox"
+    ]
+   }
+  },
+  "/sandbox/sessions/{session_id}/{scenario}/quotes": {
+   "post": {
+    "operationId": "sandbox_quote_sandbox_sessions__session_id___scenario__quotes_post",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "session_id",
+      "required": true,
+      "schema": {
+       "title": "Session Id",
+       "type": "string"
+      }
+     },
+     {
+      "in": "path",
+      "name": "scenario",
+      "required": true,
+      "schema": {
+       "title": "Scenario",
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SandboxQuote"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      },
+      "description": "Validation Error"
+     }
+    },
+    "summary": "Sandbox Quote",
+    "tags": [
+     "sandbox"
+    ]
+   }
+  },
   "/sandbox/test": {
    "post": {
+    "description": "Run the Driving Test on one of the agents that this backend holds. A pass gives a licence only with\nthe PIN of an approver: that person grants the agent its spend limit and product groups.",
     "operationId": "sandbox_test_sandbox_test_post",
     "requestBody": {
      "content": {

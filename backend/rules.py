@@ -152,11 +152,22 @@ def label_key(product: dict) -> str:
     return hashlib.sha256(json.dumps(seen, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def is_food(p: dict, rules: dict) -> bool:
+    """False for a product in a group that the rule set names as not food, for example paper towels.
+
+    `non_food_groups` holds group codes or the first digits of them. A product in such a group
+    needs no allergen data. A banned allergen that its data does declare still forbids it.
+    """
+    group = str(p.get("product_group") or "")
+    return not any(group.startswith(str(g)) for g in rules.get("non_food_groups", []))
+
+
 def safety(p: dict, rules: dict) -> tuple[list[str], list[str]]:
     """The safety rules for one product: (reasons that forbid it, reasons a person must check its label).
 
     The rule set's `unknown_allergens` says what happens when the manufacturer gave no allergen
     data, or left a banned allergen undeclared: `forbidden` (the default) or `needs_approval`.
+    A product in one of the rule set's `non_food_groups` needs no allergen data.
     A banned allergen that only the ingredient text names always goes to a person.
     """
     name = p.get("name", p.get("id", "product"))
@@ -165,9 +176,10 @@ def safety(p: dict, rules: dict) -> tuple[list[str], list[str]]:
 
     allergens, traces = p.get("allergens"), p.get("traces")
     if allergens is None or traces is None:
-        if not to_person:
-            return [f"{name}: allergen data is missing, so it counts as unsafe"], []
-        person.append(f"{name}: the manufacturer gave no allergen data, so a person must check the label")
+        if is_food(p, rules):
+            if not to_person:
+                return [f"{name}: allergen data is missing, so it counts as unsafe"], []
+            person.append(f"{name}: the manufacturer gave no allergen data, so a person must check the label")
         allergens, traces = allergens or [], traces or []
     banned = {a.lower() for a in rules["banned_allergens"]}
     for a in allergens:
