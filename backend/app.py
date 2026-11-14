@@ -21,10 +21,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from .agent import Agent
 from .audit import AuditLog, story
 from .gateway import make_router
-from .rules import TZ, load_rules
+from .rules import TZ
 from .allergens import unscanned
 from .sandbox import AGENTS, DrivingTest
 from .settings import Settings
+from .shelf import Shelf, ShelfError, versions_dir_for
 from .signing import Signer
 from .valio import ValioCatalog, make_client
 
@@ -48,7 +49,10 @@ if os.getenv("ANTHROPIC_API_KEY"):  # a real model can take the Driving Test
     from .model_agent import ModelUnderTest
     AGENTS["claude"] = ModelUnderTest
 
-ruleset = load_rules(os.getenv("RULES_FILE", ROOT / "rules" / "school_kitchen.yaml"))
+# The signed rule file, then every shelf change signed after it (backend/shelf.py). The last version is active.
+shelf = Shelf(os.getenv("RULES_FILE", ROOT / "rules" / "school_kitchen.yaml"),
+              versions_dir_for(os.getenv("AUDIT_DB", DATA / "audit.sqlite")))
+ruleset = shelf.rules
 catalog = make_client()
 log = AuditLog(os.getenv("AUDIT_DB", DATA / "audit.sqlite"))
 
@@ -107,7 +111,11 @@ class SlotState(_Base):
     slot: int
     state: Literal["full", "low", "empty"]
     estimated_units: int | None = Field(default=None, ge=0)
-    product_hint: str | None = None
+    product_hint: str | None = None  # a label only; the backend's shelf configuration names the product
+    # Version 2 (interface 1), all optional. With fill, units come from the backend's target, not the device's.
+    fill: float | None = Field(default=None, ge=0, le=1)
+    frame_id: int | None = Field(default=None, ge=0)
+    frame_time: str | None = None
 
 
 class ManualLow(_Base):
@@ -206,6 +214,7 @@ def events(ev: Event):
     elif "alarm" in data:
         device["alarm"] = data["alarm"]
     if data["type"] == "slot_state":
+        data = shelf.observe(data)  # the observation; with fill, units = round(fill x the assignment's target)
         device["slots"][str(data["slot"])] = {"state": data["state"], "units": data.get("estimated_units")}
     result = agent.handle_event(data)
     if data["type"] == "delivery_check" and result.get("status") == "problem":
@@ -295,6 +304,66 @@ def device_health() -> dict:
 @app.get("/rules")
 def rules():
     return ruleset
+
+
+# Shelf configuration (docs/PARALLEL_WORK.md, interfaces 4 and 9). The expectation comes from the
+# signed rule set; the observation from the device stays apart from it.
+
+class ShelfChange(BaseModel):
+    pin: str = ""
+    product_id: str = Field(min_length=1, max_length=40)
+    target_units: int | None = Field(default=None, ge=1, le=10000)
+    reorder_below: int | None = Field(default=None, ge=0, le=10000)
+    product: str | None = Field(default=None, min_length=1, max_length=80)  # name for search and pack size
+    group: str | None = Field(default=None, pattern=r"^[a-z0-9_]{1,40}$")  # substitute group of the slot
+
+
+def _approver(pin: str) -> str:
+    """The approver a PIN names. Wrong PINs count toward the same lock as on approvals."""
+    if not PINS:
+        raise HTTPException(503, "No approver PINs are set. Put APPROVER_PINS in valio-challenge/.env.")
+    now = time.time()
+    if now < pin_guard["locked_until"]:
+        raise HTTPException(429, f"Too many wrong PINs. Wait {PIN_LOCK_S} seconds.")
+    approver = PINS.get(pin)
+    if approver is None:
+        pin_guard["wrong"] = [t for t in pin_guard["wrong"] if now - t < PIN_WINDOW_S] + [now]
+        if len(pin_guard["wrong"]) >= WRONG_PINS:
+            pin_guard["wrong"], pin_guard["locked_until"] = [], now + PIN_LOCK_S
+        raise HTTPException(403, "Wrong PIN")
+    return approver
+
+
+def _slot_health(slot: int) -> dict | None:
+    """The board's last health for one slot (interface 7), with its age. Older than HEALTH_STALE_S is not known."""
+    d = device_health()
+    h = ((d["health"] or {}).get("slots") or {}).get(str(slot))
+    return None if h is None else dict(h) | {"age_s": d["health_age_s"], "known": d["health_known"]}
+
+
+def _activate(new: dict) -> None:
+    """Make a newly signed rule set version the one every part of the backend uses."""
+    global ruleset
+    ruleset = new
+    agent.rules = new
+    driving_test.rules = new
+
+
+@app.get("/shelf")
+def shelf_view():
+    """Per slot: the expected assignment with its assignment_id, then the observation and any pending order."""
+    return shelf.view(pending=agent.pending_for_slot, health=_slot_health)
+
+
+@app.put("/shelf/{slot}")
+def shelf_change(slot: int, c: ShelfChange):
+    """Change what a slot holds. This signs and activates a new rule set version; it never edits one."""
+    approver = _approver(c.pin)
+    try:
+        return shelf.change(slot, c.model_dump(exclude={"pin"}), approver, catalog, log,
+                            pending=agent.pending_for_slot, activate=_activate)
+    except ShelfError as e:
+        raise HTTPException(e.status, str(e)) from e
 
 
 @app.get("/log")
