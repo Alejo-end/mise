@@ -317,7 +317,8 @@ def check(lines: list[Line], rules: dict, ctx: Context) -> Decision:
     if result == ALLOWED:
         reasons.append("usual product or approved substitute, within target stock, under the limits, in time")
     dated = [l for l in lines if not l.delivery_time_known and l.delivery is not None]
-    if dated and all(l.delivery.date() <= ctx.needed_by.date() for l in dated):
+    day = ctx.needed_by.date()
+    if dated and all(l.delivery.date() < day or (l.delivery.date() == day and date_only_same_day_ok(rules)) for l in dated):
         reasons.append("in time by date only: the source gives a delivery date, not an arrival time")
     return Decision(result, reasons, rules["version"])
 

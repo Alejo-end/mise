@@ -203,9 +203,11 @@ def test_the_deadline_compares_dates_when_the_source_has_no_time(agent, api):
     # The needed day itself: the source has no hour, so it cannot show "by 07:00". A person confirms it,
     same_day = check([Line(milk, 1, 1.4, on_day, True, True, False)], rules, ctx)
     assert same_day.result == NEEDS_APPROVAL and any("no arrival time" in r and "07:00" in r for r in same_day.reasons)
+    assert not any("in time by date only" in r for r in same_day.reasons)
     # unless the signed rule set says a delivery on the needed day is in time.
     permitted = dict(rules, delivery=dict(rules["delivery"], date_only_same_day="allowed"))
-    assert check([Line(milk, 1, 1.4, on_day, True, True, False)], permitted, ctx).result == ALLOWED
+    permitted_day = check([Line(milk, 1, 1.4, on_day, True, True, False)], permitted, ctx)
+    assert permitted_day.result == ALLOWED and any("by date only" in r for r in permitted_day.reasons)
     late = check([Line(milk, 1, 1.4, on_day + timedelta(days=1), True, True, False)], rules, ctx)
     assert late.result == NEEDS_APPROVAL and any("after the needed day" in r for r in late.reasons)
     assert not any("in time by date only" in r for r in late.reasons)
