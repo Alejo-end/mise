@@ -50,6 +50,13 @@ SETTINGS = Settings.from_env()  # committed defaults in backend/settings.py; .en
 # but never reach the agent, so calibration and evaluation actions cannot create orders or approvals and
 # cannot end a pending order. Empty (the default) is normal operation.
 RECORDING_SESSION = os.getenv("RECORDING_SESSION", "").strip()
+# SHELF_EVENTS=observe: the shelf box only observes (same path as a recording session). Its camera, knob and test
+# buttons update the device view and the stock timeline but never start a purchase. Used while the shelf holds props
+# that are not catalogue products; purchasing then runs through the gateway and kitchen requests only.
+SHELF_EVENTS = os.getenv("SHELF_EVENTS", "").strip().lower()
+if SHELF_EVENTS not in ("", "purchase", "observe"):
+    raise RuntimeError(f"SHELF_EVENTS must be 'observe' or 'purchase' (default), not {SHELF_EVENTS!r}")
+OBSERVE_ONLY = RECORDING_SESSION or ("shelf props, observe only" if SHELF_EVENTS == "observe" else "")
 if os.getenv("ANTHROPIC_API_KEY"):  # a real model can take the Driving Test
     from .model_agent import ModelUnderTest
     AGENTS["claude"] = ModelUnderTest
@@ -248,12 +255,14 @@ def events(ev: Event):
         if data.get("estimated_units") is not None and not data.get("uncertain"):
             # The stock timeline. It only watches: also in a recording session, and before any trigger.
             stock_history.record(int(data["slot"]), int(data["estimated_units"]), "camera", datetime.now(TZ))
-    if RECORDING_SESSION:
+    if OBSERVE_ONLY:
         if data["type"] in ("slot_state", "manual_low"):
-            log.write("recording", {"summary": f"Recording session {RECORDING_SESSION}: slot {data['slot']} reads "
-                                    f"{data.get('state', 'low (knob)')}. Purchasing is isolated: no trigger.",
-                                    "event": data}, "device", ruleset["version"])
-        return {"status": "ignored", "reason": f"recording session {RECORDING_SESSION}: purchasing isolated"}
+            log.write("recording" if RECORDING_SESSION else "observation",
+                      {"summary": f"{'Recording session ' + RECORDING_SESSION if RECORDING_SESSION else 'Shelf observed'}: "
+                                  f"slot {data['slot']} reads {data.get('state', 'low (knob)')}. No purchase is started "
+                                  "from the shelf.", "event": data}, "device", ruleset["version"])
+        return {"status": "ignored", "reason": (f"recording session {RECORDING_SESSION}: purchasing isolated" if RECORDING_SESSION
+                                                else "shelf events observe only (SHELF_EVENTS=observe): no purchase")}
     result = agent.handle_event(data)
     if data["type"] == "delivery_check" and result.get("status") == "problem":
         device["problem_until"] = time.time() + 6
@@ -392,7 +401,7 @@ def device_state():
         "weekly_spent_eur": agent.weekly_spent_eur, "catalog": catalog.name, "text_scan_gaps": TEXT_SCAN_GAPS, "cold_alarm_c": agent.cold_alarm_c,
         "rule_set_version": ruleset["version"], "rule_set_sha256": ruleset["sha256"][:12],
         "signed_by": ruleset.get("signed_by"), "pins_set": bool(PINS),
-        "recording_session": RECORDING_SESSION or None} | device_health()
+        "recording_session": RECORDING_SESSION or None, "shelf_events": "observe" if OBSERVE_ONLY else "purchase"} | device_health()
 
 
 def device_health() -> dict:
