@@ -4,6 +4,18 @@ For Alejo and the team. Start here, then `HANDBOOK.md` for running the demo. Thr
 **implemented** (on `valio/integration-unattended`, tested), **proposals** (pending team agreement, nothing
 built), **experiments** (separate `exp/*` branches, never merged into integration).
 
+## 0. Priorities now (14 Nov, 14:40; details and evidence: [AUDIT_2026-11-14.md](AUDIT_2026-11-14.md))
+
+1. **End-to-end demo (30 %):** the laptop backend still runs old code (851a992) in recording mode with every slot
+   unmapped. Deploy `main`, end recording mode on purpose, sign milk -> 463335 explicitly (the observed carton is a
+   different product), rehearse need -> shortlist -> fresh quote -> approval -> recheck -> audit three times.
+2. **Autonomy and controls (20 %):** per-product auto or approval; the head-chef request when nothing safe is
+   available (fixed on `main`); the stock timeline in the approval; recognition stays observational.
+3. **Robustness (15 %):** a recheck that changes the decision; mock stock 9,999,999,999 shown as unknown (decision I).
+4. **Buyer's need (20 %):** decide the replenishment proposal, or present it as a proposal with its simulated trade-off.
+5. **Openness (15 %):** say what is simulated: stand-in catalogue, mock stock, no shelf-life or expiry data in the
+   Valio files, shelf items without an exact catalogue match (Funky Monkey Sunny Peach, Estrella).
+
 ## 1. Implemented and tested
 
 Canonical branch: `valio/integration-unattended` (contains `main` and Alejo's `review-14-nov`). Tests: **352 passed,
@@ -26,11 +38,7 @@ agent under test in the Driving Test (`backend/model_agent.py`, when a key is se
 set v6 leaves all three slots unmapped, so the shelf cannot buy anything until someone ends recording mode and signs
 purchasable products again.
 
-**Recognition prototype (experimental, observational):** a "Recognize shelf" panel on the board page (deployed 12:22
-to `safe-kitchen-agent`) calls a laptop service on `exp/recognition` (86c513e) that finds separated packages on the
-surface and names enrolled products from the person's own photos, with unknown, ambiguous and obstructed outcomes and
-visible-unit counts. Checked end to end in the real page; no products are enrolled yet, so no recognition result
-exists. It never touches purchasing. How to use: `CAPTURE_GUIDE.md` section 6a.
+**Recognition prototype (experimental, observational):** "Recognize shelf" on the board page (build 0bbebf6-1418, app `safe-kitchen-agent`) sends the current frame to the laptop service (`exp/recognition` 0b9b246): Kimi K3.1 Pro on Verda describes the visible packages without a product list; owner-confirmed items (Funky Monkey Sunny Peach = energy drink, Estrella Spicy Cheddar = chips) are matched on text read on the package, other items in a text-only step; partly hidden identified units count; unresolved items make counts lower bounds, never zero. Regression: three labelled frames of 14:04-14:06 replayed 3x each, 9/9 exact visible counts, 10.8-30.2 s per call. Never touches purchasing.
 
 ## 2. Known failures and limits (say them out loud)
 
