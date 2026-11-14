@@ -58,7 +58,9 @@ def api(request: httpx.Request) -> httpx.Response:
              "2": [{"salesBlock": False, "availableAmount": 999999.0, "availableDate": "2026-11-17T00:00:00", "salesUnit": "ST"}],
              "3": []}
     return httpx.Response(200, json={"timeNow": "x", "requestedDate": "x", "products": [
-        {"productId": i, "closingTime": "2026-11-15T12:00:00", "salesBlock": i == "5", "logisticModel": "Stock",
+        # The cut-off lies in the future, relative to now: a passed closingTime now makes the date unreachable.
+        {"productId": i, "closingTime": (datetime.now(TZ) + timedelta(days=1)).strftime("%Y-%m-%dT12:00:00"),
+         "salesBlock": i == "5", "logisticModel": "Stock",
          "scheduleLines": lines.get(i, lines["1"])} for i in ids]})
 
 
@@ -93,7 +95,9 @@ def test_search_needs_every_word_and_ignores_hyphens(catalog):
 def test_price_and_availability_come_from_the_two_real_endpoints(catalog):
     a = catalog.availability("1", 24, NEEDED).value
     assert (a["unit_price_eur"], a["available_units"], a["quantity_known"]) == (1.5, 10, True)
-    assert a["delivery"].startswith("2026-11-16T06:00")  # the API gives a date; 06:00 is our assumption
+    # The API gives a date and no time. Changed 14 Nov (worker 3): no arrival time is invented any more,
+    # the delivery is the bare availableDate and the deadline check compares dates.
+    assert a["delivery"] == "2026-11-16" and a["delivery_time_known"] is False
     assert {c[0] for c in api.calls} == {"/api/price", "/api/availability"}
     assert {c[1] for c in api.calls} == {"key-123"}
 
@@ -181,7 +185,9 @@ def stock_of(amounts, price=1.2):
                 {"productId": i, "quantity": 1.0, "netPriceFound": False, "error": False,
                  "catalogPrice": {"value": price, "valueWithTax": price, "validFrom": "a", "validTo": "b", "currency": "EUR"}}
                 for i in ids]})
-        day = (datetime.now(TZ) + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00")
+        # Today, so the date is before every "next weekday 07:00" deadline. Changed 14 Nov (worker 3): a delivery
+        # on the needed day with no arrival time now goes to a person, and "tomorrow" is the needed day Sun-Thu.
+        day = datetime.now(TZ).strftime("%Y-%m-%dT00:00:00")
         return httpx.Response(200, json={"timeNow": "x", "requestedDate": "x", "products": [
             {"productId": i, "closingTime": None, "salesBlock": False, "logisticModel": "Stock",
              "scheduleLines": [{"salesBlock": False, "availableAmount": float(amounts.get(i, 500)), "availableDate": day,

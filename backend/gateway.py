@@ -26,14 +26,46 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .agent import NEEDED_HOUR
+from .agent import DRY, NEEDED_HOUR
 from .rules import TZ
 
 QUOTE_VALID = timedelta(minutes=15)
 PUBLIC = ("id", "name", "product_group", "properties", "allergens", "traces", "supplier", "origin", "pack",
-          "max_temp_c", "delivery_reliability")
+          "max_temp_c", "delivery_reliability", "carbon_kg_co2e_per_kg", "sales_unit", "lot_size", "units",
+          "deposits", "mass_kg")
 HTTP_STATUS = {"ordered": 201, "needs_approval": 202, "forbidden": 403, "no_match": 404, "not_orderable": 409,
-               "blocked": 409, "error": 502}
+               "blocked": 409, "invalid_quantity": 422, "error": 502}
+RELIABILITY_MEANING = ("historical share of the ordered quantity that was delivered (Valio challenge file); "
+                       "not an on-time delivery probability")
+
+
+def comparison(product: dict, quantity: int) -> dict:
+    """Valio's delivery reliability and carbon figures as information. They inform; the rule check decides.
+
+    A missing value stays unknown. The carbon estimate needs the ordered mass from the product file;
+    without it the estimate is unknown.
+    """
+    rel = product.get("delivery_reliability")
+    factor = product.get("carbon_kg_co2e_per_kg")
+    mass = product.get("mass_kg")
+    total_mass = round(mass * quantity, 3) if mass is not None else None
+    return {
+        "delivery_reliability": {"value": rel, "status": "known" if rel is not None else "unknown",
+                                 "meaning": RELIABILITY_MEANING},
+        "carbon": {"factor_kg_co2e_per_kg": factor, "basis": "product-group average from the Valio challenge file",
+                   "order_mass_kg": total_mass,
+                   "estimate_kg_co2e": round(total_mass * factor, 2) if factor is not None and total_mass is not None else None,
+                   "status": "estimated" if factor is not None and total_mass is not None else
+                             "unknown: " + ("no carbon value for this product" if factor is None
+                                            else "the file does not establish the ordered mass")},
+    }
+
+
+def _when(value) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value) if value else None
+    except ValueError:
+        return None
 
 
 class QuoteRequest(BaseModel):
@@ -76,6 +108,8 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
         return hashlib.sha256(f"{lic['id']}:{key}".encode()).hexdigest()[:8]
 
     def answer(run_id: str, result: dict) -> JSONResponse:
+        if result.get("status") == "ordered":  # also for an order restored from the log after a restart
+            result = result | DRY
         body = signer.sign({"run_id": run_id, **result})
         return JSONResponse(body, status_code=HTTP_STATUS.get(result["status"], 200))
 
@@ -101,16 +135,32 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
         lic = licence(authorization)
         q = agent.quote_exact(body.product_id, body.quantity, deadline(body.needed_by), **who(lic))
         if q["status"] != "quote":
-            raise HTTPException(HTTP_STATUS[q["status"]], f"Product {body.product_id}: {q['status'].replace('_', ' ')}")
+            why = f": {q['reason']}" if q.get("reason") else ""
+            raise HTTPException(HTTP_STATUS[q["status"]], f"Product {body.product_id}: {q['status'].replace('_', ' ')}{why}")
         quote_id = "Q-" + uuid.uuid4().hex[:8].upper()
-        valid_until = datetime.now(TZ) + QUOTE_VALID
+        line = q["line"]
+        # The quote lives 15 minutes, and never past the order cut-off or the end of the price's validity.
+        ends = {"15 minutes": datetime.now(TZ) + QUOTE_VALID, "the order cut-off (closingTime)": _when(line.get("closing_time")),
+                "the end of the price's validity (validTo)": _when(line.get("price_valid_to"))}
+        limit, valid_until = min(((k, v) for k, v in ends.items() if v is not None), key=lambda kv: kv[1])
         quotes[quote_id] = {"licence_id": lic["id"], "product_id": body.product_id, "quantity": body.quantity,
                             "needed_by": body.needed_by, "valid_until": valid_until}
+        deposits = q["charges"]["deposits"]
         return signer.sign({
-            "quote_id": quote_id, "valid_until": valid_until.isoformat(timespec="seconds"),
-            "quantity": body.quantity, "product": public(q["product"]), "unit_price_eur": q["unit_price_eur"],
-            "available_units": q["available_units"], "stock_known": q["stock_known"], "delivery": q["delivery"],
-            "total_eur": q["total_eur"], "decision": q["decision"].to_dict(), "claims": q["claims"]})
+            "quote_id": quote_id, "valid_until": valid_until.isoformat(timespec="seconds"), "valid_until_set_by": limit,
+            "quantity": body.quantity, "sales_unit": line.get("sales_unit"), "product": public(q["product"]),
+            "unit_price_eur": q["unit_price_eur"],
+            "price_basis": "per sales unit, without tax, at the catalog price (catalogPrice.value)",
+            "price_valid_to": line.get("price_valid_to"),
+            "available_units": q["available_units"], "stock_known": q["stock_known"],
+            "delivery": q["delivery"], "delivery_time": "not supplied: the source gives a delivery date only"
+            if q["delivery"] and len(q["delivery"]) == 10 else "as given in delivery",
+            "order_cutoff": line.get("closing_time"),
+            "total_eur": q["total_eur"], "total_covers": "goods only, without tax",
+            "delivery_charge": q["charges"]["delivery"],
+            "deposit_charge": deposits.get(body.product_id, "none listed in the product data"),
+            "comparison": comparison(q["product"], body.quantity),
+            "source": q["source"], "decision": q["decision"].to_dict(), "claims": q["claims"]})
 
     @router.post("/orders")
     def order(body: OrderRequest, authorization: str | None = Header(default=None)):
@@ -138,7 +188,8 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
     @router.get("/orders/{run_id}")
     def order_state(run_id: str, authorization: str | None = Header(default=None)):
         own_run(run_id, licence(authorization))
-        return {"run_id": run_id, **(state(run_id) or {"status": "ended", "detail": "See the audit entries of this run."})}
+        known = state(run_id) or {"status": "ended", "detail": "See the audit entries of this run."}
+        return {"run_id": run_id, **(known | DRY if known.get("status") == "ordered" else known)}
 
     @router.get("/key")
     def key():

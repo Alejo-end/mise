@@ -2,7 +2,50 @@
 
 This file describes the real materials of the Valio Aimo challenge, read from the resource portal (https://junction26.valioaimo.fi/) on 14 November 2026. The portal needs the event password. The API needs a key in the `X-API-Key` header. Both are on the challenge page of the Junction platform. Keep the key in `valio-challenge/.env`.
 
-The data files are in `valio-challenge/data/valio/`. Git ignores that folder. Valio says the dataset "must not be used for anything outside of this challenge", so never commit it. Our repository becomes public.
+The data files are in `valio-challenge/data/valio/`, a link to the shared read-only folder `valio-source-data/2026-11-14/` (downloaded once on 14 Nov, sizes and SHA-256 in its `MANIFEST.txt`). Git ignores that folder. Valio says the dataset "must not be used for anything outside of this challenge", so never commit it. Our repository becomes public.
+
+## What these materials are
+
+Valio's materials are **sponsor-provided challenge data and a mock API**, not a Valio production
+system. Every quote, approval option and order answer of our gateway names that in its `source` field.
+Prices and availability are customer-specific in the real world and change; the mock API's answers are
+true only for the time and the requested date of the call.
+
+## Field status (measured 14 Nov 2026, worker 3)
+
+Status: **sponsor file** = Valio's challenge data file (static, downloaded once); **sponsor mock API** =
+the live challenge API (`POST /api/price`, `POST /api/availability`); **unavailable** = no Valio source
+exists; **simulated** = our own code decides or records it. The schema source is the OpenAPI file in
+this folder (`openapi.json`, from the portal; the live copy needs the portal login).
+
+| Field the pipeline uses | Status | Source | How our code uses it |
+|---|---|---|---|
+| Price | sponsor mock API | `catalogPrice.value`: per sales unit, without tax, EUR; also `valueWithTax`, `tax.taxRate` (13.5 % measured), `comparisonPrice` per `comparisonUnit` (KG or L), `listPrice`, `netPriceFound` | `unit_price_eur` = `catalogPrice.value`; totals are goods without tax. A price not in EUR, or `error: true`, is no price (a person must look) |
+| Price validity | sponsor mock API | `catalogPrice.validFrom`, `validTo` (measured: net prices to 2026-12-31, catalog prices to 9999-12-31; offsets like `+0200`) | A gateway quote never outlives `validTo` |
+| Availability | sponsor mock API | `scheduleLines[0].availableAmount` in the sales unit; `logisticModel` Stock or Terminal | 999999 (Terminal) = quantity unknown, goes to a person. Measured: most Stock products answer 9999999999, a value the documentation does not name; we read it as stated (the quantity available). Ask Valio |
+| Available date | sponsor mock API | `scheduleLines[0].availableDate`, a bare date (`2026-11-16`) | The delivery **date**. No arrival time is invented: the deadline check compares dates and says "in time by date only" |
+| Arrival time or window | unavailable | none | Quotes say "not supplied: the source gives a delivery date only" |
+| Closing time (order cut-off) | sponsor mock API | `closingTime` per product | A passed cut-off makes the available date unreachable: not orderable, with the reason. A quote ends at the cut-off. Measured: Terminal products (477032 rye bread, 462921, 463038) had a cut-off of 12 Nov for delivery on 16 Nov |
+| Sales block | sponsor mock API | `salesBlock` (product and schedule line) | No stock, not orderable |
+| Sales unit | sponsor file + sponsor mock API | file `salesUnit` (KI 8,005, ST 5,607, KG 1,068, ...); API `scheduleLines[].salesUnit` | Quantities are in sales units. If the API's unit differs from the file's, the product is not orderable |
+| Pack size | sponsor file | `units[]` (`sizeInBaseUnits` per packaging level) and `synkkaData.unitConversions` (`BASE_UNIT_OR_EACH` volume or net weight) | `pack` = content of one sales unit in l or kg, or None. A substitute must have the usual product's pack size |
+| Lot size | sponsor file | `allowedLotSize`, in sales units: 0.01 for 16,872 products; 0.15 to 25 for 674 (672 sold by the KG, 2 by the KI: 462952 lot 1, 464997 lot 2) | A gateway quote off the lot size gets HTTP 422; the pipeline leaves out products whose lot does not divide one unit |
+| Deposits | sponsor file, no price | `deposits[]`: `material`, `unit`, `quantity` on 506 products; no price anywhere, and the price API has no deposit field | "deposit charge unknown", never 0, never in a total |
+| Allergens | sponsor file | `synkkaData.classifications` (`allergen`, `nonAllergen`, `nutritionalClaim`) | The rule check; missing data goes to a person (rule set v4) |
+| Delivery reliability | sponsor file | reliability CSV, 4,425 rows, all matched; 13,121 products have no row | Information only (quote `comparison`, option lines): historical share of the ordered quantity delivered, **not an on-time probability**. Missing = unknown. It no longer ranks substitutes |
+| Carbon footprint | sponsor file | carbon CSV `AVG kg CO2-eq/kg`, product-group averages, 11,033 rows, all matched; 6,513 products have no row | Information only. An order estimate only when the file establishes the ordered mass (net weight, or sold by the KG); else unknown |
+| Delivery charge | unavailable | none in the file or the API | "delivery charge unknown" in quotes, approval options and order log; never 0 in a total. Totals are goods only |
+| Order placement | simulated | the API has no order endpoint | The gateway records the order (idempotency key); answers and the log say "recorded by the gateway, not sent to Valio" |
+| Order confirmation | simulated | none | The gateway's own order id (`ORD-...`); no Valio confirmation exists |
+| Quote expiry | simulated | our gateway, bounded by sponsor data | The earliest of 15 minutes, the cut-off and the price's `validTo`; the quote says which (`valid_until_set_by`) |
+| Customer | sponsor mock API | `customer` in the request | The documentation says it does not change the answer; we send `123` |
+
+Call discipline (Valio: "query the APIs only when you have narrowed down the products"): the pipeline
+narrows by the local product file first (search, pack size, lot size) and asks price and availability
+for that shortlist in one call per endpoint; the backend makes at most 2 calls a second, retries at most
+3 times with exponential backoff and jitter on 429 and 5xx, can cap its calls (`VALIO_MAX_CALLS`) and
+records every call without the key (`VALIO_RECORD_DIR`). On 14 Nov worker 3 made 35 calls in total; the
+recordings and their README are in `valio-source-data/2026-11-14/api-recordings/` next to the data files.
 
 ## What the materials contain
 
@@ -54,8 +97,8 @@ Response fields:
 | `salesBlock` | True: the product cannot be ordered now |
 | `logisticModel` | Stock products: Valio knows the quantity. Terminal products ship from the supplier, and the quantity is unknown |
 | `scheduleLines[]` | Exactly one entry for an available product. An empty array means no delivery on any date |
-| `scheduleLines[].availableAmount` | Quantity in `salesUnit`. Always 999999 for Terminal products. 0 means not available |
-| `scheduleLines[].availableDate` | Earliest date for that amount. It can differ from the requested date |
+| `scheduleLines[].availableAmount` | Quantity in `salesUnit`. Always 999999 for Terminal products. 0 means not available. Measured: 9999999999 for most Stock products |
+| `scheduleLines[].availableDate` | Earliest date for that amount. It can differ from the requested date. A bare date, no time |
 | `scheduleLines[].salesUnit` | Technical code of the sales unit |
 | `scheduleLines[].salesBlock` | True: the product cannot be ordered now |
 
@@ -78,7 +121,7 @@ Response fields:
 
 ### File download endpoints
 
-`GET /api/products/download`, `GET /api/delivery-reliability/download` and `GET /api/carbon-footprint/download` redirect to the files. Use `curl -L`. We already have the files.
+`GET /api/products/download`, `GET /api/delivery-reliability/download` and `GET /api/carbon-footprint/download` redirect (307) to the files on the same host (`/files/<hash>/<name>`). Use `curl -L`. The product JSON schema has no API endpoint; it is on the password-protected portal.
 
 ## Product data
 
@@ -149,7 +192,7 @@ The column `AVG kg CO2-eq/kg` is an average for the product group, not a measure
 
 ## What this means for our code
 
-Items 1 to 3, 5 and 6 are done in `backend/valio.py` and `backend/allergens.py`, with tests. Item 4 is open. Item 7 is done in part: a product with `salesBlock` has no stock, and a product with the 999999 amount goes to a person. `closingTime` and `allowedLotSize` are not used yet.
+Items 1 to 3, 6 and 7 are done in `backend/valio.py`, `backend/allergens.py`, `backend/agent.py` and `backend/gateway.py`, with tests (`tests/test_valio_catalog.py`, `tests/test_valio_quotes.py`). Item 4 is open. Item 5 was changed on 14 Nov: reliability informs (quotes and options), it does not rank. Item 7: `closingTime`, `salesBlock`, `allowedLotSize` and the 999999 amount are respected (see the field status table).
 
 1. `backend/valio.py` calls `POST /api/price` and `POST /api/availability` with the `X-API-Key` header. It no longer calls `/products` or `/orders`.
 2. It builds a local product index from the data file for search.

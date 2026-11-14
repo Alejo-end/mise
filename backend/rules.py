@@ -187,6 +187,9 @@ class Line:
     delivery: datetime | None
     is_usual: bool = True
     stock_known: bool = True  # False when the supplier ships the product and the wholesaler cannot count it
+    # False when the source gives a delivery date and no time (Valio's availableDate). Then `delivery` is
+    # that date at 00:00 and the deadline check compares dates: no arrival time is invented.
+    delivery_time_known: bool = True
 
     @property
     def total_eur(self) -> float | None:
@@ -289,6 +292,14 @@ def needs_label_check(product: dict, rules: dict) -> bool:
     return bool(person) and not forbidden
 
 
+def date_only_same_day_ok(rules: dict) -> bool:
+    """True only when the signed rule set says a delivery on the needed day, with no arrival time, is in time.
+
+    Rule-set key `delivery.date_only_same_day: allowed`. Default: a person confirms it.
+    """
+    return (rules.get("delivery") or {}).get("date_only_same_day") == ALLOWED
+
+
 def check_line(line: Line, rules: dict, ctx: Context) -> Decision:
     """Safety rules for one product, then substitute, stock, price and delivery.
 
@@ -322,6 +333,16 @@ def check_line(line: Line, rules: dict, ctx: Context) -> Decision:
     if line.delivery is None:
         result = NEEDS_APPROVAL
         reasons.append(f"{name}: no delivery time, so a person must look")
+    elif not line.delivery_time_known:
+        if line.delivery.date() > ctx.needed_by.date():
+            result = NEEDS_APPROVAL
+            reasons.append(f"{name} is available on {line.delivery:%a %d.%m.}, after the needed day "
+                           f"{ctx.needed_by:%a %d.%m.}")
+        elif line.delivery.date() == ctx.needed_by.date() and not date_only_same_day_ok(rules):
+            # The source gives the day, not the hour, so it cannot show the delivery comes by the needed time.
+            result = NEEDS_APPROVAL
+            reasons.append(f"{name} is available on the needed day {line.delivery:%a %d.%m.}, but the source gives "
+                           f"no arrival time, so a person must confirm it arrives by {ctx.needed_by:%H:%M}")
     elif line.delivery > ctx.needed_by:
         result = NEEDS_APPROVAL
         reasons.append(
@@ -376,6 +397,10 @@ def check(lines: list[Line], rules: dict, ctx: Context) -> Decision:
 
     if result == ALLOWED:
         reasons.append("usual product or approved substitute, within target stock, under the limits, in time")
+    dated = [l for l in lines if not l.delivery_time_known and l.delivery is not None]
+    day = ctx.needed_by.date()
+    if dated and all(l.delivery.date() < day or (l.delivery.date() == day and date_only_same_day_ok(rules)) for l in dated):
+        reasons.append("in time by date only: the source gives a delivery date, not an arrival time")
     return Decision(result, reasons, rules["version"])
 
 
