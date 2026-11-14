@@ -26,11 +26,7 @@ agent under test in the Driving Test (`backend/model_agent.py`, when a key is se
 set v6 leaves all three slots unmapped, so the shelf cannot buy anything until someone ends recording mode and signs
 purchasable products again.
 
-**Recognition prototype (experimental, observational):** a "Recognize shelf" panel on the board page (deployed 12:22
-to `safe-kitchen-agent`) calls a laptop service on `exp/recognition` (86c513e) that finds separated packages on the
-surface and names enrolled products from the person's own photos, with unknown, ambiguous and obstructed outcomes and
-visible-unit counts. Checked end to end in the real page; no products are enrolled yet, so no recognition result
-exists. It never touches purchasing. How to use: `CAPTURE_GUIDE.md` section 6a.
+**Recognition prototype (experimental, observational):** "Recognize shelf" on the board page (build 140aaeb-1347, app `safe-kitchen-agent`) sends the current frame to the laptop service (`exp/recognition` 49e392e), which asks Kimi K3.1 Pro on Verda to describe the visible packages (candidate-free), then matches the descriptions to chips / energy drink / milk in a text-only step, or leaves them unknown. Checked in the real page at 13:46: 14.1 s per press; a "FUNKY MONKEY Sunny Peach" bottle read correctly and left unmatched; earlier false-milk scenes all unknown. The photo-enrolment pipeline stays at `/recognize/embedding`. Never touches purchasing.
 
 ## 2. Known failures and limits (say them out loud)
 
