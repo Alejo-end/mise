@@ -27,6 +27,7 @@ from .sandbox import AGENTS, DrivingTest
 from .settings import Settings
 from .shelf import Shelf, ShelfError, versions_dir_for
 from .signing import Signer
+from .stock import StockHistory, against_delivery, outlook
 from .valio import ValioCatalog, make_client
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -59,6 +60,7 @@ shelf = Shelf(os.getenv("RULES_FILE", ROOT / "rules" / "school_kitchen.yaml"),
 ruleset = shelf.rules
 catalog = make_client()
 log = AuditLog(os.getenv("AUDIT_DB", DATA / "audit.sqlite"))
+stock_history = StockHistory(os.getenv("AUDIT_DB", DATA / "audit.sqlite"))
 
 
 def _check_targets() -> None:
@@ -243,6 +245,9 @@ def events(ev: Event):
     if data["type"] == "slot_state":
         data = shelf.observe(data)  # the observation; with fill, units = round(fill x the assignment's target)
         device["slots"][str(data["slot"])] = {"state": data["state"], "units": data.get("estimated_units")}
+        if data.get("estimated_units") is not None and not data.get("uncertain"):
+            # The stock timeline. It only watches: also in a recording session, and before any trigger.
+            stock_history.record(int(data["slot"]), int(data["estimated_units"]), "camera", datetime.now(TZ))
     if RECORDING_SESSION:
         if data["type"] in ("slot_state", "manual_low"):
             log.write("recording", {"summary": f"Recording session {RECORDING_SESSION}: slot {data['slot']} reads "
@@ -276,8 +281,60 @@ def approvals_open():
     runs = {a["run_id"] for a in waiting}
     started = {e["run_id"]: e for e in log.entries(2000) if e["step"] == "trigger" and e["run_id"] in runs}
     return [a | {"asked_by": started[a["run_id"]]["actor"] if a["run_id"] in started else None,
-                 "request": started[a["run_id"]]["detail"].get("text") if a["run_id"] in started else None}
+                 "request": started[a["run_id"]]["detail"].get("text") if a["run_id"] in started else None,
+                 "stock": _stock_for(a)}
             for a in waiting]
+
+
+def _slot_outlook(slot: int):
+    target = next((t for t in ruleset["targets"] if t["slot"] == slot), None)
+    return target, outlook(slot, stock_history.readings(slot), target.get("target_units") if target else None, datetime.now(TZ))
+
+
+def _stock_for(approval: dict) -> dict | None:
+    """What the stock timeline says about a request that a shelf slot started: the count, the use, and each option against it."""
+    if approval.get("slot") is None:
+        return None
+    _, o = _slot_outlook(int(approval["slot"]))
+    if o.units is None:
+        return None
+    options = []
+    for opt in approval["options"]:
+        first = opt["lines"][0] if opt.get("lines") else {}
+        options.append(against_delivery(o, first.get("delivery"), sum(l["quantity"] for l in opt.get("lines", []))))
+    return o.to_dict() | {"options": options}
+
+
+class Count(BaseModel):
+    units: int = Field(ge=0, le=100000)
+    counted_by: str | None = Field(default=None, max_length=60)
+    source: Literal["person", "sensor"] = "person"
+
+
+@app.post("/stock/{slot}/count")
+def stock_count(slot: int, c: Count):
+    """A count of one slot by a person or a distance sensor. It goes into the timeline and starts no order."""
+    if not any(t["slot"] == slot for t in ruleset["targets"]):
+        raise HTTPException(404, f"slot {slot} is not in rule set v{ruleset['version']}")
+    kept = stock_history.record(slot, c.units, c.source, datetime.now(TZ))
+    return {"slot": slot, "units": c.units, "source": c.source, "kept": kept}
+
+
+@app.get("/stock")
+def stock():
+    """Per slot: the latest count, the use per day, the run-out time and the last readings."""
+    out = []
+    for t in sorted(ruleset["targets"], key=lambda t: t["slot"]):
+        _, o = _slot_outlook(t["slot"])
+        recent = stock_history.readings(t["slot"], limit=60)
+        waiting = t["slot"] in agent.pending_slots  # an order or a request for this slot is not settled yet
+        out.append(o.to_dict() | {"product": t.get("product"), "target_units": t.get("target_units"),
+                                  "reorder_below": t.get("reorder_below"),
+                                  "on_order": agent.last_order_qty.get(t["slot"]) if waiting else None,
+                                  "request_open": waiting and agent.last_order_qty.get(t["slot"]) is None,
+                                  "history": [{"time": x.time.isoformat(timespec="seconds"), "units": x.units, "source": x.source}
+                                              for x in recent]})
+    return out
 
 
 def approver_of(pin: str) -> str:

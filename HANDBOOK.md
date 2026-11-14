@@ -66,6 +66,33 @@ One order goes through these steps, and each step goes into the audit log:
 
 Two cases always go to the chef. The first is a product that the wholesaler cannot count, because the supplier ships it. The second is a product whose label a person must read, for example a product with no allergen data. The chef reads that label once. The agent keeps the answer for the product. If the product data or the rule set changes, the agent asks again.
 
+## The stock timeline
+
+The backend keeps every change of a slot's count with its time and its source: the camera, a distance sensor or a person. `backend/stock.py` turns these readings into three facts for the person who approves:
+
+1. How many units are on the shelf, and how old the count is.
+2. How fast the kitchen uses the product. Only drops count as use. A rise is a delivery.
+3. When the shelf runs out at that rate, and whether that is before the delivery of an order option.
+
+The approval card shows these facts above the options. The kitchen role shows each slot with its count, and a person can type a count there. `GET /stock` gives the same data, and `POST /stock/{slot}/count` takes a count from a person or a sensor. A count starts no order, and the timeline decides nothing: the rule check and the approver decide.
+
+Four rules in the timeline come from Anatoly's research:
+
+1. Units that come back within two hours are not use. In his simulator, ten units left the shelf for one hour. An immediate order bought ten units that nobody needed. The source is `experiments/replenishment-sim/FINDINGS.md` on the branch `exp/replenishment-sim`.
+2. A count older than 12 hours is marked as old. His proposal asks for the age of the evidence next to every stock figure.
+3. The kitchen view shows what is on order for a slot. Stock on the way is stock.
+4. The count has three possible sources: a person, a sensor or the camera. His market research names the same three as the inputs to compare in a pilot, with the manual count as the baseline.
+
+When no safe product is available, the head chef now gets a request with no option. The slot stays held until the chef closes it. Before, the agent wrote "blocked" in the log and told nobody. His agent benchmark found this gap.
+
+The limits:
+
+1. A camera count is an estimate from a fill level. The page names the source of each count.
+2. The use rate needs at least one hour of readings, and it reads only the last 14 days. It is a plain average with no weekday pattern.
+3. "A full shelf lasts N days" shows stock that sits. We have no shelf life in the data, so the app claims no waste figure. Food waste also arises in preparation, at serving and on the plate. A shelf count can only touch waste from ordering too much. The Finnish research institute Luke measures these waste streams apart (`https://www.luke.fi/en/projects/lukeloki`).
+4. No real kitchen data exists yet. The tests use made-up readings, and the distance sensor is not connected.
+5. Order timing is unchanged: a low reading still starts a request at once. Anatoly's proposal moves orders to set times. His simulator, on a partial and synthetic run, shows the price of that: about half as many supplier orders, and about three times the hours with an empty shelf (57.7 against 177.4). An urgent path wins part of that back (127.5). The team has not decided.
+
 ## What the real data looks like
 
 ![The real catalog under the kitchen's allergen rules](../docs/handbook/valio-allergen-data.svg)
@@ -104,6 +131,17 @@ What the prototype does not have:
 2. The wholesaler's own trading rules. It has no customer price list, no credit limit, no minimum order and no order cut-off time. Nothing stops one agent from taking all the stock of a scarce product.
 3. A change or a cancel of an order.
 4. A report. The audit log holds the data for a pilot scorecard: orders placed with no person, the wait for an approval, substitutes offered and chosen, and refused requests. Nobody wrote the report yet.
+
+What the market research changes in the pitch (`research/market/report.md` on the branch `exp/market-research`, 21 public sources, mostly vendor documents):
+
+1. Do not sell "approvals" or "suggested orders" as new. Choco, Apicbase, MarketMan and REKKI describe order intake by AI, approval settings, suggested orders and partial deliveries in their own documents. These are vendor claims that nobody on the team tested.
+2. Say what is ours in a way that a pilot can disprove: the gateway checks the agent's authority at the moment of the order. It hands back signed evidence that ties together the quote, the rule set version, the approval and the result.
+3. A signature shows who said something. It does not show that the stock data is right or that the goods arrived.
+4. The kitchen that approves is not always the one that pays. The report's guess is that the wholesaler pays for the gateway. Nobody was asked.
+
+The pilot that the research proposes is a shadow test with no camera: one kitchen, one wholesaler, one approver and a few packaged products, with two weeks of baseline and two weeks of shadow operation. Staff type the counts, and the gateway drafts orders but sends none. The pilot counts orders with no authority, duplicate orders, minutes per exception and setup hours. The stock timeline with counts by a person is the input for exactly this test.
+
+Besides Peppol, the report names four standards to map the calls to: ACP and AP2 for agent payments and delegated authority, UCP for capability negotiation, and GS1 XML for order documents. We mapped none of them.
 
 The gateway adds one new call and fits standards that buyers already use for the rest. Peppol BIS 3 is an open European standard for order documents (`https://docs.peppol.eu/poacc/upgrade-3/`). The Finnish State Treasury publishes a Peppol ordering guide for the Finnish retail sector (`https://www.valtiokonttori.fi/en/maaraykset-ja-ohjeet/peppol-ordering-implementation-guide-for-finnish-retail-sector/`). We did not build these messages.
 
