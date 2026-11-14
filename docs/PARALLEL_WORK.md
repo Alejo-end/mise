@@ -96,9 +96,14 @@ configuration. Version 1 events (no `fill`) keep working.
 
 ### 3. Trigger contract in the backend (worktree 1, `handle_event`)
 
-- `handle_event` runs under the agent lock, so two events cannot both pass the pending check.
-- A "full" reading less than `RESTOCK_MIN_S` (environment, default 120) after the slot's trigger is
-  logged as "ignored: too soon after the order to be a delivery" and keeps the slot pending.
+- The pending check and add in `handle_event` run under a separate `trigger_lock` (not
+  `self.lock`, which `_ask` takes inside the buying path: reusing it deadlocks), so two events
+  cannot both pass the pending check.
+- A "full" reading less than `RESTOCK_MIN_S` after the slot's trigger is logged as "too soon for a
+  delivery" and keeps the slot pending. The time comes back from the audit log after a restart.
+- `RESTOCK_MIN_S` defaults to 0 in the code. That keeps Alejo's committed spec,
+  `test_one_empty_shelf_makes_one_order` (empty, full, empty orders twice), which is the exact
+  sequence of the live duplicate. The live backend runs with `RESTOCK_MIN_S=120` until decision C.
 - Demo reset: approve or skip the request, or wait `RESTOCK_MIN_S`. The gateway calls and the
   rule check do not change.
 
@@ -136,7 +141,7 @@ commit that changes the loop on the board changes the model too.
 |---|---|---|---|
 | A | May a person change which product a slot holds without a new, re-signed rule set version? | Slot targets sit in the signed rule set. An edit outside it weakens "every decision names the rule set version" | Read-only `/shelf`; product changes go through a new rule set version |
 | B | Is the board here (`Junction`, all Modulinos answer, no `~/safe-kitchen-agent.backup-20261114`) the demo board, or is there a second UNO Q? | The handbook describes a board with that backup and no Modulinos answering | Treat this board as the demo board |
-| C | How soon may a slot reorder after a refill in the demo (`RESTOCK_MIN_S`)? | Repeating demo step 5 inside that window gives "already in progress" | 120 s, and approve or skip to reset |
+| C | May a "full" reading right after an order count as a refill (`RESTOCK_MIN_S`)? His test `test_one_empty_shelf_makes_one_order` says yes, at once; the live duplicate on 14 Nov (`ORD-68CE0E08`, `ORD-592FF708`) came from exactly that | Yes: a demo can repeat step 5 at once, but a hand or a recalibration can order twice. No: one false "full" cannot reorder, but repeating step 5 needs a skip or a wait | Code 0 (his spec), live 120. If he picks a window, his test needs a time step or `restock_min_s=0` |
 
 ## Evidence
 
