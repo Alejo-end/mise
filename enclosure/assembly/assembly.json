@@ -1,0 +1,209 @@
+{
+ "units": "mm",
+ "parts": [
+  {
+   "name": "base",
+   "file": "base.stl",
+   "colour": "#cfd0cc",
+   "explode": [
+    0,
+    0,
+    0
+   ],
+   "label": "Printed base",
+   "surface": "print"
+  },
+  {
+   "name": "uno_q",
+   "file": "uno_q.stl",
+   "colour": "#00878f",
+   "explode": [
+    0,
+    0,
+    34
+   ],
+   "label": "Arduino UNO Q",
+   "surface": "board"
+  },
+  {
+   "name": "uno_q_parts",
+   "file": "uno_q_parts.stl",
+   "colour": "#2b2b2b",
+   "explode": [
+    0,
+    0,
+    34
+   ],
+   "label": "Arduino UNO Q, headers and connectors",
+   "surface": "part"
+  },
+  {
+   "name": "uno_q_screws",
+   "file": "uno_q_screws.stl",
+   "colour": "#b9bcc0",
+   "explode": [
+    0,
+    0,
+    58
+   ],
+   "label": "4 screws M3 x 6",
+   "surface": "metal"
+  },
+  {
+   "name": "knob",
+   "file": "knob.stl",
+   "colour": "#1d3f8f",
+   "explode": [
+    0,
+    0,
+    34
+   ],
+   "label": "Modulino Knob",
+   "surface": "board"
+  },
+  {
+   "name": "knob_parts",
+   "file": "knob_parts.stl",
+   "colour": "#b9bcc0",
+   "explode": [
+    0,
+    0,
+    34
+   ],
+   "label": "Modulino Knob, encoder",
+   "surface": "metal"
+  },
+  {
+   "name": "knob_screws",
+   "file": "knob_screws.stl",
+   "colour": "#b9bcc0",
+   "explode": [
+    0,
+    0,
+    58
+   ],
+   "label": "4 screws M3 x 6",
+   "surface": "metal"
+  },
+  {
+   "name": "buzzer",
+   "file": "buzzer.stl",
+   "colour": "#1d3f8f",
+   "explode": [
+    0,
+    0,
+    34
+   ],
+   "label": "Modulino Buzzer",
+   "surface": "board"
+  },
+  {
+   "name": "buzzer_parts",
+   "file": "buzzer_parts.stl",
+   "colour": "#2b2b2b",
+   "explode": [
+    0,
+    0,
+    34
+   ],
+   "label": "Modulino Buzzer, buzzer",
+   "surface": "part"
+  },
+  {
+   "name": "buzzer_screws",
+   "file": "buzzer_screws.stl",
+   "colour": "#b9bcc0",
+   "explode": [
+    0,
+    0,
+    58
+   ],
+   "label": "4 screws M3 x 6",
+   "surface": "metal"
+  },
+  {
+   "name": "lid",
+   "file": "lid.stl",
+   "colour": "#e4e4e0",
+   "explode": [
+    0,
+    0,
+    98
+   ],
+   "label": "Printed lid",
+   "surface": "print"
+  },
+  {
+   "name": "lid_screws",
+   "file": "lid_screws.stl",
+   "colour": "#b9bcc0",
+   "explode": [
+    0,
+    0,
+    128
+   ],
+   "label": "4 screws M3 x 10",
+   "surface": "metal"
+  },
+  {
+   "name": "pod_base",
+   "file": "pod_base.stl",
+   "colour": "#cfd0cc",
+   "explode": [
+    0,
+    0,
+    0
+   ],
+   "label": "Printed Thermo pod base",
+   "surface": "print"
+  },
+  {
+   "name": "thermo",
+   "file": "thermo.stl",
+   "colour": "#1d3f8f",
+   "explode": [
+    0,
+    0,
+    18
+   ],
+   "label": "Modulino Thermo",
+   "surface": "board"
+  },
+  {
+   "name": "thermo_parts",
+   "file": "thermo_parts.stl",
+   "colour": "#2b2b2b",
+   "explode": [
+    0,
+    0,
+    18
+   ],
+   "label": "Modulino Thermo, sensor",
+   "surface": "part"
+  },
+  {
+   "name": "pod_cover",
+   "file": "pod_cover.stl",
+   "colour": "#e4e4e0",
+   "explode": [
+    0,
+    0,
+    40
+   ],
+   "label": "Printed Thermo pod cover",
+   "surface": "print"
+  },
+  {
+   "name": "pod_screws",
+   "file": "pod_screws.stl",
+   "colour": "#b9bcc0",
+   "explode": [
+    0,
+    0,
+    62
+   ],
+   "label": "4 screws M3 x 10",
+   "surface": "metal"
+  }
+ ]
+}

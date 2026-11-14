@@ -30,6 +30,7 @@ class Agent:
         self.approvals: dict[str, dict] = {}
         self.orders: dict[str, dict] = {}  # order_id -> order entry, for delivery checks and weekly spend
         self.placed_runs: dict[str, dict] = {}  # run id -> result, so one run never orders twice
+        self.attempted: dict[str, list[dict]] = {}  # run id -> lines of an order call that was tried
         self.last_order_qty: dict[int, int] = {}
         self.pending_slots: set[int] = set()
         self.auto_limit_eur: float | None = None
@@ -142,8 +143,9 @@ class Agent:
     def handle_request(self, text: str, product_id: str | None = None) -> dict:
         """A text request from the chef, for example '1,000 litres of lactose-free milk by Monday'."""
         run = uuid.uuid4().hex[:8]
-        target = next((t for t in self.rules["targets"] if base_name(t["product"]) in text.lower()), None)
-        qty = units_for(text, target["product"] if target else "") or 1
+        target = match_target(text, self.rules["targets"])
+        # The deadline comes out first, so "by 17.11." is not read as 17 units.
+        qty = units_for(DEADLINE.sub(" ", text.lower()), target["product"] if target else "") or 1
         deadline = parse_deadline(text, datetime.now(R.TZ))
         understood = f"{qty} × {target['product'] if target else 'unknown product'}"
         if deadline:
@@ -234,25 +236,50 @@ class Agent:
                 "delivery": a.value["delivery"], "claims": [p.to_dict(), a.to_dict()]}
 
     def _line(self, q: dict, qty: int, usual: bool) -> R.Line:
-        return R.Line(q["product"], qty, q["unit_price_eur"], datetime.fromisoformat(q["delivery"]), usual)
+        delivery = datetime.fromisoformat(q["delivery"]) if q["delivery"] else None
+        return R.Line(q["product"], qty, q["unit_price_eur"], delivery, usual)
+
+    def _free(self, slot: int | None) -> None:
+        if slot is not None:
+            self.pending_slots.discard(slot)
 
     def buy(self, target: dict, units: int, need: int, run: str, standing: bool = True,
             deadline: datetime | None = None) -> dict:
         ctx = self._ctx(target, units, standing, deadline)
         v = self.rules["version"]
+        slot = target["slot"] if standing else None  # a text request is not tied to a shelf slot
         query = base_name(target["product"])
         found: Claim = self.catalog.search(query)
         self.log.write("search", {"query": query, "count": len(found.value), "ids": [p["id"] for p in found.value],
                                   "checked_at": found.checked_at, "sha256": found.sha256}, "agent", v, run_id=run)
 
-        quotes = {}
-        for p in found.value:
+        candidates = list(found.value)
+        usual_id = target.get("product_id")
+        if usual_id and all(p["id"] != usual_id for p in candidates):
+            usual = self.catalog.product(usual_id).value  # a long hit list can miss the usual product
+            if usual:
+                candidates.insert(0, usual)
+        # One unit must mean the same amount for every candidate. A crate of five is not a carton.
+        want_pack = pack_of(target["product"])
+        other_pack = [p["id"] for p in candidates
+                      if p["id"] != usual_id and "pack" in p and want_pack and not same_pack(p["pack"], want_pack)]
+        candidates = [p for p in candidates if p["id"] not in other_pack]
+        if hasattr(self.catalog, "prefetch"):
+            self.catalog.prefetch([p["id"] for p in candidates], ctx.needed_by)
+
+        quotes, not_orderable = {}, []
+        for p in candidates:
             q = self._quote(p["id"], need, ctx, run)
-            if q:
-                quotes[p["id"]] = q
+            if q is None:
+                continue
+            if q["unit_price_eur"] is None or q["delivery"] is None:
+                not_orderable.append(p["id"])  # no price or no delivery date: nothing to order now
+                continue
+            quotes[p["id"]] = q
         self.log.write("candidates", {"need": need, "candidates": [
             {"id": pid, "price_eur": q["unit_price_eur"], "available": q["available"], "delivery": q["delivery"],
-             "checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]} for pid, q in quotes.items()]},
+             "checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]} for pid, q in quotes.items()],
+            "left_out": {"other_pack_size": other_pack, "no_price_or_delivery": not_orderable}},
             "agent", v, run_id=run)
 
         # Safety check of each product alone. Forbidden products are dropped here.
@@ -302,7 +329,7 @@ class Agent:
         if not options:
             self.log.write("blocked", {"summary": f"No safe product can fill {need} units of {target['product']}."},
                            "agent", v, run_id=run)
-            self.pending_slots.discard(target["slot"])
+            self._free(slot)
             return {"status": "blocked"}
 
         checked = []
@@ -329,21 +356,51 @@ class Agent:
             })
 
         if checked[0]["result"] == R.ALLOWED:
-            return self._order(checked[0]["lines"], ctx, run, target["slot"], approved_by=None,
+            return self._order(checked[0]["lines"], ctx, run, slot, approved_by=None,
                                approved_total=checked[0]["total_eur"])
-        return self._ask(checked, ctx, run, target["slot"], target["product"])
+        return self._ask(checked, ctx, run, slot, target["product"])
 
-    def buy_exact(self, product_id: str, qty: int, group: str, run: str) -> dict:
+    def _role(self, product: dict) -> tuple[str, bool]:
+        """What a product is to this kitchen: (the group of its shelf slot, whether it is the usual product)."""
+        for t in self.rules["targets"]:
+            if t.get("product_id") == product["id"]:
+                return t["group"], True
+        for t in self.rules["targets"]:
+            if R.is_approved_substitute(product, self.rules, t["group"]):
+                return t["group"], False
+        return "unknown", False
+
+    def buy_exact(self, product_id: str, qty: int, group: str | None, run: str, deadline: datetime | None = None,
+                  mandate_eur: float | None = None, actor: str = "agent", dry_run: bool = False) -> dict:
+        """Order one named product, through the same rule check as every other order.
+
+        group None means: work out what the product is to this kitchen (an outside agent asks).
+        mandate_eur is the spend limit of the one who asks. The lower of it and the knob counts.
+        dry_run returns the price, the stock and the rule decision, and orders and logs nothing.
+        """
         v = self.rules["version"]
-        ctx = R.Context(slot_group=group, needed_by=R.needed_by(self.rules, datetime.now(R.TZ)),
-                        weekly_spent_eur=self.weekly_spent_eur, auto_limit_eur=self.auto_limit_eur,
+        limits = [x for x in (self.auto_limit_eur, mandate_eur) if x is not None]
+        ctx = R.Context(slot_group=group or "unknown", needed_by=deadline or R.needed_by(self.rules, datetime.now(R.TZ)),
+                        weekly_spent_eur=self.weekly_spent_eur, auto_limit_eur=min(limits) if limits else None,
                         cold_room_alarm_c=self.cold_alarm_c)
+        say = (lambda *a, **k: None) if dry_run else self.log.write
         q = self._quote(product_id, qty, ctx, run)
         if q is None:
-            self.log.write("blocked", {"summary": f"Product {product_id} is not in the catalog."}, "agent", v, run_id=run)
+            say("blocked", {"summary": f"Product {product_id} is not in the catalog."}, "agent", v, run_id=run)
             return {"status": "no_match"}
-        lines = [self._line(q, qty, False)]
+        usual = False
+        if group is None:
+            ctx.slot_group, usual = self._role(q["product"])
+        if q["unit_price_eur"] is None or q["delivery"] is None:
+            say("blocked", {"summary": f"{q['product']['name']} has no price or no delivery date now."},
+                "agent", v, run_id=run)
+            return {"status": "not_orderable"}
+        lines = [self._line(q, qty, usual)]
         d = R.check(lines, self.rules, ctx)
+        if dry_run:
+            return {"status": "quote", "product": q["product"], "unit_price_eur": q["unit_price_eur"],
+                    "available_units": q["available"], "delivery": q["delivery"], "total_eur": lines[0].total_eur,
+                    "decision": d.to_dict(), "claims": q["claims"]}
         self.log.write("rule_check", {"subject": f"{qty} × {q['product']['name']}", **d.to_dict()}, "rule_check", v, run_id=run)
         if d.result == R.FORBIDDEN:
             self.log.write("blocked", {"summary": f"{q['product']['name']} is forbidden: {'; '.join(d.reasons)}. "
@@ -352,11 +409,11 @@ class Agent:
             return {"status": "forbidden", "reasons": d.reasons, "rule_set_version": v}
         opt = {"label": "requested", "result": d.result, "reasons": d.reasons, "summary": f"{qty} × {q['product']['name']}",
                "trade_off": "The product you asked for.", "total_eur": lines[0].total_eur,
-               "lines": [{"product_id": product_id, "name": q["product"]["name"], "quantity": qty, "usual": False,
+               "lines": [{"product_id": product_id, "name": q["product"]["name"], "quantity": qty, "usual": usual,
                           "unit_price_eur": q["unit_price_eur"], "delivery": q["delivery"],
                           "price_checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]}]}
         if d.result == R.ALLOWED:
-            return self._order(opt["lines"], ctx, run, None, None, opt["total_eur"])
+            return self._order(opt["lines"], ctx, run, None, None, opt["total_eur"], actor=actor)
         return self._ask([opt], ctx, run, None, q["product"]["name"])
 
     def _ask(self, options: list[dict], ctx: R.Context, run: str, slot: int | None, what: str) -> dict:
@@ -373,42 +430,79 @@ class Agent:
                        "agent", self.rules["version"], run_id=run)
         return {"status": "needs_approval", "approval_id": aid}
 
+    def _recheck(self, lines: list[dict], ctx: R.Context, run: str, slot: int | None,
+                 approved_by: str | None, approved_total: float) -> tuple[list[dict] | None, dict | None]:
+        """Ask price and stock again. Returns the lines to order, or the result that ends the run."""
+        v = self.rules["version"]
+        # Step 8: ask price and stock again just before the order.
+        fresh, changes, short, unknown = [], [], False, False
+        for l in lines:
+            a = self.catalog.availability(l["product_id"], l["quantity"], ctx.needed_by)
+            p = self.catalog.product(l["product_id"])
+            price, left = a.value["unit_price_eur"], a.value["available_units"]
+            if price != l["unit_price_eur"]:
+                changes.append(f"{l['name']} price {l['unit_price_eur']} → {price}")
+            if left < l["quantity"]:
+                short = True
+                changes.append(f"{l['name']} only {left} of {l['quantity']} left")
+            unknown |= price is None or a.value["delivery"] is None
+            if left > 0:  # the line as the catalog answers now: fresh price, date and proof, no more than is left
+                fresh.append((p.value, l | {"quantity": min(l["quantity"], left), "unit_price_eur": price,
+                                            "delivery": a.value["delivery"], "price_checked_at": a.checked_at,
+                                            "sha256": a.sha256}))
+        self.log.write("recheck", {"summary": "; ".join(changes) or "nothing changed.", "changes": changes}, "agent", v, run_id=run)
+
+        if changes:
+            if not fresh or unknown:
+                self.log.write("blocked", {"summary": "After the recheck nothing can be ordered: " + "; ".join(changes)},
+                               "agent", v, run_id=run)
+                self._free(slot)
+                return None, {"status": "blocked"}
+            rl = [R.Line(p, l["quantity"], l["unit_price_eur"], datetime.fromisoformat(l["delivery"]), l["usual"])
+                  for p, l in fresh]
+            d = R.check(rl, self.rules, ctx)
+            self.log.write("rule_check", {"subject": "order after recheck", **d.to_dict()}, "rule_check", v, run_id=run)
+            new_total = round(sum(x.total_eur or 0 for x in rl), 2)
+            lines = [l for _, l in fresh]
+            if d.result == R.FORBIDDEN:
+                self.log.write("blocked", {"summary": "The recheck made the order forbidden."}, "rule_check", v, run_id=run)
+                self._free(slot)
+                return None, {"status": "forbidden", "reasons": d.reasons}
+            # Less stock is a change to what was decided, so a person looks again, also after an approval.
+            if short or (d.result == R.NEEDS_APPROVAL and (approved_by is None or new_total > approved_total)):
+                reasons = d.reasons if d.result == R.NEEDS_APPROVAL else ["stock fell after the quote, so a person must look again"]
+                names = " + ".join(f"{l['quantity']} × {l['name']}" for l in lines)
+                return None, self._ask([{"label": "after recheck", "result": R.NEEDS_APPROVAL, "reasons": reasons,
+                                   "summary": names, "trade_off": "; ".join(changes),
+                                   "total_eur": new_total, "lines": lines}], ctx, run, slot, "changed order")
+        return lines, None
+
     def _order(self, lines: list[dict], ctx: R.Context, run: str, slot: int | None,
-               approved_by: str | None, approved_total: float) -> dict:
+               approved_by: str | None, approved_total: float, actor: str = "agent") -> dict:
         v = self.rules["version"]
         if run in self.placed_runs:
             # This run already ordered. A retry must not order again.
             self.log.write("recheck", {"summary": f"run {run} already placed {self.placed_runs[run]['order_id']}; "
                                        "not ordering twice.", "changes": []}, "agent", v, run_id=run)
             return self.placed_runs[run]
-        # Step 8: ask price and stock again just before the order.
-        fresh, changes = [], []
-        for l in lines:
-            a = self.catalog.availability(l["product_id"], l["quantity"], ctx.needed_by)
-            p = self.catalog.product(l["product_id"])
-            if a.value["unit_price_eur"] != l["unit_price_eur"]:
-                changes.append(f"{l['name']} price {l['unit_price_eur']} → {a.value['unit_price_eur']}")
-            if a.value["available_units"] < l["quantity"]:
-                changes.append(f"{l['name']} only {a.value['available_units']} of {l['quantity']} left")
-            fresh.append((p.value, a.value, l))
-        self.log.write("recheck", {"summary": "; ".join(changes) or "nothing changed.", "changes": changes}, "agent", v, run_id=run)
-
-        if changes:
-            rl = [R.Line(p, min(l["quantity"], a["available_units"]), a["unit_price_eur"],
-                         datetime.fromisoformat(a["delivery"]), l["usual"]) for p, a, l in fresh]
-            d = R.check(rl, self.rules, ctx)
-            self.log.write("rule_check", {"subject": "order after recheck", **d.to_dict()}, "rule_check", v, run_id=run)
-            new_total = round(sum(x.total_eur or 0 for x in rl), 2)
-            if d.result == R.FORBIDDEN:
-                self.log.write("blocked", {"summary": "The recheck made the order forbidden."}, "rule_check", v, run_id=run)
-                return {"status": "forbidden", "reasons": d.reasons}
-            if d.result == R.NEEDS_APPROVAL and (approved_by is None or new_total > approved_total):
-                return self._ask([{"label": "after recheck", "result": d.result, "reasons": d.reasons,
-                                   "summary": "Order changed after the recheck", "trade_off": "; ".join(changes),
-                                   "total_eur": new_total, "lines": lines}], ctx, run, slot, "changed order")
-
-        claim = self.catalog.place_order([{"product_id": l["product_id"], "quantity": l["quantity"]} for l in lines],
-                                         idempotency_key=run)
+        if run in self.attempted:
+            # The order call for this run failed before, and the catalog may hold the order already.
+            # The same lines go out again under the same key. A new recheck would count our own order as lost stock.
+            lines = self.attempted[run]
+        else:
+            lines, done = self._recheck(lines, ctx, run, slot, approved_by, approved_total)
+            if done is not None:
+                return done
+        self.attempted[run] = lines
+        payload = [{"product_id": l["product_id"], "quantity": l["quantity"]} for l in lines]
+        for attempt in range(3):
+            try:
+                # The run id is the key. A repeated call returns the first order, so a retry is safe.
+                claim = self.catalog.place_order(payload, idempotency_key=run)
+                break
+            except (TimeoutError, ConnectionError):
+                if attempt == 2:
+                    raise
         order_id = claim.value["order_id"]
         total = round(sum(l["unit_price_eur"] * l["quantity"] for l in lines), 2)
         now = datetime.now(R.TZ).isoformat(timespec="seconds")
@@ -421,7 +515,7 @@ class Agent:
         summary = ", ".join(f"{l['quantity']} × {l['name']}" for l in lines) + f", €{total:.2f}"
         summary += f", approved by {approved_by}." if approved_by else ", within the auto-order rules."
         self.log.write("order", {"summary": summary, "lines": lines, "total_eur": total, "sha256": claim.sha256,
-                                 "slot": slot}, approved_by or "agent", v, order_id=order_id, run_id=run)
+                                 "slot": slot}, approved_by or actor, v, order_id=order_id, run_id=run)
         return self.placed_runs[run]
 
     # Cold Chain Proof -----------------------------------------------------
@@ -468,10 +562,12 @@ class Agent:
         result = {
             "order_id": order_id, "slot": slot, "ordered": ordered, "counted": counted, "short": short,
             "temperature_c": temperature_c, "seconds_measured": seconds_measured,
-            "complete": short in (0, None), "cold": not any(s["warm"] for s in per_supplier.values()),
+            "complete": None if short is None else short == 0,
+            "cold": not any(s["warm"] for s in per_supplier.values()),
             "on_time": not any(s["late"] for s in per_supplier.values()),
             "suppliers": list(per_supplier.values()), "problems": problems,
-            "summary": (f"Delivery {order_id}: " + ("; ".join(problems) if problems else "complete, cold and on time") + "."),
+            "summary": (f"Delivery {order_id}: " + ("; ".join(problems) if problems else
+                        "complete, cold and on time" if counted is not None else "cold and on time, units not counted") + "."),
         }
         self.deliveries.append(result)
         self.log.write("delivery_check", result, "device", self.rules["version"], order_id=order_id,
@@ -516,13 +612,16 @@ def rank_substitutes(safe: dict, target: dict, ctx: R.Context, approved: list[st
     Among equal matches, a supplier with a better delivery record ranks first (unknown suppliers count as 1.0).
     """
     reliability = reliability or {}
-    score = lambda q: reliability.get(q["product"].get("supplier"), {}).get("score", 1.0)
+    def score(q):
+        own = q["product"].get("delivery_reliability")  # Valio's record for this product, where it has one
+        return own if own is not None else reliability.get(q["product"].get("supplier"), {}).get("score", 1.0)
     subs = [q for pid, q in safe.items() if pid != target.get("product_id") and q["available"] > 0]
     if not subs:
         return []
     def closeness(q):
         p = q["product"]
-        return (p.get("substitute_group") in approved, datetime.fromisoformat(q["delivery"]) <= ctx.needed_by)
+        ok = p.get("substitute_group") in approved or p.get("id") in approved
+        return (ok, datetime.fromisoformat(q["delivery"]) <= ctx.needed_by)
     by_match = sorted(subs, key=lambda q: (closeness(q), score(q), -q["unit_price_eur"]), reverse=True)
     best = by_match[0]
     out = [("best", best)]
@@ -567,10 +666,46 @@ UNIT_SCALE = {"l": ("l", 1), "litre": ("l", 1), "litres": ("l", 1), "liter": ("l
               "ml": ("l", 0.001), "kg": ("kg", 1), "kilo": ("kg", 1), "kilos": ("kg", 1), "g": ("kg", 0.001)}
 
 
+DEADLINE = re.compile(r"\bby\s+(today|tomorrow|" + "|".join(WEEKDAYS)
+                      + r"|\d{1,2}\.\d{1,2}\.?)(?:\s+(?:at\s+)?(\d{1,2})[:.](\d{2}))?")
+
+
+def words(text: str) -> list[str]:
+    return re.sub(r"[^a-z0-9äöå]+", " ", text.lower()).split()
+
+
+def match_target(text: str, targets: list[dict]) -> dict | None:
+    """The rule-set target a request names. Hyphens and word order do not matter.
+
+    A target matches when at least two words of its name are in the text (or its one word).
+    The target with the most matching words wins.
+    """
+    said = set(words(text))
+    best, best_score = None, 0
+    for t in targets:
+        name = words(base_name(t["product"]))
+        score = sum(1 for w in name if w in said)
+        if score >= min(2, len(name)) and score > best_score:
+            best, best_score = t, score
+    return best
+
+
+def pack_of(product: str) -> dict | None:
+    """'lactose-free milk 1 L' -> 1 litre, 'rye bread 500 g' -> 0.5 kilogram. None if the text names no size."""
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(ml|l|kg|g)\b", product.lower())
+    if not m:
+        return None
+    unit, scale = UNIT_SCALE[m.group(2)]
+    return {"amount": float(m.group(1).replace(",", ".")) * scale, "unit": unit}
+
+
+def same_pack(a: dict | None, b: dict | None) -> bool:
+    return bool(a and b) and a["unit"] == b["unit"] and abs(a["amount"] - b["amount"]) < 1e-6
+
+
 def parse_deadline(text: str, now: datetime) -> datetime | None:
     """'by Monday' -> next Monday 07:00, 'by tomorrow 12:00' -> tomorrow 12:00, 'by 17.11.' -> 17 Nov 07:00."""
-    t = text.lower()
-    m = re.search(r"\bby\s+(today|tomorrow|" + "|".join(WEEKDAYS) + r"|\d{1,2}\.\d{1,2}\.?)(?:\s+(?:at\s+)?(\d{1,2})[:.](\d{2}))?", t)
+    m = DEADLINE.search(text.lower())
     if not m:
         return None
     word, hh, mm = m.group(1), int(m.group(2) or 7), int(m.group(3) or 0)
@@ -583,7 +718,9 @@ def parse_deadline(text: str, now: datetime) -> datetime | None:
         day = now.date() + timedelta(days=ahead)
     else:
         d, mo = (int(x) for x in word.strip(".").split("."))
-        day = date(now.year + (1 if mo < now.month else 0), mo, d)
+        day = date(now.year, mo, d)
+        if day < now.date():  # the date passed this year, so the next one is meant
+            day = date(now.year + 1, mo, d)
     return datetime.combine(day, time(hh, mm), tzinfo=now.tzinfo)
 
 

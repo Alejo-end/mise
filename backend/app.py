@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from .agent import Agent
 from .audit import AuditLog, story
+from .gateway import make_router
 from .rules import TZ, load_rules
 from .sandbox import AGENTS, DrivingTest
 from .valio import make_client
@@ -43,15 +44,36 @@ _load_env(ROOT / ".env")
 ruleset = load_rules(os.getenv("RULES_FILE", ROOT / "rules" / "school_kitchen.yaml"))
 catalog = make_client()
 log = AuditLog(os.getenv("AUDIT_DB", DATA / "audit.sqlite"))
+
+
+def _check_targets() -> None:
+    """Refuse a rule set whose products the catalog does not have.
+
+    The stand-in rule set names stand-in products and product groups. On the real Valio
+    catalog its lactose rule would never match, so the app must not start that way.
+    """
+    missing = [t["product_id"] for t in ruleset["targets"]
+               if t.get("product_id") and catalog.product(t["product_id"]).value is None]
+    if missing:
+        raise RuntimeError(
+            f"Rule set v{ruleset['version']} names products that the catalog '{catalog.name}' does not have: "
+            f"{', '.join(missing)}. Set RULES_FILE to a rule set written for this catalog, "
+            "or set CATALOG=local to run on the stand-in catalog.")
+
+
+_check_targets()
 agent = Agent(catalog, ruleset, log)
 driving_test = DrivingTest(ruleset, log)
 PINS = {p.split(":", 1)[0].strip(): p.split(":", 1)[1].strip()
         for p in os.getenv("APPROVER_PINS", "").split(",") if ":" in p}
 OFFLINE_AFTER_S = 30
+# After 5 wrong PINs within a minute, nobody can approve for 30 seconds. A PIN has four digits.
+WRONG_PINS, PIN_WINDOW_S, PIN_LOCK_S = 5, 60, 30
+pin_guard = {"wrong": [], "locked_until": 0.0}
 device = {"last_seen": None, "online": False, "temperature_c": None, "auto_limit_eur": None, "alarm": False,
           "slots": {}, "problem_until": 0.0}
 
-app = FastAPI(title="Safe Kitchen Agent")
+app = FastAPI(title="Aimo Agent Gateway and Safe Kitchen Agent")
 
 
 # Device events: one model per type. Unknown types and fields of the wrong type get a 422.
@@ -164,6 +186,7 @@ def _watch_device():
 
 
 threading.Thread(target=_watch_device, daemon=True).start()
+app.include_router(make_router(agent, catalog, driving_test, log))
 
 
 @app.get("/approvals/open")
@@ -175,8 +198,14 @@ def approvals_open():
 def approvals_decide(approval_id: str, d: Decision):
     if not PINS:
         raise HTTPException(503, "No approver PINs are set. Put APPROVER_PINS in valio-challenge/.env.")
+    now = time.time()
+    if now < pin_guard["locked_until"]:
+        raise HTTPException(429, f"Too many wrong PINs. Wait {PIN_LOCK_S} seconds.")
     approver = PINS.get(d.pin)
     if approver is None:
+        pin_guard["wrong"] = [t for t in pin_guard["wrong"] if now - t < PIN_WINDOW_S] + [now]
+        if len(pin_guard["wrong"]) >= WRONG_PINS:
+            pin_guard["wrong"], pin_guard["locked_until"] = [], now + PIN_LOCK_S
         raise HTTPException(403, "Wrong PIN")
     return agent.decide(approval_id, d.action, d.option, approver)
 

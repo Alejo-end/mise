@@ -1,0 +1,27 @@
+# Kitchen rule set for the real Valio Aimo challenge catalog. It follows version 3 (the stand-in catalog).
+# The product codes come from the Valio product file. Category 10400 holds milk and milk drinks.
+# To allow something the rule check forbids, sign a new version. Nobody can approve a forbidden item.
+version: 4
+signed_by: "Head chef, Espoo school kitchen"
+site: school
+banned_allergens: [nuts, peanuts, sesame]
+# 46% of the real products have no allergen data, fruit and vegetables among them.
+# Such a product never gets "allowed". A person reads the label and decides.
+unknown_allergens: needs_approval
+must_have:
+  - {product_group: "10400", property: lactose_free}
+targets:
+  - {slot: 1, product: "rye bread 500 g", product_id: "477032", group: rye_bread, target_units: 30, reorder_below: 8}
+  - {slot: 2, product: "natural yoghurt 1 kg", product_id: "464316", group: natural_yogurt, target_units: 12, reorder_below: 4}
+  - {slot: 3, product: "lactose free milk drink 1 l", product_id: "463335", group: lactose_free_milk, target_units: 24, reorder_below: 6}
+# An entry is one exact product code. Each is a lactose-free milk drink in a 1 l carton, sold by the piece.
+approved_substitute_groups:
+  lactose_free_milk: ["464306", "464401", "464398"]
+limits:
+  auto_order_eur: 150
+  weekly_eur: 800
+  standing_order_growth: 0.15
+delivery:
+  latest_needed: "next weekday 07:00"
+approvers:
+  default: "Head chef"

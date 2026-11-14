@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("AUDIT_DB", str(tmp_path / "a.sqlite"))
     monkeypatch.setenv("APPROVER_PINS", "4821:Head chef")
+    monkeypatch.setenv("CATALOG", "local")  # never the real catalog or the live API in tests
     import backend.app as m
     m = importlib.reload(m)
     m.agent.auto_limit_eur = 40
@@ -37,3 +38,10 @@ def test_unknown_slot_is_rejected(client):
 def test_bad_event_is_rejected(client):
     assert client.post("/events", json={"type": "slot_state", "slot": 3, "state": "gone"}).status_code == 422
     assert client.post("/events", json={"type": "teleport"}).status_code == 422
+
+
+def test_five_wrong_pins_lock_approvals_for_a_while(client):
+    aid = _open(client)
+    for _ in range(5):
+        assert client.post(f"/approvals/{aid}", json={"action": "approve", "pin": "0000"}).status_code == 403
+    assert client.post(f"/approvals/{aid}", json={"action": "approve", "pin": "4821"}).status_code == 429

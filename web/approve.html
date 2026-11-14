@@ -70,6 +70,7 @@
         <option value="MOCK-MILK-LF-1L-X">Force: Import milk (no allergen data)</option>
         <option value="MOCK-YOG-GRANOLA">Force: Granola yogurt (nut traces)</option>
       </select>
+      <input id="forceCode" placeholder="or a product code" aria-label="Product code" style="max-width:200px">
       <button id="forceBtn">Try to order 20</button>
     </div>
     <p class="reasons" id="result" role="status" aria-live="polite"></p>
@@ -153,7 +154,7 @@ $("send").onclick = async () => {
   $("result").textContent = `Result: ${label(r.status)}.`; tick();
 };
 $("forceBtn").onclick = async () => {
-  const r = await post("/request", {text: "20 forced item", product_id: $("force").value});
+  const r = await post("/request", {text: "20 forced item", product_id: $("forceCode").value.trim() || $("force").value});
   $("result").innerHTML = r.status === "forbidden"
     ? `<span class="forbidden">Blocked by rule set v${r.rule_set_version}:</span> ${esc(r.reasons.join("; "))}`
     : `Result: ${label(r.status)}.`;

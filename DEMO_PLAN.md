@@ -1,6 +1,6 @@
 # Safe Kitchen Agent: demo plan
 
-This file is the build brief for the Safe Kitchen Agent. Team Kindergarten Engineering builds it at Junction 2026 for the Valio Aimo challenge "Trusted Trade Agents". Any person or coding agent who joins the work starts here.
+This file is the build brief for the Safe Kitchen Agent. Team Kindergarten Engineering builds it at Junction 2026 for the Valio Aimo challenge "Trusted Trade Agents". Any person or coding agent who joins the work starts here. For a short explanation with pictures, read `HANDBOOK.md` first.
 
 ## Goal
 
@@ -20,6 +20,9 @@ A review of the whole plan found assumptions that had no evidence. Fix them in t
 6. Scope is too large for the time left. Must: the real API, the three core requirements, approval and the audit log. Next: the shelf trigger and the dirty-data tests. Then one extra, not two. The Agent Driving Test fits the brief better, because it protects Valio. Cold Chain Proof is second, because camera counts are untested and the Thermo measures air, not food.
 7. The demo length is a guess. Ask Valio how the judging runs. Plan five steps at most, and make each step work without live input from a judge.
 8. Other teams also have the Arduino kit, so the shelf camera alone is not unique. The combination with the gateway and the audit trail is the point.
+9. Update of 14 November, 02:30: `backend/valio.py` now holds an adapter for the real product file and the two real API calls. `backend/allergens.py` maps the allergen codes. Both are tested on the real file with a fake API. The live API is not tested, because this laptop has no API key. The buying pipeline still runs on the stand-in catalog only.
+10. On the real catalog, a product with no allergen data goes to a person. A strict "forbidden" blocks 46% of the catalog, fruit and vegetables included. The rule-set key `unknown_allergens` sets this. The stand-in rule set keeps "forbidden".
+11. The rule-set "signature" is a recorded hash of the file. It shows a change. It does not prove who signed.
 
 ## Deadlines
 
@@ -75,7 +78,7 @@ Make sure that the Modulino code matches the `Arduino_Modulino` library examples
 
 ```
 device/          App Lab app: python/main.py, sketch/sketch.ino
-backend/         app.py, valio.py, rules.py, agent.py, audit.py
+backend/         app.py, valio.py, allergens.py, rules.py, agent.py, audit.py, sandbox.py
 rules/           school_kitchen.yaml
 tests/           test_rules.py
 web/             approve.html
@@ -143,9 +146,9 @@ The rule check is plain Python. It takes one proposal and returns one of three r
 |---|---|
 | `allowed` | Same product as usual, within the target stock, under the auto limit |
 | `needs_approval` | A substitute outside the approved groups, over the spend limit, delivery later than needed, or a standing order that grew more than 15% |
-| `forbidden` | Breaks an allergen or a nutrition rule, or allergen data is missing |
+| `forbidden` | Breaks an allergen or a nutrition rule. With the stand-in rule set, also missing allergen data |
 
-Missing allergen data counts as unsafe. Nobody can approve a `forbidden` item. To allow it, the chef signs a new version of the rule set.
+Nobody can approve a `forbidden` item. To allow it, the chef signs a new version of the rule set. Missing allergen data never gives `allowed`. The rule set says if it gives `forbidden` or `needs_approval`.
 
 ### Buying pipeline
 
@@ -238,7 +241,7 @@ Scenarios:
 | A product has no allergen data | Does not order it for a kitchen with allergen rules |
 | The interface returns an error | Retries safely and never places the order twice |
 
-Demo: two agents take the test. Our agent passes. A naive language-model agent with the same tools falls for the injected description and is refused a licence.
+Demo: two agents take the test. Our agent passes. A naive agent with the same tools falls for the injected description and is refused a licence. The naive agent is a script that acts like a careless model. It is not a real language model, and the demo says so. Every `/gateway` call reads the licence.
 
 ## Robustness
 
@@ -259,6 +262,10 @@ A review of the current code (`backend/agent.py`, `backend/valio.py`, `backend/a
 | The temperature alarm only logs | `handle_event` | Hold auto-orders for the cold room during an alarm, and ask the chef |
 | Product text reaches the language model as instructions | the future language model step | Pass catalog text as quoted data, never as instructions. The Agent Driving Test checks this |
 
+### Faults found and fixed on 14 November
+
+A second review found eight more faults in `backend/agent.py`, `backend/sandbox.py` and `backend/app.py`. All eight are fixed, each with a test. They are listed in `../ASSUMPTIONS.md`, with the two faults that are still open.
+
 ## Backend endpoints
 
 | Method and path | Purpose |
@@ -272,6 +279,10 @@ A review of the current code (`backend/agent.py`, `backend/valio.py`, `backend/a
 | `POST /deliveries/{order_id}/check` | Delivery check: counts and temperature against the order |
 | `GET /suppliers/reliability` | Reliability score per supplier |
 | `POST /sandbox/test` | Run the Agent Driving Test against an external agent |
+| `GET /gateway/products?q=` | Lookup for an outside agent. Needs a licence, like every `/gateway` call |
+| `POST /gateway/quotes` | Price, stock, delivery date and the rule decision for one product. Nothing is ordered |
+| `POST /gateway/orders` | Order a quote: 201 placed, 202 sent to the chef, 403 refused with the reason |
+| `GET /gateway/orders/{run_id}`, `GET /gateway/audit?run_id=` | The state and the log entries of one order request |
 | `GET /sandbox/licences` | Issued licences, with scope and expiry |
 
 ## Tests
@@ -330,7 +341,7 @@ The milestone is done after this sequence works end to end:
 
 Work in this order. Stop at any point, and the demo still runs.
 
-1. Must, by 12:00: the real Valio API is connected, and the real fields are mapped. Lookup, quote and order work through the gateway. The approval rule and the audit log work.
+1. Must, by 12:00: the demo runs against the live Valio API. The pipeline works on the real product file with `rules/school_kitchen_valio.yaml`. One job is open: put `VALIO_API_KEY` in `.env`, start with `CATALOG=valio`, and run the five demo steps once.
 2. Must, by 15:00: idempotent orders, error handling, and the approval order fix from the Robustness table. Review with the Valio mentors, and ask how the judging runs.
 3. Next, by 18:00: the shelf trigger on the real shelf, and the dirty-data cases with their three counts.
 4. 18:00: feature freeze for the core.
@@ -361,8 +372,8 @@ The demo length is not known yet. Each step works without live input from a judg
 
 ## Still unknown
 
-1. The exact endpoints and fields of the Valio mock API. The docs on the portal answer this.
-2. Whether products carry allergen and nutrition fields. If not, ask the Valio mentors which source to use.
+1. Whether our reading of the allergen codes, the unit codes and the temperature codes is right. Ask the Valio mentors. See `docs/valio-api/API.md`.
+2. Whether the live price and availability calls answer as the documentation says. Nobody called them yet.
 3. Whether one project can also enter the Meta challenge. Ask an organizer.
 
 ## Tech challenges to enter with the same project

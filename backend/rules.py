@@ -43,6 +43,8 @@ def load_rules(path: Path | str = DEFAULT_RULES, verify: bool = True) -> dict:
     for key in ("version", "banned_allergens", "targets", "limits"):
         if key not in rules:
             raise ValueError(f"rule set {path} has no '{key}'")
+    if rules.get("unknown_allergens", FORBIDDEN) not in (FORBIDDEN, NEEDS_APPROVAL):
+        raise ValueError(f"rule set {path}: unknown_allergens must be {FORBIDDEN} or {NEEDS_APPROVAL}")
     rules["sha256"] = hashlib.sha256(raw).hexdigest()
     if verify:
         sig = signature_path(path)
@@ -76,12 +78,22 @@ def needed_by(rules: dict, now: datetime) -> datetime:
     """Resolve 'next weekday HH:MM' to a time. Other values must be ISO times."""
     spec = rules.get("delivery", {}).get("latest_needed", "next weekday 07:00")
     if not spec.startswith("next weekday"):
-        return datetime.fromisoformat(spec)
+        at = datetime.fromisoformat(spec)
+        return at if at.tzinfo else at.replace(tzinfo=TZ)
     hh, mm = (int(x) for x in spec.split()[-1].split(":"))
     day = now.date() + timedelta(days=1)
     while day.weekday() >= 5:
         day += timedelta(days=1)
     return datetime.combine(day, time(hh, mm), tzinfo=now.tzinfo or TZ)
+
+
+def is_approved_substitute(product: dict, rules: dict, slot_group: str) -> bool:
+    """True when the rule set approves the product as a substitute for the slot's group.
+
+    An entry of approved_substitute_groups is a substitute group name or one exact product id.
+    """
+    approved = {str(x) for x in rules.get("approved_substitute_groups", {}).get(slot_group) or []}
+    return str(product.get("substitute_group")) in approved or str(product.get("id")) in approved
 
 
 @dataclass
@@ -130,14 +142,24 @@ def _worst(a: str, b: str) -> str:
 
 
 def check_line(line: Line, rules: dict, ctx: Context) -> Decision:
-    """Safety rules for one product. These do not depend on money or time."""
+    """Safety rules for one product, then substitute, price and delivery.
+
+    The rule set's `unknown_allergens` says what happens when the manufacturer gave no allergen
+    data, or left a banned allergen undeclared: `forbidden` (the default) or `needs_approval`.
+    A banned allergen that only the ingredient text names always goes to a person.
+    """
     p = line.product
     name = p.get("name", p.get("id", "product"))
     result, reasons = ALLOWED, []
+    person = []  # reasons that send this line to a person
+    to_person = rules.get("unknown_allergens", FORBIDDEN) == NEEDS_APPROVAL
 
     allergens, traces = p.get("allergens"), p.get("traces")
     if allergens is None or traces is None:
-        return Decision(FORBIDDEN, [f"{name}: allergen data is missing, so it counts as unsafe"], rules["version"])
+        if not to_person:
+            return Decision(FORBIDDEN, [f"{name}: allergen data is missing, so it counts as unsafe"], rules["version"])
+        person.append(f"{name}: the manufacturer gave no allergen data, so a person must check the label")
+        allergens, traces = allergens or [], traces or []
     banned = {a.lower() for a in rules["banned_allergens"]}
     for a in allergens:
         if a.lower() in banned:
@@ -147,21 +169,41 @@ def check_line(line: Line, rules: dict, ctx: Context) -> Decision:
         if a.lower() in banned:
             result = FORBIDDEN
             reasons.append(f"{name} may contain traces of {a}, which this kitchen bans")
+    for a in p.get("undeclared") or []:
+        if a.lower() in banned:
+            if to_person:
+                person.append(f"{name}: the manufacturer left {a} undeclared, so a person must check the label")
+            else:
+                result = FORBIDDEN
+                reasons.append(f"{name}: the manufacturer left {a} undeclared, so it counts as unsafe")
+    declared = {a.lower() for a in allergens} | {a.lower() for a in traces}
+    for a in p.get("text_allergens") or []:
+        if a.lower() in banned and a.lower() not in declared:
+            person.append(f"{name}: the ingredient text names {a}, but the allergen field does not, "
+                          "so a person must check the label")
 
     props = {x.lower() for x in p.get("properties", [])}
+    conflicts = {a.lower() for a in p.get("allergen_conflicts") or []}
     for rule in rules.get("must_have", []):
-        if p.get("product_group") == rule["product_group"] and rule["property"] not in props:
+        if str(p.get("product_group")) != str(rule["product_group"]):
+            continue
+        wanted = rule["property"]
+        if wanted not in props:
             result = FORBIDDEN
-            reasons.append(f"{name} is {rule['product_group']} but not {rule['property'].replace('_', '-')}")
+            reasons.append(f"{name} is {rule['product_group']} but not {wanted.replace('_', '-')}")
+        elif wanted.endswith("_free") and wanted[:-len("_free")] in conflicts:
+            person.append(f"{name} claims to be {wanted.replace('_', '-')}, but its allergen field lists "
+                          f"{wanted[:-len('_free')]}, so a person must check the label")
 
     if result == FORBIDDEN:
-        return Decision(result, reasons, rules["version"])
+        return Decision(result, reasons + person, rules["version"])
+    if person:
+        result = NEEDS_APPROVAL
+        reasons += person
 
-    if not line.is_usual:
-        approved = rules.get("approved_substitute_groups", {}).get(ctx.slot_group, [])
-        if p.get("substitute_group") not in approved:
-            result = NEEDS_APPROVAL
-            reasons.append(f"{name} is a substitute outside the approved groups for {ctx.slot_group.replace('_', ' ')}")
+    if not line.is_usual and not is_approved_substitute(p, rules, ctx.slot_group):
+        result = NEEDS_APPROVAL
+        reasons.append(f"{name} is a substitute outside the approved groups for {ctx.slot_group.replace('_', ' ')}")
     if line.unit_price_eur is None:
         result = NEEDS_APPROVAL
         reasons.append(f"{name}: no price, so a person must look")
