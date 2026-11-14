@@ -26,6 +26,10 @@ product taken out for a moment can start one (the duplicate of 14 Nov behind dec
   controls.
 - **Reassess at ordering time** with the latest stock evidence, outstanding orders, current prices and
   availability (looked up for the shortlisted candidates only).
+- **Three kinds of stock, kept apart:** *physical* (units observed or counted), *usable* (physical minus units a
+  person marked unusable) and *uncertain* (an old count, an obstructed or unresolved observation). The order
+  quantity is `max(0, target - (usable + on order))`, never negative; *on order* is every outstanding order and open
+  approval for the product. An uncertain count never orders by itself: it goes to a person.
 - **Before commitment a proposal may change:** an item taken out and put back changes the candidate. A returned
   item is not proof of a supplier delivery and never clears an outstanding order by itself.
 - **Keep everything that protects us today:** the explicit uncertain state, the signed rules, the spending

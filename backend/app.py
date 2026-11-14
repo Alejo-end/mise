@@ -53,6 +53,13 @@ SETTINGS = Settings.from_env()  # committed defaults in backend/settings.py; .en
 # but never reach the agent, so calibration and evaluation actions cannot create orders or approvals and
 # cannot end a pending order. Empty (the default) is normal operation.
 RECORDING_SESSION = os.getenv("RECORDING_SESSION", "").strip()
+# SHELF_EVENTS=observe: the shelf box only observes (same path as a recording session). Its camera, knob and test
+# buttons update the device view and the stock timeline but never start a purchase. Used while the shelf holds props
+# that are not catalogue products; purchasing then runs through the gateway and kitchen requests only.
+SHELF_EVENTS = os.getenv("SHELF_EVENTS", "").strip().lower()
+if SHELF_EVENTS not in ("", "purchase", "observe"):
+    raise RuntimeError(f"SHELF_EVENTS must be 'observe' or 'purchase' (default), not {SHELF_EVENTS!r}")
+OBSERVE_ONLY = RECORDING_SESSION or ("shelf props, observe only" if SHELF_EVENTS == "observe" else "")
 if os.getenv("ANTHROPIC_API_KEY"):  # a real model can take the Driving Test
     from .model_agent import ModelUnderTest
     AGENTS["claude"] = ModelUnderTest
@@ -259,15 +266,21 @@ def events(ev: Event):
     if data["type"] == "slot_state":
         data = shelf.observe(data)  # the observation; with fill, units = round(fill x the assignment's target)
         device["slots"][str(data["slot"])] = {"state": data["state"], "units": data.get("estimated_units")}
-        if data.get("estimated_units") is not None and not data.get("uncertain"):
-            # The stock timeline. It only watches: also in a recording session, and before any trigger.
+        target = next((t for t in ruleset["targets"] if t["slot"] == data["slot"]), None)
+        if (data.get("estimated_units") is not None and not data.get("uncertain") and not OBSERVE_ONLY
+                and target is not None and target.get("product_id")):
+            # The stock timeline: camera counts of a slot that holds a catalogue product. Observed props (an
+            # observe-only shelf, a recording session, an unmapped slot) stay out of it: they are kept apart as
+            # "observation" or "recording" entries in the audit log, never as stock of a catalogue product.
             stock_history.record(int(data["slot"]), int(data["estimated_units"]), "camera", datetime.now(TZ))
-    if RECORDING_SESSION:
+    if OBSERVE_ONLY:
         if data["type"] in ("slot_state", "manual_low"):
-            log.write("recording", {"summary": f"Recording session {RECORDING_SESSION}: slot {data['slot']} reads "
-                                    f"{data.get('state', 'low (knob)')}. Purchasing is isolated: no trigger.",
-                                    "event": data}, "device", ruleset["version"])
-        return {"status": "ignored", "reason": f"recording session {RECORDING_SESSION}: purchasing isolated"}
+            log.write("recording" if RECORDING_SESSION else "observation",
+                      {"summary": f"{'Recording session ' + RECORDING_SESSION if RECORDING_SESSION else 'Shelf observed'}: "
+                                  f"slot {data['slot']} reads {data.get('state', 'low (knob)')}. No purchase is started "
+                                  "from the shelf.", "event": data}, "device", ruleset["version"])
+        return {"status": "ignored", "reason": (f"recording session {RECORDING_SESSION}: purchasing isolated" if RECORDING_SESSION
+                                                else "shelf events observe only (SHELF_EVENTS=observe): no purchase")}
     result = agent.handle_event(data)
     if data["type"] == "delivery_check" and result.get("status") == "problem":
         device["problem_until"] = time.time() + 6
@@ -411,7 +424,7 @@ def device_state():
         "signed_by": ruleset.get("signed_by"), "pins_set": bool(PINS),
         # For a demo only: SHOW_PINS=1 puts the approver PINs on the page, so that a visitor can approve.
         "demo_pins": [{"pin": p, "name": n} for p, n in PINS.items()] if SHOW_PINS else [],
-        "recording_session": RECORDING_SESSION or None} | device_health()
+        "recording_session": RECORDING_SESSION or None, "shelf_events": "observe" if OBSERVE_ONLY else "purchase"} | device_health()
 
 
 def device_health() -> dict:

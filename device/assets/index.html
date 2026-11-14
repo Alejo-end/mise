@@ -125,10 +125,18 @@
   /* Recognize shelf (experimental): boxes coloured by outcome; similarity is a model score, not accuracy */
   .rbox { position:absolute; border:3px solid #fff; pointer-events:none }
   .rbox.known { border-color:#33d17a } .rbox.unknown { border-color:#c0bfbc; border-style:dashed }
-  .rbox.ambiguous { border-color:#ffa348 } .rbox.obstructed { border-color:#ff5f5f; border-style:dotted }
+  .rbox.ambiguous { border-color:#ffa348 } .rbox.not-inventory { border-color:#8a8a8a; border-width:2px } .rbox.obstructed { border-color:#ff5f5f; border-style:dotted }
   .rbox b { position:absolute; left:-3px; top:-25px; background:#000; color:#fff; font-size:.9rem; font-weight:700; padding:1px 6px; white-space:nowrap }
   .rsurf { position:absolute; border:2px dashed rgba(255,255,255,.55); pointer-events:none }
   #recogList { margin:10px 0 0; padding-left:1.2em } #recogList li { margin:2px 0 }
+  /* Local model (board, experimental): classes are numbers because the model file has no names; dashed = score below 0.5 */
+  .lbox { position:absolute; border:3px solid #62a0ea; pointer-events:none } .lbox.c1 { border-color:#f6d32d } .lbox.c2 { border-color:#dc8add }
+  .lbox.low { border-style:dashed } .kbox { position:absolute; border:2px dotted #fff; box-shadow:0 0 0 1px #000; pointer-events:none }
+  .kcrop { position:absolute; border:4px double #fff; box-shadow:0 0 0 1px #000; pointer-events:none }
+  .lbox b, .kbox b { position:absolute; left:-3px; top:-25px; background:#000; color:#fff; font-size:.9rem; font-weight:700; padding:1px 6px; white-space:nowrap }
+  .lbox.inside b { top:0; left:0 } .kbox b { top:auto; bottom:0; left:0; font-size:.8rem; opacity:.9 }
+  #localList, #regionList { margin:10px 0 0; padding-left:1.2em } #localList li, #regionList li { margin:4px 0 }
+  #localList button { margin-left:8px }
 </style>
 </head>
 <body>
@@ -138,6 +146,7 @@
     <div class="plate"><h1>safe kitchen</h1><span>shelf unit · watches the shelf and tells the agent when something runs low</span><span id="buildTag" style="display:block;font-size:.85rem;opacity:.75">page build __PAGE_BUILD__</span></div>
     <div class="leds" id="pills" role="list" aria-label="Status of the parts"></div>
     <a class="size" href="#recog" style="text-decoration:none;color:inherit">Recognize shelf ↓</a>
+    <a class="size" href="#local" style="text-decoration:none;color:inherit">Local model ↓</a>
     <button class="size" id="size" aria-pressed="false">Larger text</button>
   </header>
   <div id="staleBanner" hidden style="background:#ff5f5f;color:#000;font-weight:800;padding:10px 14px;margin:8px 0;border:3px solid #000">This page is older than the app running on the board. Reload the page (Cmd+R, or pull down on a phone).</div>
@@ -154,7 +163,7 @@
       </section>
       <section class="mod" id="recog">
         <h2>recognize shelf <small>experimental · observes only, never orders</small></h2>
-        <p class="hint" style="margin-top:0">Looks anywhere on the monitored surface: the boxes only say where to look, not what must be there. Names come from your own enrolled photos; a product it does not know stays "unknown".</p>
+        <p class="hint" style="margin-top:0">"Recognize shelf" sends the current picture to a vision model (Kimi K3.1 Pro on Verda, via the laptop): it describes every visible package and proposes chips, energy drink or milk only when the description supports it; anything else stays "unknown". No empty photo or enrolment is needed. The two buttons below the picker feed the separate photo-enrolment pipeline.</p>
         <div class="keys">
           <button class="primary" id="recogBtn">Recognize shelf</button>
           <button id="bgBtn">Save empty surface</button>
@@ -169,6 +178,23 @@
         <div class="cam" id="recogCam" hidden><img id="recogFrame" alt="The picture that was recognised"></div>
         <ul id="recogList"></ul>
         <p class="hint" id="recogMeta"></p>
+      </section>
+      <section class="mod" id="local">
+        <h2>local model <small>on the board · experimental · observes only, never orders</small></h2>
+        <p class="hint" style="margin-top:0">"Run local model" runs kitchen-restock-yolox-nano-v1 on the board itself (ONNX Runtime, CPU) on the newest camera preview. The model file has no class names, so classes are shown as numbers (class 0, 1, 2), not as products, and the boxes are not stock counts. Scores are model scores, not measured accuracy. No box does not mean an empty shelf: use "Recognize shelf" above to check the whole picture. "Ask Kimi" sends one box, with the whole picture as context, to the vision model through the laptop; its answer is shown separately and added to no count.</p>
+        <div class="keys">
+          <button class="primary" id="localBtn">Run local model</button>
+          <label class="hint" style="margin:0">min score <select id="localThr"><option>0.3</option><option>0.5</option><option>0.7</option></select></label>
+          <label class="hint" style="margin:0"><input type="checkbox" id="localRepeat"> repeat every 2 s (stops after 2 min)</label>
+        </div>
+        <div class="cam" id="localCam" hidden><img id="localFrame" alt="The picture the local model looked at"></div>
+        <ul id="localList"></ul>
+        <p class="hint" id="localMeta"></p>
+        <div id="regionOut" hidden>
+          <h2 style="margin-top:12px">Kimi on one region <small>separate result · added to no count</small></h2>
+          <ul id="regionList"></ul>
+          <p class="hint" id="regionMeta"></p>
+        </div>
       </section>
       <section class="mod">
         <h2>shelf now</h2>
@@ -515,26 +541,148 @@ socket.on("recognition_status_response", (r) => {
     `${rname(k)} ${(v.reference ?? v.photos?.reference ?? 0)} reference / ${(v.heldout ?? v.photos?.heldout ?? 0)} held-out`).join(", ");
 });
 socket.on("recognize_response", (r) => {
-  if (!r.ok) { $("recogMeta").textContent = `Not recognized: ${r.error || r.detail || "service error"}`; return; }
+  if (!r.ok) { $("recogMeta").textContent = `Not recognized: ${r.error || r.detail || "service error"} (${r.round_trip_ms ?? "?"} ms)`; return; }
   const cam = $("recogCam"); cam.hidden = false; $("recogFrame").src = `data:image/jpeg;base64,${r.frame}`;
   cam.querySelectorAll(".rbox,.rsurf").forEach((e) => e.remove());
-  const surf = document.createElement("div"); surf.className = "rsurf"; placeBox(surf, r.surface); cam.appendChild(surf);
+  if (r.mode !== "vision-model") { const surf = document.createElement("div"); surf.className = "rsurf"; placeBox(surf, r.surface); cam.appendChild(surf); }
   const list = $("recogList"); list.innerHTML = "";
   (r.objects || []).forEach((o, i) => {
     const top = (o.candidates || [])[0];
-    const text = o.status === "known" ? rname(o.identity) : o.status === "ambiguous" && top ? `ambiguous (${rname(top.identity)}?)` : o.status;
-    const d = document.createElement("div"); d.className = `rbox ${o.status}`; placeBox(d, o.box);
-    const tag = document.createElement("b"); tag.textContent = `${i + 1} ${text}`; d.appendChild(tag); cam.appendChild(d);
+    const match = o.status === "known" ? rname(o.identity) : o.status === "not-inventory" ? "not inventory" : o.status;
+    const what = o.description || (top ? `nearest ${rname(top.identity)}` : "object");
+    if (o.box) {
+      const d = document.createElement("div"); d.className = `rbox ${o.status}`; placeBox(d, o.box);
+      const tag = document.createElement("b"); tag.textContent = `${i + 1} ${match}${o.visible_count > 1 ? " ×" + o.visible_count : ""}${o.visibility === "partial" ? " (partly hidden)" : ""}`; d.appendChild(tag); cam.appendChild(d);
+    }
     const li = document.createElement("li");
-    li.textContent = `${i + 1}: ${text}` + (top ? ` (nearest ${rname(top.identity)}, score ${Number(top.similarity).toFixed(2)})` : "");
+    const read = [o.brand, o.variant, o.size].filter(Boolean).join(" · ");
+    li.textContent = `${i + 1}: ${what}` + (o.visible_count != null ? ` (${o.visible_count} visible)` : "") + ` → ${match}` +
+      (read ? `. Readable: ${read}` : "") + (o.readable_text ? `. Text: "${o.readable_text}"` : "") +
+      (o.evidence ? `. Evidence: ${o.evidence}` : "") + (o.obstruction ? `. Obstruction: ${o.obstruction}` : "") +
+      (o.match_reason ? `. Match: ${o.match_reason}` : "") + (o.match_by ? ` [${o.match_by}${o.match_level ? ", " + o.match_level : ""}]` : "") +
+      (o.visibility === "partial" ? " (partly hidden, still counted if identified)" : "") + (o.box ? "" : " (no location given)") +
+      (top && !o.description ? ` (score ${Number(top.similarity).toFixed(2)})` : "");
     list.appendChild(li);
   });
-  const counts = Object.entries(r.visible_units || {}).map(([k, n]) => `${rname(k)} ${n}`).join(", ") || "none";
-  const t = r.timing_ms || {};
-  $("recogMeta").textContent = `Visible units: ${counts}. ${r.uncertain ? "Uncertain: " + (r.reasons || []).join("; ") + ". " : ""}` +
-    `Captured ${String(r.captured_at).slice(11, 23)}; ${t.total != null ? Math.round(t.total) : "?"} ms in the service (${(r.model || {}).name || "model"} on ${(r.model || {}).device || "?"}), ${r.round_trip_ms} ms round trip. Scores are model similarities, not measured accuracy. Observes only: no stock events, no orders.`;
+  if (!(r.objects || []).length) { const li = document.createElement("li"); li.textContent = "No packages seen on the surface."; list.appendChild(li); }
+  const ic = r.inventory_counts || {};
+  const counts = Object.keys(ic).length ? Object.entries(ic).map(([k, c]) => `${rname(k)} ${c.status === "counted" ? c.visible : c.status === "at least" ? "at least " + c.visible : c.status}`).join(", ")
+    : (Object.entries(r.visible_units || {}).filter(([, n]) => n > 0).map(([k, n]) => `${rname(k)} ${n}`).join(", ") || "none from the inventory");
+  const t = r.timing_ms || {}; const m = r.model || {};
+  const steps = ["describe_api", "match_api"].filter((k) => t[k] != null).map((k) => `${k.replace("_api", "")} ${(t[k] / 1000).toFixed(1)} s`).join(", ");
+  $("recogMeta").textContent = `Visible units: ${counts}. ${r.uncertain ? "Uncertain: " + (r.reasons || []).join("; ") + ". " : (r.reasons || []).length ? (r.reasons || []).join("; ") + ". " : ""}` +
+    `Captured ${String(r.captured_at).slice(11, 23)}. ${r.provider ? r.provider + ", " : ""}${m.name || "model"} (${m.device || "?"}${m.reasoning_effort ? ", reasoning " + m.reasoning_effort : ""}): ` +
+    `${t.total != null ? (t.total / 1000).toFixed(1) + " s" : "?"} in the service${steps ? " (" + steps + ")" : ""}, ${(r.round_trip_ms / 1000).toFixed(1)} s round trip. ` +
+    (r.note || "Scores are model similarities, not measured accuracy. Observes only: no stock events, no orders.");
 });
 socket.on("connect", () => socket.emit("recognition_status", {}));
+
+// Local model on the board (experimental, observational) ---------------------------------------------------------
+// ~/valio-onnx/serve.py on port 8200 runs beside this app (it reads this app's preview frames; no second camera
+// capture) and never talks to the purchasing backend. "Ask Kimi" posts one box to the laptop recognition service.
+const LOCAL_URL = `http://${location.hostname}:8200`;
+let localLast = null, localBusy = false, regionBusy = false, repeatTimer = null, repeatUntil = 0, recogUrl = null;
+socket.on("recognition_status_response", (r) => { if (r.url) recogUrl = r.url; });
+const clock = (iso) => { const d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleTimeString([], {hour12: false}) + "." + String(d.getMilliseconds()).padStart(3, "0"); };
+async function runLocal() {
+  if (localBusy) return;
+  localBusy = true; const t0 = performance.now();
+  try {
+    const res = await fetch(`${LOCAL_URL}/detect?threshold=${$("localThr").value}`, {cache: "no-store"});
+    const r = await res.json();
+    if (!res.ok) throw new Error(r.error || `HTTP ${res.status}`);
+    r.round_trip_ms = Math.round(performance.now() - t0);
+    showLocal(r);
+  } catch (e) {
+    $("localMeta").textContent = `Local model not available: ${e.message}. It runs separately from this app (port 8200 on the board; start: cd ~/valio-onnx && venv/bin/python serve.py model.onnx --port 8200 --threads 2).`;
+  } finally { localBusy = false; }
+}
+function showLocal(r) {
+  localLast = r;
+  const cam = $("localCam"); cam.hidden = false; $("localFrame").src = `data:image/jpeg;base64,${r.frame}`;
+  cam.querySelectorAll(".lbox,.kbox,.kcrop").forEach((e) => e.remove());
+  $("regionOut").hidden = true;  // a region answer belongs to the previous picture
+  const list = $("localList"); list.innerHTML = "";
+  r.detections.forEach((d, i) => {
+    const low = d.score < 0.5;
+    const el = document.createElement("div"); el.className = `lbox c${d.class_id}${low ? " low" : ""}${d.box[1] < 0.08 ? " inside" : ""}`; placeBox(el, d.box);
+    const tag = document.createElement("b"); tag.textContent = `L${i + 1} ${d.label} ${d.score.toFixed(2)}`; el.appendChild(tag); cam.appendChild(el);
+    const li = document.createElement("li");
+    li.textContent = `L${i + 1}: ${d.label}, score ${d.score.toFixed(2)} (objectness ${d.objectness.toFixed(2)})${low ? ", low score" : ""}, box ${d.box_px.map(Math.round).join(", ")} px`;
+    const b = document.createElement("button"); b.className = "askRegion"; b.textContent = "Ask Kimi about this region"; b.disabled = regionBusy;
+    b.onclick = () => askRegion(i); li.appendChild(b); list.appendChild(li);
+  });
+  if (!r.detections.length) {
+    const li = document.createElement("li");
+    li.textContent = `No box at score ≥ ${r.score_threshold} (highest raw score ${r.max_raw_score}). This is not evidence of an empty shelf: use "Recognize shelf" for the whole picture.`;
+    list.appendChild(li);
+  }
+  const counts = Object.entries(r.counts).map(([k, n]) => `${k} ×${n}`).join(", ") || "none";
+  const t = r.timing_ms;
+  $("localMeta").textContent = `Boxes by class (score ≥ ${r.score_threshold}): ${counts}. Class names unknown (not in the model file): class numbers are not products and boxes are not stock counts. ` +
+    `Captured ${clock(r.captured_at)} (camera preview ${r.frame_size.join("×")}). Inference ${t.inference} ms on the board, ${t.total} ms with pre/post-processing, ${r.round_trip_ms} ms round trip. ` +
+    `${r.model}, sha256 ${r.model_sha256_16}…, ${r.runtime}, input ${r.variant}. Observes only: no stock events, no orders.`;
+}
+function stopRepeat() { clearInterval(repeatTimer); repeatTimer = null; $("localRepeat").checked = false; }
+$("localBtn").onclick = runLocal;
+$("localRepeat").onchange = () => {
+  if (!$("localRepeat").checked) return stopRepeat();
+  clearInterval(repeatTimer); repeatUntil = Date.now() + 120000; runLocal();
+  repeatTimer = setInterval(() => (Date.now() > repeatUntil ? stopRepeat() : runLocal()), 2000);
+};
+function recognitionBase() {
+  if (recogUrl) return recogUrl.replace(/\/$/, "");
+  try { return `http://${new URL($("url").value).hostname}:8100`; } catch (e) { return null; }
+}
+async function askRegion(i) {
+  const r = localLast, d = r && r.detections[i];
+  if (!d || regionBusy) return;
+  stopRepeat();  // keep this picture: a new local run would replace it
+  const base = recognitionBase();
+  $("regionOut").hidden = false; $("regionList").innerHTML = "";
+  if (!base) { $("regionMeta").textContent = "Recognition service address unknown (no backend URL)."; return; }
+  regionBusy = true; document.querySelectorAll(".askRegion").forEach((b) => (b.disabled = true));
+  $("regionMeta").textContent = `Asking Kimi about L${i + 1}… (whole picture as context; usually 10–40 s)`;
+  const [x, y, w, h] = d.box, region = [x, y, Math.min(w, 1 - x - 1e-4), Math.min(h, 1 - y - 1e-4)];
+  const t0 = performance.now(), ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 75000);
+  try {
+    const res = await fetch(`${base}/recognize/region`, {method: "POST", headers: {"Content-Type": "application/json"}, signal: ctl.signal,
+      body: JSON.stringify({image_b64: r.frame, surface: [0, 0, 1, 1], region, captured_at: r.captured_at,
+                            prompted_by: {local: `L${i + 1}`, class_id: d.class_id, score: d.score, model_sha256_16: r.model_sha256_16}})});
+    const k = await res.json();
+    if (!res.ok) throw new Error(typeof k.detail === "string" ? k.detail : JSON.stringify(k.detail || k));
+    if (localLast === r) showRegion(k, i, Math.round(performance.now() - t0));
+  } catch (e) {
+    $("regionMeta").textContent = `Kimi region check failed: ${e.name === "AbortError" ? "no answer within 75 s" : e.message} (service ${base}).`;
+  } finally {
+    clearTimeout(timer); regionBusy = false; document.querySelectorAll(".askRegion").forEach((b) => (b.disabled = false));
+  }
+}
+function showRegion(k, i, ms) {
+  const cam = $("localCam"); cam.querySelectorAll(".kbox,.kcrop").forEach((e) => e.remove());
+  const crop = document.createElement("div"); crop.className = "kcrop"; placeBox(crop, k.crop); cam.appendChild(crop);
+  const list = $("regionList"); list.innerHTML = "";
+  (k.objects || []).forEach((o, j) => {
+    const match = o.status === "known" ? rname(o.identity) : o.status === "not-inventory" ? "not inventory" : o.status;
+    if (o.box) {
+      const el = document.createElement("div"); el.className = "kbox"; placeBox(el, o.box);
+      const tag = document.createElement("b"); tag.textContent = `K${j + 1} ${match}`; el.appendChild(tag); cam.appendChild(el);
+    }
+    const read = [o.brand, o.variant, o.size].filter(Boolean).join(" · ");
+    const li = document.createElement("li");
+    li.textContent = `K${j + 1}: ${o.description} (${o.visible_count} visible) → ${match}` + (read ? `. Readable: ${read}` : "") +
+      (o.readable_text ? `. Text: "${o.readable_text}"` : "") + (o.evidence ? `. Evidence: ${o.evidence}` : "") +
+      (o.obstruction ? `. Obstruction: ${o.obstruction}` : "") + (o.match_reason ? `. Match: ${o.match_reason}` : "") +
+      (o.match_by ? ` [${o.match_by}${o.match_level ? ", " + o.match_level : ""}]` : "");
+    list.appendChild(li);
+  });
+  if (!(k.objects || []).length) { const li = document.createElement("li"); li.textContent = "Kimi saw no package in this region (this says nothing about the rest of the shelf)."; list.appendChild(li); }
+  const units = Object.entries(k.visible_units || {}).map(([id, n]) => `${rname(id)} ${n}`).join(", ") || "none identified";
+  const t = k.timing_ms || {};
+  $("regionMeta").textContent = `Region L${i + 1} (the double white frame is what Kimi saw enlarged; dotted boxes K1… are its items). Identified in this region: ${units}. ` +
+    `${k.uncertain ? "Uncertain: " + (k.reasons || []).join("; ") + ". " : ""}${k.counting_note} ` +
+    `Captured ${clock(k.captured_at)}; ${(k.model || {}).name || "model"}: ${t.total != null ? (t.total / 1000).toFixed(1) + " s" : "?"} in the service, ${(ms / 1000).toFixed(1)} s round trip.`;
+}
 
 // Which app and build is this? build.json is written per app at deploy; PAGE_BUILD is stamped into this page at deploy.
 const PAGE_BUILD = "__PAGE_BUILD__";

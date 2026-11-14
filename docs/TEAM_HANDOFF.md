@@ -4,6 +4,42 @@ For Alejo and the team. Start here, then `HANDBOOK.md` for running the demo. Thr
 **implemented** (on `valio/integration-unattended`, tested), **proposals** (pending team agreement, nothing
 built), **experiments** (separate `exp/*` branches, never merged into integration).
 
+## 0. Proposed demo version and priorities (14 Nov, 15:00; evidence: [AUDIT_2026-11-14.md](AUDIT_2026-11-14.md))
+
+**Proposed demo version:** branch `valio/demo-candidate` (f7afa39) = Alejandro's `main` (56e62d5: stock timeline,
+head-chef request) + our integration branch (recognition UI and service, docs) + `SHELF_EVENTS=observe`. 372 tests
+pass. **Not deployed:** the live laptop backend still runs 851a992 in recording mode. Alejandro decides the merge.
+
+**Two separate demonstrations, by design:**
+
+| Part | Trigger | What it shows | Purchasing |
+|---|---|---|---|
+| Purchasing | An outside buyer agent on the Aimo Agent Gateway (Driving Test licence -> lookup -> signed quote -> order), or a kitchen request on Alejandro's three-role page (`POST /request`) | The Valio flow on challenge catalogue products, e.g. milk 463335 (`ST` = one 1 l carton; `KI` = 5, `CS` = 20 `ST`; lot 0.01 `ST`, whole cartons ordered) | Yes: within the licence and auto-limit, else a Head chef approval with PIN; recheck at approval |
+| Shelf | The board (old slot detector, knob) and "Recognize shelf" (vision model) | Props seen and counted: chips, Funky Monkey, a milk carton; unfamiliar bar stays unknown | **None:** `SHELF_EVENTS=observe`; the props are unmapped; no substitution of the physical milk by 463335 |
+
+**Rehearsal (isolated databases, real product file, rule set v4, recorded Valio answers replayed; tool
+`tools/rehearse_demo.py`, output `measurements/demo-rehearsal-2026-11-14.txt` on the demo branch):** R0 prop events
+from the shelf ignored, no Valio call. R1 automatic gateway order of 6 x 463335, EUR 8.40, signed (assumes decision G).
+R2 24 x 463335 needs the Head chef; PIN approval; recheck "nothing changed"; ordered EUR 33.60. R3 changes injected at
+approval time: price 1.40 -> 1.95 -> new approval; stock gone -> blocked; cut-off passed -> blocked; product loses
+`lactose_free` -> forbidden.
+
+**Implemented versus proposed:** everything above is implemented and tested on the demo branch. Proposed, pending
+team agreement: the replenishment window and "Run replenishment now" (smallest addition: one endpoint that, per
+product, takes usable stock from person or sensor counts, adds what is on order, orders `max(0, target - (usable + on
+order))` as one combined quote, sends uncertain stock to a person, and reuses the existing approval and recheck; about
+150 lines in `agent.py`/`app.py`, Alejandro's files). Outside this implementation: expiry automation, local vision,
+more sensors.
+
+**Remaining team decisions:** (1) **G**: may a delivery on the needed day with only a date count as in time? Without
+it every live-data order goes to a person (R1 needs it). (2) Merge `valio/demo-candidate` into `main` and deploy it on
+the laptop with `SHELF_EVENTS=observe` (ends recording mode on purpose). (3) The replenishment proposal.
+
+**Priorities (judging criteria):** end-to-end demo 30 % (rehearse R1-R3 live after the merge); autonomy and controls
+20 % (licence scope, auto-limit, PIN approval, head-chef request, audit); robustness 15 % (the R3 rechecks); buyer's
+need 20 % (decide replenishment or present it as a proposal); openness 15 % (state what is simulated: recorded
+answers, mock stock, no expiry data, props on the shelf).
+
 ## 1. Implemented and tested
 
 Canonical branch: `valio/integration-unattended` (contains `main` and Alejo's `review-14-nov`). Tests: **352 passed,
@@ -26,11 +62,7 @@ agent under test in the Driving Test (`backend/model_agent.py`, when a key is se
 set v6 leaves all three slots unmapped, so the shelf cannot buy anything until someone ends recording mode and signs
 purchasable products again.
 
-**Recognition prototype (experimental, observational):** a "Recognize shelf" panel on the board page (deployed 12:22
-to `safe-kitchen-agent`) calls a laptop service on `exp/recognition` (86c513e) that finds separated packages on the
-surface and names enrolled products from the person's own photos, with unknown, ambiguous and obstructed outcomes and
-visible-unit counts. Checked end to end in the real page; no products are enrolled yet, so no recognition result
-exists. It never touches purchasing. How to use: `CAPTURE_GUIDE.md` section 6a.
+**Recognition prototype (experimental, observational):** "Recognize shelf" on the board page (build 0bbebf6-1418, app `safe-kitchen-agent`) sends the current frame to the laptop service (`exp/recognition` 0b9b246): Kimi K3.1 Pro on Verda describes the visible packages without a product list; owner-confirmed items (Funky Monkey Sunny Peach = energy drink, Estrella Spicy Cheddar = chips) are matched on text read on the package, other items in a text-only step; partly hidden identified units count; unresolved items make counts lower bounds, never zero. Regression: three labelled frames of 14:04-14:06 replayed 3x each, 9/9 exact visible counts, 10.8-30.2 s per call. Never touches purchasing.
 
 ## 2. Known failures and limits (say them out loud)
 

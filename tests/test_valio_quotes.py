@@ -363,7 +363,9 @@ def test_replay_the_recorded_answers_for_the_demo_products():
     monday = datetime(2026, 11, 16, 7, 0, tzinfo=TZ)
     milk = c.availability("463335", 24, monday).value
     assert (milk["unit_price_eur"], milk["delivery"], milk["sales_unit"]) == (1.4, "2026-11-16", "ST")
-    assert milk["quantity_known"] and milk["problem"] is None
+    # Since main 574247f a recorded stock of 999,999 or more counts as unknown (decision I): the mock's 9,999,999,999
+    # is not a quantity. The price and the date stay usable.
+    assert not milk["quantity_known"] and milk["problem"] is None
     crate = c.availability("462921", 200, monday).value
     assert crate["sales_unit"] == "KI" and crate["unit_price_eur"] == 10.97
     # Recorded 14 Nov 05:49: the rye bread's cut-off was 12 Nov 12:30, so 16 Nov cannot be reached.
