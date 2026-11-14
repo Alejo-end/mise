@@ -44,7 +44,7 @@ Call discipline (Valio: "query the APIs only when you have narrowed down the pro
 narrows by the local product file first (search, pack size, lot size) and asks price and availability
 for that shortlist in one call per endpoint; the backend makes at most 2 calls a second, retries at most
 3 times with exponential backoff and jitter on 429 and 5xx, can cap its calls (`VALIO_MAX_CALLS`) and
-records every call without the key (`VALIO_RECORD_DIR`). On 14 Nov worker 3 made 31 calls in total; the
+records every call without the key (`VALIO_RECORD_DIR`). On 14 Nov worker 3 made 35 calls in total; the
 recordings and their README are in `valio-source-data/2026-11-14/api-recordings/` next to the data files.
 
 ## What the materials contain
