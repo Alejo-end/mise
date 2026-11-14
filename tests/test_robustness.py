@@ -1,7 +1,7 @@
 """Robustness, Cold Chain Proof and the Agent Driving Test (DEMO_PLAN.md tests 9 to 14 and the robustness table)."""
 
-import json
 import shutil
+from pathlib import Path
 from datetime import datetime, timedelta
 
 import pytest
@@ -48,7 +48,8 @@ class BrokenCatalog(LocalCatalog):
 # 9. The same run never places two orders, even when the order call times out and retries.
 
 def test_retry_after_timeout_never_orders_twice(log):
-    cat = FlakyOrderCatalog()
+    """The call fails three times in a row: an error, the request is open again, then one order."""
+    cat = FlakyOrderCatalog(fail_times=3)
     ag = A.Agent(cat, load_rules(), log)
     ag.auto_limit_eur = 40
     ag.handle_event(EMPTY_MILK)
@@ -57,6 +58,37 @@ def test_retry_after_timeout_never_orders_twice(log):
     assert ag.open_approvals()[0]["id"] == aid  # reopened
     assert ag.decide(aid, "approve", 0, "Head chef")["status"] == "ordered"
     assert len(cat.orders) == 1
+
+
+def test_one_timeout_is_retried_with_the_same_key(log):
+    """An automatic order whose call times out once is still recorded, and the next trigger does not order again."""
+    cat = FlakyOrderCatalog(fail_times=1)
+    ag = A.Agent(cat, load_rules(), log)
+    ev = {"type": "slot_state", "slot": 2, "state": "empty", "estimated_units": 0}
+    assert ag.handle_event(ev)["status"] == "ordered"
+    assert ag.handle_event(ev)["status"] == "ignored"
+    assert len(cat.orders) == 1 and len(ag.orders) == 1
+
+
+def test_delivery_nobody_counted_is_not_called_complete(agent):
+    agent.handle_request("6 kg natural yogurt")
+    oid = next(iter(agent.orders))
+    r = agent.check_delivery(oid, {}, 4.0)
+    assert r["complete"] is None and "units not counted" in r["summary"]
+
+
+def test_an_agent_that_does_nothing_fails_the_driving_test(log, monkeypatch):
+    from backend import sandbox
+
+    class Idle:
+        name = "Idle agent"
+
+        def run(self, task, catalog, ask_human):
+            pass
+
+    monkeypatch.setitem(sandbox.AGENTS, "idle", Idle)
+    result = DrivingTest(load_rules(), log).run("idle")
+    assert not result["passed"] and sum(r["passed"] for r in result["results"]) == 1
 
 
 def test_same_key_returns_the_same_order():
@@ -148,12 +180,20 @@ def test_bad_option_does_not_close_the_request(agent):
 
 def test_driving_test_our_agent_passes_and_naive_fails(log):
     t = DrivingTest(load_rules(), log)
-    ours, naive = t.run("safe-kitchen"), t.run("naive")
+    ours, naive = t.run("safe-kitchen", granted_by="Head chef"), t.run("naive", granted_by="Head chef")
     assert ours["passed"] and ours["licence"]
     assert not naive["passed"] and naive["licence"] is None
     injection = next(r for r in naive["results"] if r["scenario"] == "injection")
     assert not injection["passed"]
     assert t.valid(ours["licence"]["token"])
+
+
+def test_the_driving_test_runs_on_the_stand_in_rules_also_when_the_real_rule_set_is_in_force(log):
+    """The licence takes its limits from the rule set in force. The scenarios need the stand-in rule set."""
+    real = load_rules(Path(__file__).resolve().parent.parent / "rules" / "school_kitchen_valio.yaml")
+    result = DrivingTest(real, log).run("safe-kitchen", granted_by="Head chef")
+    assert result["passed"], [r for r in result["results"] if not r["passed"]]
+    assert result["licence"]["scope"]["spend_limit_eur"] == real["limits"]["auto_order_eur"]
 
 
 # State survives a restart.
@@ -200,3 +240,19 @@ def test_unsigned_new_version_is_refused(tmp_path):
         load_rules(f)
     sign(f)
     assert load_rules(f)["version"] == 4
+
+
+# Found by the agent benchmark (exp/agent-bench, family product_rule_change): product data that changes between the
+# quote and the order must be checked against the rules again, even when price, stock and delivery are unchanged.
+def test_a_product_that_loses_a_required_property_after_approval_is_not_ordered(log):
+    cat = LocalCatalog()
+    ag = A.Agent(cat, load_rules(), log)
+    ag.auto_limit_eur = 40
+    ag.handle_event(EMPTY_MILK)
+    a = ag.open_approvals()[0]
+    lines = a.get("lines") or (a.get("options") or [{}])[0].get("lines") or []
+    pid = lines[0]["product_id"] if lines else "MOCK-MILK-LF-1L"
+    cat.products[pid]["properties"] = [x for x in cat.products[pid]["properties"] if x != "lactose_free"]
+    result = ag.decide(a["id"], "approve", 0, "Head chef")
+    assert result["status"] == "forbidden" and not cat.orders
+    assert any(e["step"] == "blocked" and "product data changed" in str(e) for e in log.entries(50))

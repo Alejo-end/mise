@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Laptop Camera Bridge</title>
+<!--
+  Sends a camera on this laptop to the UNO Q over Wi-Fi.
+  The board app must run with "camera_source": "websocket" in data/config.json
+  and "ports: [8080]" in app.yaml. Protocol: raw JPEG frames to ws://<board>:8080?raw=true
+  (Arduino WebSocketCamera, security off).
+  Serve this page from localhost so the browser allows camera access:
+    python3 -m http.server --bind 127.0.0.1 8765 --directory valio-challenge/tools
+  then open http://localhost:8765/laptop-camera.html
+-->
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0d1014; color: #f1f3f5; font: 16px/1.4 system-ui, sans-serif; padding: 16px; }
+  main { max-width: 760px; margin: 0 auto; display: grid; gap: 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  .card { background: #171b21; border: 1px solid #2a313b; border-radius: 12px; padding: 12px; }
+  video { width: 100%; border-radius: 8px; background: #000; aspect-ratio: 4/3; object-fit: cover; }
+  label { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; color: #a5adb8; }
+  input, select, button { font: inherit; background: #0f1318; color: #f1f3f5; border: 1px solid #2a313b; border-radius: 8px; padding: 6px 10px; }
+  input { min-width: 260px; }
+  button { background: #2563eb; border-color: #2563eb; font-weight: 700; cursor: pointer; }
+  button.stop { background: #b91c1c; border-color: #b91c1c; }
+  #status { font-weight: 700; }
+  .ok { color: #86efac; } .bad { color: #fca5a5; } .wait { color: #fde68a; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Laptop camera → UNO Q</h1>
+  <div class="card">
+    <video id="video" playsinline muted autoplay></video>
+    <label>Camera <select id="cam"></select></label>
+    <label>Board <input id="url" value="ws://172.20.10.2:8080"></label>
+    <label>Frames per second <select id="fps"><option>5</option><option selected>10</option><option>15</option></select></label>
+    <button id="toggle">Start sending</button>
+  </div>
+  <div class="card">Status: <span id="status" class="wait">not started</span><br><span id="stats"></span></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const video = $("video");
+const canvas = document.createElement("canvas");
+canvas.width = 640; canvas.height = 480;
+const ctx = canvas.getContext("2d");
+let stream = null, ws = null, timer = null, running = false, sent = 0, lastSec = Date.now(), perSec = 0;
+
+function setStatus(text, cls) { $("status").textContent = text; $("status").className = cls; }
+
+async function openCamera(deviceId) {
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: deviceId ? { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } } : { width: { ideal: 640 }, height: { ideal: 480 } },
+    audio: false,
+  });
+  video.srcObject = stream;
+  await video.play();
+  const current = stream.getVideoTracks()[0].getSettings().deviceId;
+  const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+  $("cam").innerHTML = cams.map((c, i) => `<option value="${c.deviceId}" ${c.deviceId === current ? "selected" : ""}>${c.label || "Camera " + (i + 1)}</option>`).join("");
+}
+$("cam").addEventListener("change", (e) => openCamera(e.target.value).catch((err) => setStatus("Camera error: " + err.message, "bad")));
+
+function connect() {
+  const url = $("url").value.trim().replace(/\/+$/, "") + "/?raw=true&client_name=laptop";
+  setStatus("connecting to " + $("url").value + " …", "wait");
+  ws = new WebSocket(url);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => setStatus("sending to the board", "ok");
+  ws.onclose = () => {
+    ws = null;
+    if (running) { setStatus("board not reachable, retrying in 2 s (is the app running?)", "bad"); setTimeout(() => running && connect(), 2000); }
+  };
+  ws.onerror = () => {};
+}
+
+function sendFrame() {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !video.videoWidth) return;
+  if (ws.bufferedAmount > 200000) return; // Wi-Fi is behind: skip a frame instead of queueing
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  canvas.toBlob((blob) => {
+    if (blob && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(blob);
+      sent++; perSec++;
+      if (Date.now() - lastSec >= 1000) { $("stats").textContent = `${perSec} frames/s, ${sent} sent, ~${Math.round(blob.size / 1024)} KB each`; perSec = 0; lastSec = Date.now(); }
+    }
+  }, "image/jpeg", 0.8);
+}
+
+$("toggle").addEventListener("click", async () => {
+  if (running) {
+    running = false; clearInterval(timer); if (ws) ws.close();
+    $("toggle").textContent = "Start sending"; $("toggle").className = ""; setStatus("stopped", "wait");
+    return;
+  }
+  try { if (!stream) await openCamera(); } catch (err) { setStatus("Camera error: " + err.message, "bad"); return; }
+  running = true;
+  $("toggle").textContent = "Stop"; $("toggle").className = "stop";
+  connect();
+  timer = setInterval(sendFrame, 1000 / Number($("fps").value));
+});
+$("fps").addEventListener("change", () => { if (running) { clearInterval(timer); timer = setInterval(sendFrame, 1000 / Number($("fps").value)); } });
+
+openCamera().catch((err) => setStatus("Camera error: " + err.message + ". Allow camera access for this page.", "bad"));
+</script>
+</body>
+</html>

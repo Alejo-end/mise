@@ -79,7 +79,10 @@ void loop() {
     lastThermo = now;
     float celsius = thermo.getTemperature();
     float humidity = thermo.getHumidity();
-    Bridge.notify("thermo", celsius, humidity);
+    // A failed read gives NaN. Send only real readings; the Linux side treats silence as "unknown".
+    if (!isnan(celsius)) {
+      Bridge.notify("thermo", celsius, humidity);
+    }
   }
 
   if (haveBuzzer) {
