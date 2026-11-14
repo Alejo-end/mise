@@ -52,6 +52,11 @@
   .box .h { position:absolute; right:-14px; bottom:-14px; width:28px; height:28px; border-radius:50%; background:#fff; border:2px solid #000; cursor:nwse-resize }
   .box.low, .box.empty { border-color:var(--orange) } .box.low b, .box.empty b { background:var(--orange) }
   .box.empty { border-style:dashed }
+  .box.conflict { border-color:#e5484d; border-width:4px } .box.conflict b { background:#e5484d; color:#fff }
+  .cam.editing .box { outline:2px dashed rgba(255,255,255,.6); outline-offset:3px }
+  /* Number tags and resize corners above every box: with stacked boxes each one can still be grabbed by its tag. */
+  .box b { z-index:5; cursor:move } .box .h { z-index:6 }
+  .layoutmsg { margin:.4rem 0 0; font-weight:700 } .layoutmsg.warn { color:#e5484d }
 
   /* Shelf: one channel strip per spot, like a mixer */
   .channels { display:grid; grid-template-columns:1fr; border:1.5px solid var(--line); border-radius:8px; overflow:hidden }
@@ -117,6 +122,13 @@
   .size { min-height:48px; padding:6px 14px; font-size:1.1rem }
   @media (prefers-contrast: more) { :root { --dim:#000; --led-off:#555 } }
   .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap }
+  /* Recognize shelf (experimental): boxes coloured by outcome; similarity is a model score, not accuracy */
+  .rbox { position:absolute; border:3px solid #fff; pointer-events:none }
+  .rbox.known { border-color:#33d17a } .rbox.unknown { border-color:#c0bfbc; border-style:dashed }
+  .rbox.ambiguous { border-color:#ffa348 } .rbox.obstructed { border-color:#ff5f5f; border-style:dotted }
+  .rbox b { position:absolute; left:-3px; top:-25px; background:#000; color:#fff; font-size:.9rem; font-weight:700; padding:1px 6px; white-space:nowrap }
+  .rsurf { position:absolute; border:2px dashed rgba(255,255,255,.55); pointer-events:none }
+  #recogList { margin:10px 0 0; padding-left:1.2em } #recogList li { margin:2px 0 }
 </style>
 </head>
 <body>
@@ -142,6 +154,24 @@
         <h2>shelf now</h2>
         <div class="channels" id="shelf"></div>
       </section>
+      <section class="mod" id="recog">
+        <h2>recognize shelf <small>experimental · observes only, never orders</small></h2>
+        <p class="hint" style="margin-top:0">Looks anywhere on the monitored surface: the boxes only say where to look, not what must be there. Names come from your own enrolled photos; a product it does not know stays "unknown".</p>
+        <div class="keys">
+          <button class="primary" id="recogBtn">Recognize shelf</button>
+          <button id="bgBtn">Save empty surface</button>
+          <label class="hint" style="margin:0"><input type="checkbox" id="wholeFrame"> whole picture</label>
+        </div>
+        <div class="keys" style="margin-top:8px">
+          <select id="enrolId"><option value="exp:chips">chips</option><option value="exp:energy-drink">energy drink</option><option value="exp:milk">milk</option></select>
+          <select id="enrolRole"><option value="reference">reference photo</option><option value="heldout">held-out test photo</option></select>
+          <button id="enrolBtn">Save enrolment photo</button>
+        </div>
+        <p class="hint" id="enrolStatus"></p>
+        <div class="cam" id="recogCam" hidden><img id="recogFrame" alt="The picture that was recognised"></div>
+        <ul id="recogList"></ul>
+        <p class="hint" id="recogMeta"></p>
+      </section>
     </div>
 
     <div class="col">
@@ -158,8 +188,9 @@
         <h2>set up the shelf <small>once, in order</small></h2>
         <ol class="steps" id="steps">
           <li id="s1"><div><b>Connect the camera</b><p>Camera and power supply into the dongle first, then the dongle into the board.</p></div></li>
-          <li id="s2"><div><b>Place the boxes</b><p>Drag the three boxes over the three product spots.</p>
-            <div class="keys"><button id="boxesOk">The boxes are in place</button></div></div></li>
+          <li id="s2"><div><b>Place the boxes</b><p>Press <b>Edit boxes</b>, drag every box by its number tag over its product spot (drag the round corner to resize), then press <b>Save boxes</b>. Nothing is saved until then, and purchasing is paused while you edit.</p>
+            <div class="keys"><button id="editBoxes">Edit boxes</button><button class="primary" id="saveBoxes" hidden>Save boxes</button><button id="cancelBoxes" hidden>Cancel</button><button id="boxesOk">The boxes are in place</button></div>
+            <p class="layoutmsg" id="layoutMsg" aria-live="polite"></p></div></li>
           <li id="s3"><div><b>Take the empty photo</b><p>Take every product off the shelf.</p>
             <div class="keys"><button class="primary" data-cal="empty">Shelf is empty: save photo</button></div></div></li>
           <li id="s4"><div><b>Take the full photo</b><p>Put every product back.</p>
@@ -211,6 +242,18 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const socket = io(`http://${window.location.host}`);
 let S = null, slots = [], dragging = null, settingsOpen = false;
+let editing = false, conflicts = new Set(), pendingLayoutSave = false;  // box layout draft (Edit boxes)
+
+// The board's overlap rule (shelf_detect.overlapping_slots): more than 5% of the smaller box.
+function overlapPairs(list) {
+  const out = [];
+  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+    const [ax, ay, aw, ah] = list[i].rect, [bx, by, bw, bh] = list[j].rect;
+    const w = Math.min(ax + aw, bx + bw) - Math.max(ax, bx), h = Math.min(ay + ah, by + bh) - Math.max(ay, by);
+    if (Math.max(0, w) * Math.max(0, h) > 0.05 * Math.min(aw * ah, bw * bh)) out.push([list[i].slot, list[j].slot]);
+  }
+  return out;
+}
 let boxesOk = false;
 try { boxesOk = localStorage.getItem("boxesOk") === "1"; } catch (e) {}
 const KNOB_MAX = 300, SIGNED_LIMIT = 150;  // the knob's range on the box, and the limit the chef signed
@@ -221,7 +264,8 @@ function log(line) { $("log").textContent = `${new Date().toLocaleTimeString()} 
 socket.on("connect", () => socket.emit("get_state", {}));
 socket.on("disconnect", () => { S && (S._offline = true); renderPills(); });
 socket.on("frame", (m) => { const f = $("frame"); f.src = `data:image/jpeg;base64,${m.image}`; f.hidden = false; $("nocam").hidden = true; });
-socket.on("sensors", (s) => { S = s; if (!dragging) slots = JSON.parse(JSON.stringify(s.config.slots)); render(); });
+// While editing, box moves live only in the local draft: the board's updates never overwrite them.
+socket.on("sensors", (s) => { S = s; if (!dragging && !editing) slots = JSON.parse(JSON.stringify(s.config.slots)); render(); });
 socket.on("event", (m) => {
   const e = m.event, r = m.reply || {};
   log(`${e.type}${e.slot ? " slot " + e.slot : ""}${e.state ? " " + e.state : ""} → ${r.status || "?"}`);
@@ -232,7 +276,21 @@ socket.on("event", (m) => {
   }
 });
 socket.on("calibrate_response", (r) => { r.ok ? toast(`Saved the ${r.kind} photo.`) : toast(r.error); });
-socket.on("save_config_response", (r) => r.ok && toast("Settings saved."));
+socket.on("save_config_response", (r) => {
+  const layoutSave = pendingLayoutSave; pendingLayoutSave = false;
+  if (!r.ok) {  // refused: keep the draft and mark the boxes that still overlap
+    if (layoutSave) conflicts = new Set((r.conflicts || []).flat());
+    toast(r.error); render(); return;
+  }
+  if (layoutSave) {
+    editing = false; conflicts = new Set(); boxesOk = true;
+    try { localStorage.setItem("boxesOk", "1"); } catch (e) {}
+    const moved = r.moved || [];
+    toast(moved.length ? `Boxes saved. Spot${moved.length > 1 ? "s" : ""} ${moved.join(", ")} moved: save the empty photo and the full photo again.`
+                       : "Boxes saved.");
+  } else toast("Settings saved.");
+  render();
+});
 socket.on("simulate_response", () => {});
 socket.on("update_response", (r) => { const m = r.ok ? r.message : `Update failed: ${r.error}`; $("updateMsg").textContent = m; toast(m); });
 
@@ -288,7 +346,8 @@ function render() {
   // Shelf channels
   $("shelf").innerHTML = S.config.slots.map(c => {
     const st = S.slots[c.slot] || {}, cal = S.calibrated[c.slot] || [];
-    const state = st.state || (cal.includes("empty") ? "checking" : "not set up");
+    // "unsure" never changes stock: covered lens, a view that does not match the photos, no camera, calibrating.
+    const state = st.uncertain ? `unsure: ${esc(st.uncertain)}` : (st.state || (cal.includes("empty") ? "checking" : "not set up"));
     const lit = st.fill == null || st.state === "empty" ? 0 : Math.max(1, Math.round(Math.min(1, st.fill) * 10));
     return `<div class="ch ${st.state || ""}" role="group" aria-label="Spot ${c.slot}, ${esc(c.product_hint)}, ${state}${st.units != null ? `, about ${st.units} of ${c.target_units}` : ""}"><span class="num" aria-hidden="true">${c.slot}</span>
       <span class="name">${esc(c.product_hint)}</span><span class="state">${state}</span>
@@ -296,10 +355,29 @@ function render() {
       <div class="meter" aria-hidden="true">${Array.from({length: 10}, (_, i) => `<i class="${i < lit ? "lit" : ""}"></i>`).join("")}</div></div>`;
   }).join("");
 
-  // Setup steps
-  const allEmpty = S.config.slots.every(c => (S.calibrated[c.slot] || []).includes("empty"));
-  const allFull = S.config.slots.every(c => (S.calibrated[c.slot] || []).includes("full"));
-  const done = [S.camera_ok || allEmpty, boxesOk, allEmpty, allFull];
+  // Setup steps. A moved box needs both new photos: S.recalibrate = {slot: kinds saved since the move}.
+  const recal = S.recalibrate || {}, recalSlots = Object.keys(recal);
+  const allEmpty = S.config.slots.every(c => (S.calibrated[c.slot] || []).includes("empty"))
+                   && recalSlots.every(k => recal[k].includes("empty"));
+  const allFull = S.config.slots.every(c => (S.calibrated[c.slot] || []).includes("full")) && recalSlots.length === 0;
+  const layoutBad = (S.layout_errors || []).length > 0;
+  const done = [S.camera_ok || allEmpty, boxesOk && !layoutBad && !editing, allEmpty, allFull];
+  $("editBoxes").hidden = editing; $("saveBoxes").hidden = !editing; $("cancelBoxes").hidden = !editing;
+  $("boxesOk").hidden = editing || layoutBad;
+  $("cam").classList.toggle("editing", editing);
+  const msg = $("layoutMsg");
+  if (editing) {
+    const left = overlapPairs(slots);
+    msg.className = "layoutmsg" + (left.length ? " warn" : "");
+    msg.textContent = left.length ? `Still overlapping: ${left.map(p => p.join(" and ")).join(", ")}. Purchasing is paused while you edit.`
+                                  : "No overlaps. Press Save boxes. Purchasing is paused while you edit.";
+  } else if (layoutBad) {
+    msg.className = "layoutmsg warn";
+    msg.textContent = "The saved boxes are not valid, so stock events are paused: " + S.layout_errors.join("; ") + ". Press Edit boxes.";
+  } else if (recalSlots.length) {
+    msg.className = "layoutmsg warn";
+    msg.textContent = `Spot${recalSlots.length > 1 ? "s" : ""} ${recalSlots.join(", ")} moved: save the empty photo and the full photo again. Until then ${recalSlots.length > 1 ? "they do" : "it does"} not order.`;
+  } else { msg.className = "layoutmsg"; msg.textContent = ""; }
   const now = done.indexOf(false);
   ["s1","s2","s3","s4"].forEach((id, i) => {
     const li = $(id); li.className = done[i] ? "done" : i === now ? "now" : "later";
@@ -346,16 +424,17 @@ function renderBoxes() {
   slots.forEach((s, i) => {
     const st = S && S.slots[s.slot] ? S.slots[s.slot].state || "" : "";
     const [x, y, w, h] = s.rect, b = document.createElement("div");
-    b.className = `box ${st}`; b.dataset.i = i;
+    b.className = `box ${st}${conflicts.has(s.slot) ? " conflict" : ""}`; b.dataset.i = i;
     Object.assign(b.style, {left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${h * 100}%`});
     b.innerHTML = `<b>${s.slot}</b><span class="h"></span>`; b.title = s.product_hint;
     cam.appendChild(b);
   });
 }
 
-// Drag to move, drag the corner to resize. Saved when the finger or mouse lifts.
+// Drag to move, drag the corner to resize, only after "Edit boxes". Moves stay in the draft until "Save boxes".
 $("cam").addEventListener("pointerdown", (e) => {
   const box = e.target.closest(".box"); if (!box) return;
+  if (!editing) { toast("Press Edit boxes first."); return; }
   const r = $("cam").getBoundingClientRect(), i = Number(box.dataset.i);
   dragging = {i, resize: e.target.classList.contains("h"), x0: e.clientX, y0: e.clientY, rect: slots[i].rect.slice(), r};
   $("cam").setPointerCapture(e.pointerId); e.preventDefault();
@@ -372,9 +451,19 @@ $("cam").addEventListener("pointermove", (e) => {
 $("cam").addEventListener("pointerup", () => {
   if (!dragging) return;
   dragging = null;
-  socket.emit("save_config", {slots});
-  toast("Box moved. Take the empty and full photos again so the board learns the new spot.");
+  conflicts = new Set(overlapPairs(slots).flat());  // live feedback only; nothing is saved yet
+  render();
 });
+$("editBoxes").onclick = () => {
+  editing = true; conflicts = new Set(overlapPairs(slots).flat());
+  socket.emit("setup", {on: true}); render();
+};
+$("saveBoxes").onclick = () => { pendingLayoutSave = true; socket.emit("save_config", {slots}); };
+$("cancelBoxes").onclick = () => {
+  editing = false; conflicts = new Set();
+  if (S) slots = JSON.parse(JSON.stringify(S.config.slots));  // throw the draft away
+  socket.emit("setup", {on: false}); render();
+};
 
 document.addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
@@ -405,6 +494,45 @@ $("save").onclick = () => {
   socket.emit("save_config", {backend_url: $("url").value.trim(), temperature_limit_c: isFinite(limit) ? limit : 6,
                               manual_slot: Number($("kslot").value), slots: s});
 };
+
+// Recognize shelf (experimental, observational) ---------------------------------------------------------------
+const RNAMES = {"exp:chips": "chips", "exp:energy-drink": "energy drink", "exp:milk": "milk"};
+const rname = (id) => RNAMES[id] || id || "unknown";
+const surfaceArg = () => ($("wholeFrame").checked ? [0, 0, 1, 1] : null);
+const pct = (v) => `${(v * 100).toFixed(2)}%`;
+function placeBox(el, b) { el.style.left = pct(b[0]); el.style.top = pct(b[1]); el.style.width = pct(b[2]); el.style.height = pct(b[3]); }
+$("recogBtn").onclick = () => { $("recogMeta").textContent = "Recognizing…"; socket.emit("recognize", {surface: surfaceArg()}); };
+$("bgBtn").onclick = () => { toast("Saving the empty surface…"); socket.emit("recognition_background", {surface: surfaceArg()}); };
+$("enrolBtn").onclick = () => { toast("Saving the enrolment photo…"); socket.emit("enrol_photo", {identity: $("enrolId").value, role: $("enrolRole").value, surface: surfaceArg()}); };
+socket.on("recognition_background_response", (r) => toast(r.ok ? "Empty surface saved." : `Not saved: ${r.error || r.detail}`));
+socket.on("enrol_photo_response", (r) => { toast(r.ok ? `Saved a ${$("enrolRole").value} photo of ${rname($("enrolId").value)}.` : `Not saved: ${r.error || r.detail}`); socket.emit("recognition_status", {}); });
+socket.on("recognition_status_response", (r) => {
+  if (!r.ok) { $("enrolStatus").textContent = `Recognition service not reachable (${r.url}).`; return; }
+  const e = r.enrolment || {}; const rows = e.identities || e;
+  $("enrolStatus").textContent = "Enrolled photos: " + Object.entries(rows).filter(([k]) => k.startsWith("exp:")).map(([k, v]) =>
+    `${rname(k)} ${(v.reference ?? v.photos?.reference ?? 0)} reference / ${(v.heldout ?? v.photos?.heldout ?? 0)} held-out`).join(", ");
+});
+socket.on("recognize_response", (r) => {
+  if (!r.ok) { $("recogMeta").textContent = `Not recognized: ${r.error || r.detail || "service error"}`; return; }
+  const cam = $("recogCam"); cam.hidden = false; $("recogFrame").src = `data:image/jpeg;base64,${r.frame}`;
+  cam.querySelectorAll(".rbox,.rsurf").forEach((e) => e.remove());
+  const surf = document.createElement("div"); surf.className = "rsurf"; placeBox(surf, r.surface); cam.appendChild(surf);
+  const list = $("recogList"); list.innerHTML = "";
+  (r.objects || []).forEach((o, i) => {
+    const top = (o.candidates || [])[0];
+    const text = o.status === "known" ? rname(o.identity) : o.status === "ambiguous" && top ? `ambiguous (${rname(top.identity)}?)` : o.status;
+    const d = document.createElement("div"); d.className = `rbox ${o.status}`; placeBox(d, o.box);
+    const tag = document.createElement("b"); tag.textContent = `${i + 1} ${text}`; d.appendChild(tag); cam.appendChild(d);
+    const li = document.createElement("li");
+    li.textContent = `${i + 1}: ${text}` + (top ? ` (nearest ${rname(top.identity)}, score ${Number(top.similarity).toFixed(2)})` : "");
+    list.appendChild(li);
+  });
+  const counts = Object.entries(r.visible_units || {}).map(([k, n]) => `${rname(k)} ${n}`).join(", ") || "none";
+  const t = r.timing_ms || {};
+  $("recogMeta").textContent = `Visible units: ${counts}. ${r.uncertain ? "Uncertain: " + (r.reasons || []).join("; ") + ". " : ""}` +
+    `Captured ${String(r.captured_at).slice(11, 23)}; ${t.total ?? "?"} ms in the service (${(r.model || {}).name || "model"} on ${(r.model || {}).device || "?"}), ${r.round_trip_ms} ms round trip. Scores are model similarities, not measured accuracy. Observes only: no stock events, no orders.`;
+});
+socket.on("connect", () => socket.emit("recognition_status", {}));
 </script>
 </body>
 </html>

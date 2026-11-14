@@ -9,11 +9,12 @@ import math
 import re
 import threading
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, datetime, time, timedelta
 
 from . import rules as R
 from .audit import AuditLog
+from .settings import DEFAULTS, Settings
 from .valio import Claim, words
 
 APPROVAL_EXPIRY = timedelta(hours=2)
@@ -22,11 +23,26 @@ NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10,
 
 
 class Agent:
-    def __init__(self, catalog, ruleset: dict, log: AuditLog):
+    def __init__(self, catalog, ruleset: dict, log: AuditLog, restock_min_s: float | None = None,
+                 restock_confirm_s: float | None = None, settings: Settings | None = None):
         self.catalog = catalog
         self.rules = ruleset
         self.log = log
         self.lock = threading.Lock()
+        # Guards the pending-slot check in handle_event. Separate from self.lock, which _ask takes
+        # inside the buying path, so holding this one while buying would deadlock.
+        self.trigger_lock = threading.Lock()
+        # The restock policy (backend/settings.py). Without settings the committed defaults apply, never
+        # the environment, so a local .env cannot change what a test checks; backend.app passes the
+        # environment's values. restock_min_s and restock_confirm_s override single values.
+        given = {"restock_min_s": restock_min_s, "restock_confirm_s": restock_confirm_s}
+        self.settings = replace(settings or DEFAULTS, **{k: float(v) for k, v in given.items() if v is not None})
+        # Pending slots (interface 3 and 8 of docs/PARALLEL_WORK.md). A slot is pending from its camera or
+        # knob trigger until its request ends (skipped, expired, blocked, failed) or its order is restocked.
+        self.pending_since: dict[int, datetime] = {}  # slot -> time of the trigger
+        self.pending: dict[int, dict] = {}  # slot -> {"run_id", "product_id", "rule_set_version", "since"}
+        self.stocked_hold: dict[int, dict] = {}  # slot -> {"start", "last", "told"}: stocked readings in a row
+        self.last_health: dict | None = None  # {"report": health of the last status event, "received": datetime}
         self.approvals: dict[str, dict] = {}
         self.orders: dict[str, dict] = {}  # order_id -> order entry, for delivery checks and weekly spend
         self.placed_runs: dict[str, dict] = {}  # run id -> result, so one run never orders twice
@@ -51,25 +67,21 @@ class Agent:
     def restore(self) -> None:
         """Rebuild orders, open approvals, pending slots and deliveries from the audit log after a restart."""
         decided = set()
-        for e in self.log.entries(limit=100000):
+        entries = self.log.entries(limit=100000)
+        for e in entries:
             d, step = e["detail"], e["step"]
             if step == "order":
                 self.orders[e["order_id"]] = {"order_id": e["order_id"], "time": e["time"], "total_eur": d["total_eur"],
                                               "lines": d["lines"], "slot": d.get("slot"), "run_id": e["run_id"]}
                 self.placed_runs[e["run_id"]] = {"status": "ordered", "order_id": e["order_id"], "total_eur": d["total_eur"]}
                 if d.get("slot") is not None:
-                    self.pending_slots.add(d["slot"])
                     self.last_order_qty[d["slot"]] = sum(l["quantity"] for l in d["lines"])
-            elif step == "restock":
-                self.pending_slots.discard(d["slot"])
             elif step == "delivery_check":
                 self.deliveries.append(d)
             elif step == "approval" and d.get("status") == "open" and "full" in d:
                 a = d["full"]
                 a["ctx"] = context_from_dict(a["ctx"] | {"label_checks": self.label_checks})
                 self.approvals[a["id"]] = a
-                if a.get("slot") is not None:
-                    self.pending_slots.add(a["slot"])
             elif step == "approval" and d.get("approval_id"):
                 decided.add(d["approval_id"])
             elif step == "alarm":
@@ -80,8 +92,52 @@ class Agent:
             a = self.approvals.get(aid)
             if a:
                 a["status"] = "closed"
-                if a.get("slot") is not None and not any(o.get("slot") == a["slot"] for o in self.orders.values()):
-                    self.pending_slots.discard(a["slot"])
+        self._restore_pending(entries)
+
+    def _restore_pending(self, entries: list[dict]) -> None:
+        """Pending slots after a restart: the last camera or knob trigger of each slot, when its run still has
+        an open approval, or a placed order with no restock and no delivery check after it.
+
+        Everything else that ended a request (skipped, expired, blocked, an error) leaves no open approval
+        and no order for the run, so it needs no entry of its own here. A stocked hold is not restored: after
+        a restart the slot must read stocked for RESTOCK_CONFIRM_S again.
+        """
+        last: dict[int, dict] = {}
+        triggered: set[str] = set()
+
+        def record(slot: int, e: dict, product_id=None, known=False) -> dict:
+            if not known and e["rule_set_version"] == self.rules["version"]:
+                product_id = (R.target_for_slot(self.rules, slot) or {}).get("product_id")  # logs before 14 Nov
+            return {"run_id": e["run_id"], "product_id": product_id, "rule_set_version": e["rule_set_version"],
+                    "since": e["time"], "ended": False}
+
+        for e in entries:
+            d, step = e["detail"], e["step"]
+            ev = d.get("event") if step == "trigger" else None
+            if isinstance(ev, dict) and ev.get("type") in ("slot_state", "manual_low") and ev.get("slot") is not None:
+                last[int(ev["slot"])] = record(int(ev["slot"]), e, d.get("product_id"), "product_id" in d)
+                triggered.add(e["run_id"])
+            elif step in ("order", "approval") and e.get("run_id") and e["run_id"] not in triggered:
+                # The trigger is older than the entries read (restore reads the newest 100,000): the order or the
+                # request stands in for it, so its slot is not left free.
+                slot = d.get("slot") if step == "order" else (d.get("full") or {}).get("slot")
+                if slot is not None:
+                    last[int(slot)] = record(int(slot), e)
+                    triggered.add(e["run_id"])
+            elif step == "restock" and d.get("slot") in last:
+                r = last[d["slot"]]
+                r["ended"] |= e.get("run_id") in (None, r["run_id"])  # restocks before 14 Nov name no run
+            elif step == "delivery_check" and e.get("run_id"):
+                for r in last.values():
+                    r["ended"] |= r["run_id"] == e["run_id"]
+        for slot, r in last.items():
+            ended = r.pop("ended")
+            ordered = r["run_id"] in self.placed_runs
+            asking = any(a["run_id"] == r["run_id"] and a["status"] == "open" for a in self.approvals.values())
+            if not ended and (ordered or asking):
+                self.pending_slots.add(slot)
+                self.pending_since[slot] = datetime.fromisoformat(r["since"])
+                self.pending[slot] = r
 
     # Entry points ---------------------------------------------------------
 
@@ -97,9 +153,15 @@ class Agent:
                            "device")
             return {"status": "logged"}
         if kind == "delivery_check":
-            return self.check_delivery(ev.get("order_id"), ev.get("counts", {}), ev.get("temperature_c"),
-                                       ev.get("seconds_measured"))
+            result = self.check_delivery(ev.get("order_id"), ev.get("counts", {}), ev.get("temperature_c"),
+                                         ev.get("seconds_measured"))
+            with self.trigger_lock:
+                for slot in list(self.pending_slots):
+                    self._settle(slot)
+            return result
         if kind == "status":
+            if isinstance(ev.get("health"), dict):
+                self.observe_health(ev["health"])
             return {"status": "ok"}
         if kind not in ("slot_state", "manual_low"):
             return {"status": "ignored", "reason": f"unknown event type {kind}"}
@@ -108,26 +170,172 @@ class Agent:
         target = R.target_for_slot(self.rules, slot)
         if target is None:
             return {"status": "ignored", "reason": f"slot {slot} has no target in the rule set"}
+        if target.get("product_id") is None and kind in ("slot_state", "manual_low"):
+            return {"status": "ignored", "reason": f"slot {slot} holds {target.get('product')}, which is not mapped "
+                                                   "to a catalog product: no purchase"}
         state = "low" if kind == "manual_low" else ev.get("state")
         units = int(ev.get("estimated_units") or 0) if state != "empty" else 0
-        if state == "full" or (state == "low" and kind == "slot_state" and units >= target["reorder_below"]):
-            if slot in self.pending_slots and not any(a["slot"] == slot for a in self.open_approvals()):
-                self.pending_slots.discard(slot)
-                self.log.write("restock", {"slot": slot, "summary": f"Slot {slot} is stocked again."}, "device",
-                               self.rules["version"])
-            return {"status": "ok", "reason": "stock above the reorder level"}
-        if slot in self.pending_slots:
-            return {"status": "ignored", "reason": f"slot {slot} already has an order or a request in progress"}
-        self.pending_slots.add(slot)
+        self.open_approvals()  # an approval past its expiry ends here and frees its slot
+        now = datetime.now(R.TZ)
+        # The check and the add below must be one step, or two events at once could both order.
+        with self.trigger_lock:
+            self._settle(slot)
+            if kind == "slot_state" and stocked(state, units, target):
+                return self._stocked_reading(slot, now, f"reads {state}")
+            self._break_hold(slot, f"reads {state}")
+            if slot in self.pending_slots:
+                return {"status": "ignored", "reason": f"slot {slot} already has an order or a request in progress"}
+            run = uuid.uuid4().hex[:8]
+            self.pending_slots.add(slot)
+            self.pending_since[slot] = now
+            self.pending[slot] = {"run_id": run, "product_id": target.get("product_id"),
+                                  "rule_set_version": self.rules["version"], "since": now.isoformat(timespec="seconds")}
+            self.stocked_hold.pop(slot, None)
 
-        run = uuid.uuid4().hex[:8]
         how = "knob press" if kind == "manual_low" else "camera"
         self.log.write(
             "trigger",
-            {"summary": f"Slot {slot} ({target['product']}) is {state} by {how}, about {units} units left.", "event": ev},
+            {"summary": f"Slot {slot} ({target['product']}) is {state} by {how}, about {units} units left.", "event": ev,
+             "slot": slot, "product_id": target.get("product_id")},
             "device", self.rules["version"], run_id=run,
         )
         return self._safely(run, slot, lambda: self.buy(target, units, target["target_units"] - units, run))
+
+    # Pending slots and the restock policy (worktree 1) --------------------
+    #
+    # After a trigger the slot is pending: no second order for it. With an order placed, the slot stays
+    # pending until (a) a delivery check for that order arrives, or (b) the slot reads stocked without a
+    # break for RESTOCK_CONFIRM_S and at least RESTOCK_MIN_S have passed since the order. Rule (b) is a
+    # mitigation, not proof of a delivery: a product put back or stock from a back room passes it too, and
+    # the order is not marked delivered. One stocked reading never ends it while RESTOCK_CONFIRM_S > 0.
+    # Readings come from slot_state events (sent on a change) and from the health in the board's status
+    # event (every 10 s), which shows that the stocked state continues. Health never orders, never
+    # cancels an order and never closes an approval; it only extends or breaks a stocked hold.
+
+    def pending_for_slot(self, slot: int) -> dict | None:
+        """Interface 8: the open approval or the placed, not yet restocked order of a slot, else None.
+
+        {"slot", "product_id", "rule_set_version", "run_id", "since", "status": "approval" | "ordered"}.
+        product_id and rule_set_version are the slot's assignment when it was triggered, so they stay
+        even if the assignment changes later. since is the trigger time. While the pipeline is still
+        running (between the trigger and its approval or order, about a second), the slot is pending
+        but this returns None.
+        """
+        self.open_approvals()  # an approval past its expiry ends here and frees its slot
+        with self.trigger_lock:
+            self._settle(slot)
+            status = self._pending_status(slot)
+            if status is None:
+                return None
+            r = self.pending[slot]
+            return {"slot": slot, "product_id": r["product_id"], "rule_set_version": r["rule_set_version"],
+                    "run_id": r["run_id"], "since": r["since"], "status": status}
+
+    def observe_health(self, health: dict) -> None:
+        """Use the health of a status event (interface 7) as readings for the slots with a placed order."""
+        now = datetime.now(R.TZ)
+        self.last_health = {"report": health, "received": now}
+        slots = health.get("slots") if isinstance(health.get("slots"), dict) else {}
+        age = health.get("frame_age_s")
+        box = ("the camera gives no picture" if health.get("camera_ok") is False else
+               "the camera sent no recent frame" if not isinstance(age, (int, float))
+               or age > self.settings.frame_stale_s else
+               "the box configuration is not valid" if health.get("config_valid") is False else None)
+        with self.trigger_lock:
+            for slot in sorted(self.pending_slots):
+                self._settle(slot)
+                h = slots.get(str(slot))
+                target = R.target_for_slot(self.rules, slot)
+                if not isinstance(h, dict) or target is None or self._pending_status(slot) != "ordered":
+                    continue  # no word about this slot, or nothing to restock yet
+                why = box or slot_problem(h)
+                units = round(h["fill"] * target["target_units"]) if isinstance(h.get("fill"), (int, float)) else 0
+                if why is None and stocked(h.get("state"), units, target):
+                    self._hold(slot, now, f"reads {h['state']}")
+                else:
+                    self._break_hold(slot, why or f"reads {h.get('state') or 'nothing yet'}")
+
+    def _pending_status(self, slot: int) -> str | None:
+        r = self.pending.get(slot) if slot in self.pending_slots else None
+        if r is None:
+            return None
+        if r["run_id"] in self.placed_runs:
+            return "ordered"
+        # A snapshot: _ask adds approvals under self.lock from the buying path, not under trigger_lock.
+        if any(a["run_id"] == r["run_id"] and a["status"] in ("open", "deciding") for a in list(self.approvals.values())):
+            return "approval"
+        return None  # the pipeline is still running
+
+    def _pending_order(self, slot: int) -> dict | None:
+        placed = self.placed_runs.get(self.pending[slot]["run_id"]) if slot in self.pending else None
+        return self.orders.get(placed["order_id"]) if placed else None
+
+    def _settle(self, slot: int) -> None:
+        """End a slot's pending order when a delivery check for it has arrived (rule a). Caller holds trigger_lock."""
+        order = self._pending_order(slot) if self._pending_status(slot) == "ordered" else None
+        if order and any(d.get("order_id") == order["order_id"] for d in self.deliveries):
+            self._end_pending(slot, order, "delivery_check", (
+                f"The delivery check of order {order['order_id']} arrived, so the order for slot {slot} is fulfilled. "
+                "A new shortage makes a new order."))
+
+    def _stocked_reading(self, slot: int, now: datetime, what: str) -> dict:
+        """A slot_state event at or above the reorder level. Caller holds trigger_lock."""
+        status = self._pending_status(slot)
+        if status == "ordered":
+            return self._hold(slot, now, what)
+        if status == "approval":
+            # The chef decides an open request. A reading does not close it, and no hold builds up before the order.
+            return {"status": "ok", "reason": "stock above the reorder level; the request waits for the chef"}
+        if slot in self.pending_slots:
+            return {"status": "ignored", "reason": f"the request for slot {slot} is still being prepared"}
+        return {"status": "ok", "reason": "stock above the reorder level"}
+
+    def _hold(self, slot: int, now: datetime, what: str) -> dict:
+        """One stocked reading of a slot with a placed order (rule b). Caller holds trigger_lock."""
+        s, order = self.settings, self._pending_order(slot)
+        h = self.stocked_hold.get(slot)
+        if h is None or (now - h["last"]).total_seconds() > s.health_stale_s:
+            h = self.stocked_hold[slot] = {"start": now, "last": now, "told": False}  # a gap starts the hold again
+        h["last"] = now
+        held = (now - h["start"]).total_seconds()
+        age = (now - datetime.fromisoformat(order["time"])).total_seconds()
+        if held >= s.restock_confirm_s and age >= s.restock_min_s:
+            self._end_pending(slot, order, "stocked", (
+                f"Slot {slot} is stocked again: it {what} and has read stocked for {held:.0f} s, "
+                f"{age:.0f} s after order {order['order_id']}. A new shortage makes a new order. "
+                "This is not proof of a delivery, so the order is not marked delivered."), held)
+            return {"status": "ok", "reason": "stock above the reorder level"}
+        if age < s.restock_min_s:
+            reason = f"too soon after the order to be a delivery ({age:.0f} s)"
+        else:
+            reason = f"the slot must read stocked for {s.restock_confirm_s:.0f} s; {held:.0f} s so far"
+        if not h["told"]:
+            h["told"] = True
+            wait = (f"That is too soon for a delivery (under {s.restock_min_s:.0f} s), so the order stays in progress."
+                    if age < s.restock_min_s else "The order stays in progress.")
+            self.log.write("device", {"slot": slot, "order_id": order["order_id"], "summary": (
+                f"Slot {slot} {what} {age:.0f} s after order {order['order_id']}. {wait} One reading is not a refill: "
+                f"the order ends when the slot reads stocked for {s.restock_confirm_s:.0f} s without a break, at "
+                f"least {s.restock_min_s:.0f} s after the order, or with a delivery check.")},
+                "device", self.rules["version"], run_id=self.pending[slot]["run_id"])
+        return {"status": "ignored", "reason": reason}
+
+    def _break_hold(self, slot: int, why: str) -> None:
+        """A reading below the reorder level, or an unsure one, ends a stocked hold. Caller holds trigger_lock."""
+        h = self.stocked_hold.pop(slot, None)
+        if h and h["told"]:
+            self.log.write("device", {"slot": slot, "summary": (
+                f"Slot {slot} {why}, so it no longer reads stocked. The order stays in progress, and the wait for "
+                "a refill starts again.")}, "device", self.rules["version"],
+                run_id=(self.pending.get(slot) or {}).get("run_id"))
+
+    def _end_pending(self, slot: int, order: dict, how: str, summary: str, held_s: float | None = None) -> None:
+        r = self.pending.pop(slot)
+        self.pending_slots.discard(slot)
+        self.stocked_hold.pop(slot, None)
+        self.log.write("restock", {"slot": slot, "summary": summary, "how": how, "order_id": order["order_id"],
+                                   "held_s": None if held_s is None else round(held_s)},
+                       "agent" if how == "delivery_check" else "device", self.rules["version"], run_id=r["run_id"])
 
     def _safely(self, run: str, slot: int | None, step) -> dict:
         """Run a pipeline step. On any error, free the slot, log it and say so, instead of hanging."""
@@ -249,13 +457,25 @@ class Agent:
         if p.value is None:
             return None
         a: Claim = self.catalog.availability(product_id, qty, ctx.needed_by)
-        return {"product": p.value, "unit_price_eur": a.value["unit_price_eur"], "available": a.value["available_units"],
-                "delivery": a.value["delivery"], "stock_known": a.value.get("quantity_known", True),
+        v = a.value
+        return {"product": p.value, "unit_price_eur": v["unit_price_eur"], "available": v["available_units"],
+                "delivery": v["delivery"], "stock_known": v.get("quantity_known", True),
+                "problem": v.get("problem"), "closing_time": v.get("closing_time"),
+                "price_valid_to": v.get("price_valid_to"), "unit_price_with_tax_eur": v.get("unit_price_with_tax_eur"),
+                "tax_rate_pct": v.get("tax_rate_pct"), "sales_unit": v.get("sales_unit") or p.value.get("sales_unit"),
                 "claims": [p.to_dict(), a.to_dict()]}
 
     def _line(self, q: dict, qty: int, usual: bool) -> R.Line:
-        delivery = datetime.fromisoformat(q["delivery"]) if q["delivery"] else None
-        return R.Line(q["product"], qty, q["unit_price_eur"], delivery, usual, q["stock_known"])
+        delivery, known = delivery_at(q["delivery"])
+        return R.Line(q["product"], qty, q["unit_price_eur"], delivery, usual, q["stock_known"], known)
+
+    @property
+    def delivery_charge(self) -> str:
+        return getattr(self.catalog, "delivery_charge", "unknown: the catalog supplies no delivery charge")
+
+    @property
+    def source(self) -> str:
+        return getattr(self.catalog, "source", getattr(self.catalog, "name", "catalog"))
 
     def _free(self, slot: int | None) -> None:
         if slot is not None:
@@ -286,19 +506,22 @@ class Agent:
         if hasattr(self.catalog, "prefetch"):
             self.catalog.prefetch([p["id"] for p in candidates], ctx.needed_by)
 
-        quotes, not_orderable = {}, []
+        quotes, not_orderable, why = {}, [], {}
         for p in candidates:
             q = self._quote(p["id"], need, ctx, run)
             if q is None:
                 continue
             if q["unit_price_eur"] is None or q["delivery"] is None:
                 not_orderable.append(p["id"])  # no price or no delivery date: nothing to order now
+                if q.get("problem"):
+                    why[p["id"]] = q["problem"]
                 continue
             quotes[p["id"]] = q
-        self.log.write("candidates", {"need": need, "candidates": [
+        self.log.write("candidates", {"need": need, "source": self.source, "candidates": [
             {"id": pid, "price_eur": q["unit_price_eur"], "available": q["available"], "delivery": q["delivery"],
+             "closing_time": q.get("closing_time"), "price_valid_to": q.get("price_valid_to"),
              "checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]} for pid, q in quotes.items()],
-            "left_out": {"other_pack_size": other_pack, "no_price_or_delivery": not_orderable}},
+            "left_out": {"other_pack_size": other_pack, "no_price_or_delivery": not_orderable, "why": why}},
             "agent", v, run_id=run)
 
         # Safety check of each product alone. Forbidden products are dropped here.
@@ -313,10 +536,12 @@ class Agent:
 
         usual_q = safe.get(target.get("product_id"))
         options = []
-        if usual_q and usual_q["available"] >= need:
+        # Every line's quantity is a whole multiple of its product's lot size (allot), so a split never
+        # makes a line Valio would refuse.
+        if usual_q and allot(usual_q, need) >= need:
             options.append(("usual", [(usual_q, need, True)]))
         else:
-            have = usual_q["available"] if usual_q else 0
+            have = allot(usual_q, need) if usual_q else 0
             rest = need - have
             base = [(usual_q, have, True)] if have else []
             ranked = rank_substitutes(safe, target, ctx, self.rules, self.reliability())
@@ -327,7 +552,7 @@ class Agent:
                 for q in [lead] + [q for _, q in ranked if q is not lead] + rest_by_rank(safe, target, ranked):
                     if left <= 0:
                         break
-                    n = min(left, q["available"])
+                    n = allot(q, left)
                     if n > 0 and all(q is not p[0] for p in parts):
                         parts.append((q, n, False))
                         left -= n
@@ -337,8 +562,8 @@ class Agent:
                     options.append((label, parts))
             if not options:
                 # Nothing safe fills the whole gap: offer what is safe and in stock, and name the shortfall.
-                parts = list(base) + [(q, q["available"], False) for _, q in ranked]
-                parts += [(q, q["available"], False) for q in rest_by_rank(safe, target, ranked)]
+                parts = list(base) + [(q, allot(q, need), False) for _, q in ranked]
+                parts += [(q, allot(q, need), False) for q in rest_by_rank(safe, target, ranked)]
                 parts, left = _take(parts, need)
                 if parts:
                     shortfall = left
@@ -366,13 +591,12 @@ class Agent:
                 "result": d.result,
                 "reasons": d.reasons,
                 "summary": names,
-                "trade_off": trade_off(label, parts, ctx),
+                "trade_off": trade_off(label, parts, ctx) + " " + charges_note([q["product"] for q, _, _ in parts],
+                                                                               self.delivery_charge),
                 "total_eur": round(sum(l.total_eur or 0 for l in lines), 2),
-                "lines": [{"product_id": q["product"]["id"], "name": q["product"]["name"], "quantity": n, "usual": u,
-                           "unit_price_eur": q["unit_price_eur"], "delivery": q["delivery"],
-                           "stock_known": q["stock_known"],
-                           "price_checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]}
-                          for q, n, u in parts],
+                "charges": charges([q["product"] for q, _, _ in parts], self.delivery_charge),
+                "source": self.source,
+                "lines": [line_of(q, n, u) for q, n, u in parts],
             })
 
         if checked[0]["result"] == R.ALLOWED:
@@ -402,12 +626,21 @@ class Agent:
         ctx = R.Context(slot_group="unknown", needed_by=deadline or R.needed_by(self.rules, datetime.now(R.TZ)),
                         weekly_spent_eur=self.weekly_spent_eur, auto_limit_eur=min(limits) if limits else None,
                         cold_room_alarm_c=self.cold_alarm_c, label_checks=self.label_checks)
+        p = self.catalog.product(product_id).value
+        if p is None:
+            return {"status": "no_match"}
+        if not lot_ok(qty, p.get("lot_size")):
+            return {"status": "invalid_quantity", "name": p["name"],
+                    "reason": f"{qty} {p.get('sales_unit') or 'units'} is not a multiple of the allowed lot size "
+                              f"{p['lot_size']} {p.get('sales_unit') or ''}".rstrip()}
         q = self._quote(product_id, qty, ctx, run)
         if q is None:
             return {"status": "no_match"}
         name = q["product"]["name"]
-        if q["unit_price_eur"] is None or q["delivery"] is None:
-            return {"status": "not_orderable", "name": name}
+        # A forbidden product is refused as forbidden, also when it has no price or date now: safety first.
+        if (q["unit_price_eur"] is None or q["delivery"] is None) and not R.safety(q["product"], self.rules)[0]:
+            return {"status": "not_orderable", "name": name,
+                    "reason": q.get("problem") or ("no price" if q["unit_price_eur"] is None else "no delivery date")}
         ctx.slot_group, usual = self._role(q["product"])
         line = self._line(q, qty, usual)
         d = R.check([line], self.rules, ctx)
@@ -417,7 +650,9 @@ class Agent:
             d.reasons.append(f"{name} is outside the product groups of the agent's licence")
         return {"status": "quote", "product": q["product"], "name": name, "usual": usual, "ctx": ctx,
                 "unit_price_eur": q["unit_price_eur"], "available_units": q["available"], "delivery": q["delivery"],
-                "total_eur": line.total_eur, "decision": d, "claims": q["claims"], "stock_known": q["stock_known"]}
+                "total_eur": line.total_eur, "decision": d, "claims": q["claims"], "stock_known": q["stock_known"],
+                "line": line_of(q, qty, usual), "charges": charges([q["product"]], self.delivery_charge),
+                "source": self.source}
 
     def buy_exact(self, product_id: str, qty: int, run: str, deadline: datetime | None = None,
                   mandate_eur: float | None = None, scope_groups: list[str] | None = None, actor: str = "agent",
@@ -433,8 +668,12 @@ class Agent:
             self.log.write("blocked", {"summary": f"Product {product_id} is not in the catalog."}, "agent", v, run_id=run)
             return q
         if q["status"] == "not_orderable":
-            self.log.write("blocked", {"summary": f"{q['name']} has no price or no delivery date now."}, "agent", v, run_id=run)
-            return {"status": "not_orderable"}
+            self.log.write("blocked", {"summary": f"{q['name']} cannot be ordered now: {q['reason']}."}, "agent", v,
+                           run_id=run)
+            return {"status": "not_orderable", "reason": q["reason"]}
+        if q["status"] == "invalid_quantity":
+            self.log.write("blocked", {"summary": f"{q['name']}: {q['reason']}."}, "agent", v, run_id=run)
+            return {"status": "invalid_quantity", "reason": q["reason"]}
         d, name = q["decision"], q["name"]
         if max_unit_price_eur is not None and q["unit_price_eur"] > max_unit_price_eur:
             self.log.write("blocked", {"summary": f"The price of {name} rose from {max_unit_price_eur} to "
@@ -448,11 +687,8 @@ class Agent:
                            "rule_check", v, run_id=run)
             return {"status": "forbidden", "reasons": d.reasons, "rule_set_version": v}
         opt = {"label": "requested", "result": d.result, "reasons": d.reasons, "summary": f"{qty} × {name}",
-               "trade_off": "The product you asked for.", "total_eur": q["total_eur"],
-               "lines": [{"product_id": product_id, "name": name, "quantity": qty, "usual": q["usual"],
-                          "unit_price_eur": q["unit_price_eur"], "delivery": q["delivery"],
-                          "stock_known": q["stock_known"],
-                          "price_checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]}]}
+               "trade_off": "The product you asked for. " + charges_note([q["product"]], self.delivery_charge),
+               "total_eur": q["total_eur"], "charges": q["charges"], "source": q["source"], "lines": [q["line"]]}
         if d.result == R.ALLOWED:
             return self._order(opt["lines"], q["ctx"], run, None, None, opt["total_eur"], actor=actor)
         return self._ask([opt], q["ctx"], run, None, name)
@@ -492,13 +728,16 @@ class Agent:
         """Ask price and stock again. Returns the lines to order, or the result that ends the run."""
         v = self.rules["version"]
         # Step 8: ask price and stock again just before the order.
-        fresh, changes, short, unknown = [], [], False, False
+        fresh, changes, short, unknown, moved = [], [], False, False, False
         for l in lines:
             a = self.catalog.availability(l["product_id"], l["quantity"], ctx.needed_by)
             p = self.catalog.product(l["product_id"])
             price, left = a.value["unit_price_eur"], a.value["available_units"]
             if price != l["unit_price_eur"]:
                 changes.append(f"{l['name']} price {l['unit_price_eur']} → {price}")
+            if a.value["delivery"] != l["delivery"]:
+                moved = True
+                changes.append(f"{l['name']} delivery {l['delivery']} → {a.value['delivery'] or a.value.get('problem')}")
             if left < l["quantity"]:
                 short = True
                 changes.append(f"{l['name']} only {left} of {l['quantity']} left")
@@ -506,10 +745,26 @@ class Agent:
             if left > 0:  # the line as the catalog answers now: fresh price, date and proof, no more than is left
                 fresh.append((p.value, l | {"quantity": min(l["quantity"], left), "unit_price_eur": price,
                                             "delivery": a.value["delivery"],
+                                            "closing_time": a.value.get("closing_time"),
+                                            "price_valid_to": a.value.get("price_valid_to"),
                                             "stock_known": a.value.get("quantity_known", True),
                                             "price_checked_at": a.checked_at,
                                             "sha256": a.sha256}))
         self.log.write("recheck", {"summary": "; ".join(changes) or "nothing changed.", "changes": changes}, "agent", v, run_id=run)
+
+        if not changes and fresh:
+            # Price, stock and delivery are unchanged, but the product data may not be (a property or an allergen
+            # changed since the quote). The rules are checked on the product as the catalog describes it now.
+            rl = [R.Line(p, l["quantity"], l["unit_price_eur"], *_delivery_pair(l["delivery"], l["usual"], l["stock_known"]))
+                  for p, l in fresh]
+            d = R.check(rl, self.rules, ctx)
+            if d.result == R.FORBIDDEN:
+                self.log.write("rule_check", {"subject": "order after recheck (current product data)", **d.to_dict()},
+                               "rule_check", v, run_id=run)
+                self.log.write("blocked", {"summary": "The product data changed since the quote; the rule check now "
+                                           "forbids the order."}, "rule_check", v, run_id=run)
+                self._free(slot)
+                return None, {"status": "forbidden", "reasons": d.reasons}
 
         if changes:
             if not fresh or unknown:
@@ -517,8 +772,7 @@ class Agent:
                                "agent", v, run_id=run)
                 self._free(slot)
                 return None, {"status": "blocked"}
-            rl = [R.Line(p, l["quantity"], l["unit_price_eur"], datetime.fromisoformat(l["delivery"]), l["usual"],
-                         l["stock_known"])
+            rl = [R.Line(p, l["quantity"], l["unit_price_eur"], *_delivery_pair(l["delivery"], l["usual"], l["stock_known"]))
                   for p, l in fresh]
             d = R.check(rl, self.rules, ctx)
             self.log.write("rule_check", {"subject": "order after recheck", **d.to_dict()}, "rule_check", v, run_id=run)
@@ -528,13 +782,18 @@ class Agent:
                 self.log.write("blocked", {"summary": "The recheck made the order forbidden."}, "rule_check", v, run_id=run)
                 self._free(slot)
                 return None, {"status": "forbidden", "reasons": d.reasons}
-            # Less stock is a change to what was decided, so a person looks again, also after an approval.
-            if short or (d.result == R.NEEDS_APPROVAL and (approved_by is None or new_total > approved_total)):
-                reasons = d.reasons if d.result == R.NEEDS_APPROVAL else ["stock fell after the quote, so a person must look again"]
+            # Less stock or another delivery date is a change to what was decided, so a person looks again,
+            # also after an approval.
+            if short or moved or (d.result == R.NEEDS_APPROVAL and (approved_by is None or new_total > approved_total)):
+                reasons = d.reasons if d.result == R.NEEDS_APPROVAL else [
+                    ("stock fell" if short else "the delivery date changed") + " after the quote, so a person must look again"]
                 names = " + ".join(f"{l['quantity']} × {l['name']}" for l in lines)
+                products = [p for p, _ in fresh]
                 return None, self._ask([{"label": "after recheck", "result": R.NEEDS_APPROVAL, "reasons": reasons,
-                                   "summary": names, "trade_off": "; ".join(changes),
-                                   "total_eur": new_total, "lines": lines}], ctx, run, slot, "changed order")
+                                   "summary": names,
+                                   "trade_off": "; ".join(changes) + ". " + charges_note(products, self.delivery_charge),
+                                   "total_eur": new_total, "charges": charges(products, self.delivery_charge),
+                                   "source": self.source, "lines": lines}], ctx, run, slot, "changed order")
         return lines, None
 
     def _order(self, lines: list[dict], ctx: R.Context, run: str, slot: int | None,
@@ -568,14 +827,16 @@ class Agent:
         now = datetime.now(R.TZ).isoformat(timespec="seconds")
         self.orders[order_id] = {"order_id": order_id, "time": now, "total_eur": total, "lines": lines, "slot": slot,
                                  "run_id": run}
-        self.placed_runs[run] = {"status": "ordered", "order_id": order_id, "total_eur": total}
+        self.placed_runs[run] = {"status": "ordered", "order_id": order_id, "total_eur": total, **DRY}
         if slot is not None:
             # The slot stays pending until the camera sees it full again, so one empty shelf makes one order.
             self.last_order_qty[slot] = sum(l["quantity"] for l in lines)
         summary = ", ".join(f"{l['quantity']} × {l['name']}" for l in lines) + f", €{total:.2f}"
         summary += f", approved by {approved_by}." if approved_by else ", within the auto-order rules."
+        summary += " Recorded by the gateway, not sent to Valio. Delivery charge " + self.delivery_charge + "."
         self.log.write("order", {"summary": summary, "lines": lines, "total_eur": total, "sha256": claim.sha256,
-                                 "slot": slot}, approved_by or actor, v, order_id=order_id, run_id=run)
+                                 "slot": slot, "delivery_charge": self.delivery_charge, **DRY},
+                       approved_by or actor, v, order_id=order_id, run_id=run)
         return self.placed_runs[run]
 
     # Cold Chain Proof -----------------------------------------------------
@@ -606,7 +867,8 @@ class Agent:
             p = self.catalog.product(l["product_id"]).value or {}
             limit = p.get("max_temp_c")
             warm = temperature_c is not None and limit is not None and temperature_c > limit
-            late = now > datetime.fromisoformat(l["delivery"]) + timedelta(hours=1)
+            at, known = delivery_at(l["delivery"])
+            late = at is not None and (now > at + timedelta(hours=1) if known else now.date() > at.date())
             supplier = p.get("supplier", "unknown")
             s = per_supplier.setdefault(supplier, {"supplier": supplier, "warm": False, "late": False, "limit_c": limit})
             s["warm"] |= warm
@@ -614,7 +876,7 @@ class Agent:
             if warm:
                 problems.append(f"{l['name']} arrived at {temperature_c:.1f} °C, above its {limit} °C limit")
             if late:
-                problems.append(f"{l['name']} arrived after {l['delivery'][11:16]} on {l['delivery'][:10]}")
+                problems.append(f"{l['name']} arrived after {l['delivery'][11:16] or 'the day'} on {l['delivery'][:10]}")
         if short:
             problems.insert(0, f"{short} of {ordered} units missing")
         for s in per_supplier.values():
@@ -647,6 +909,97 @@ class Agent:
         return out
 
 
+DRY = {"sent_to_valio": False,
+       "note": "Recorded by the gateway, not sent to Valio: the challenge API has no order endpoint."}
+
+
+def delivery_at(value: str | None) -> tuple[datetime | None, bool]:
+    """A quote's delivery as (time, whether the time is known). A bare date ('2026-11-16') is that day at 00:00
+    with the time unknown: Valio's availability API gives a date, and we invent no arrival time."""
+    if not value:
+        return None, True
+    if len(value) == 10:
+        return datetime.combine(date.fromisoformat(value), time(0), tzinfo=R.TZ), False
+    return datetime.fromisoformat(value), True
+
+
+def _delivery_pair(value, usual, stock_known):
+    at, known = delivery_at(value)
+    return at, usual, stock_known, known
+
+
+def in_time(value: str | None, needed_by: datetime) -> bool:
+    """True when the delivery meets the deadline: by time when the source gives one, else by date."""
+    at, known = delivery_at(value)
+    if at is None:
+        return False
+    return at <= needed_by if known else at.date() <= needed_by.date()
+
+
+def when_text(value: str | None, needed_by: datetime) -> str:
+    at, known = delivery_at(value)
+    text = f"arrives {at:%a %H:%M}" if known else f"available {at:%a %d.%m.}, arrival time not supplied"
+    return text + ("" if in_time(value, needed_by) else " (late)")
+
+
+def allot(q: dict, want: int) -> int:
+    """The most whole units, up to `want` and the stock, that are a multiple of the product's lot size."""
+    n, lot = min(int(want), int(q["available"])), q["product"].get("lot_size")
+    while n > 0 and not lot_ok(n, lot):
+        n -= 1
+    return n
+
+
+def lot_ok(qty: float, lot) -> bool:
+    """True when qty is a whole multiple of the allowed lot size (in sales units). No lot size: any qty."""
+    if not lot:
+        return True
+    steps = qty / float(lot)
+    return abs(steps - round(steps)) < 1e-6
+
+
+def charges(products: list[dict], delivery_charge: str) -> dict:
+    """Charges besides the goods. Unknown stays unknown: never 0 in a total."""
+    deposit = {}
+    for p in products:
+        if p.get("deposits"):
+            items = ", ".join(f"{d.get('quantity'):g} {d.get('unit')} of material {d.get('material')}" for d in p["deposits"])
+            deposit[p["id"]] = f"unknown: the product file lists returnable packaging ({items} per sales unit) without a price"
+    return {"delivery": delivery_charge, "deposits": deposit,
+            "totals_cover": "goods only, without tax, at the catalog price per sales unit"}
+
+
+def charges_note(products: list[dict], delivery_charge: str) -> str:
+    note = "Delivery charge unknown, not in the total."
+    if any(p.get("deposits") for p in products):
+        note += " Deposit charge unknown, not in the total."
+    return note
+
+
+def line_of(q: dict, n: int, usual: bool) -> dict:
+    """One order line as an option, an approval and an order keep it."""
+    p = q["product"]
+    return {"product_id": p["id"], "name": p["name"], "quantity": n, "usual": usual,
+            "unit_price_eur": q["unit_price_eur"], "delivery": q["delivery"], "stock_known": q["stock_known"],
+            "sales_unit": q.get("sales_unit") or p.get("sales_unit"), "closing_time": q.get("closing_time"),
+            "price_valid_to": q.get("price_valid_to"), "delivery_reliability": p.get("delivery_reliability"),
+            "price_checked_at": q["claims"][1]["checked_at"], "sha256": q["claims"][1]["sha256"]}
+
+
+def stocked(state: str | None, units: int, target: dict) -> bool:
+    """A reading at or above the slot's reorder level: "full", or "low" with enough units left."""
+    return state == "full" or (state == "low" and units >= target["reorder_below"])
+
+
+def slot_problem(h: dict) -> str | None:
+    """Why one slot's health is no evidence of its stock, or None when it is."""
+    if h.get("uncertain"):
+        return f"is uncertain ({h['uncertain']})"
+    if h.get("calibration") in ("missing", "stale"):
+        return f"has a {h['calibration']} calibration"
+    return None
+
+
 def rest_by_rank(safe: dict, target: dict, ranked: list) -> list[dict]:
     chosen = [q for _, q in ranked]
     return sorted((q for pid, q in safe.items() if pid != target.get("product_id") and q not in chosen),
@@ -657,7 +1010,7 @@ def _take(parts: list, need: int) -> tuple[list, int]:
     """Take units from parts in order until need is met. Returns the parts used and what is still missing."""
     out, left = [], need
     for q, n, usual in parts:
-        n = min(n, left)
+        n = allot(q, min(n, left))
         if n > 0 and all(q is not p[0] for p in out):
             out.append((q, n, usual))
             left -= n
@@ -669,18 +1022,19 @@ def rank_substitutes(safe: dict, target: dict, ctx: R.Context, rules: dict,
     """best: closest match, better: close match with a better price or date, good: cheapest safe option in time.
 
     A close match is one the rule set approves as a substitute, by the same test as the rule check.
-    Among equal matches, a supplier with a better delivery record ranks first (unknown suppliers count as 1.0).
+    Among equal matches, a supplier with a better record in our own delivery checks ranks first (unknown
+    suppliers count as 1.0). Valio's delivery reliability file does not rank: it is shown with each option
+    as information, and a missing value stays unknown.
     """
     reliability = reliability or {}
     def score(q):
-        own = q["product"].get("delivery_reliability")  # Valio's record for this product, where it has one
-        return own if own is not None else reliability.get(q["product"].get("supplier"), {}).get("score", 1.0)
+        return reliability.get(q["product"].get("supplier"), {}).get("score", 1.0)
     subs = [q for pid, q in safe.items() if pid != target.get("product_id") and q["available"] > 0]
     if not subs:
         return []
     def closeness(q):
         ok = R.is_approved_substitute(q["product"], rules, target["group"])
-        return (ok, datetime.fromisoformat(q["delivery"]) <= ctx.needed_by)
+        return (ok, in_time(q["delivery"], ctx.needed_by))
     by_match = sorted(subs, key=lambda q: (closeness(q), score(q), -q["unit_price_eur"]), reverse=True)
     best = by_match[0]
     out = [("best", best)]
@@ -688,17 +1042,16 @@ def rank_substitutes(safe: dict, target: dict, ctx: R.Context, rules: dict,
         q["unit_price_eur"] < best["unit_price_eur"] or q["delivery"] < best["delivery"])), None)
     if better:
         out.append(("better", better))
-    in_time = [q for q in subs if datetime.fromisoformat(q["delivery"]) <= ctx.needed_by and q not in (best, better)]
-    if in_time:
-        out.append(("good", min(in_time, key=lambda q: q["unit_price_eur"])))
+    timely = [q for q in subs if in_time(q["delivery"], ctx.needed_by) and q not in (best, better)]
+    if timely:
+        out.append(("good", min(timely, key=lambda q: q["unit_price_eur"])))
     return out
 
 
 def trade_off(label: str, parts: list, ctx: R.Context) -> str:
     q, n, _ = next((x for x in parts if not x[2]), parts[0])
     p = q["product"]
-    late = datetime.fromisoformat(q["delivery"]) > ctx.needed_by
-    when = f"arrives {datetime.fromisoformat(q['delivery']):%a %H:%M}" + (" (late)" if late else "")
+    when = when_text(q["delivery"], ctx.needed_by)
     if label == "usual":
         return f"The usual product, €{q['unit_price_eur']:.2f} each, {when}."
     if label == "partial":

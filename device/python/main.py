@@ -21,11 +21,17 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 import requests
-from PIL import Image, ImageOps
+from PIL import Image
 
 from arduino.app_bricks.web_ui import WebUI
-from arduino.app_peripherals.usb_camera import USBCamera
+# USBCamera was removed from the Arduino bricks on 25 Sep 2026 (app-bricks-py #499).
+# Camera returns numpy frames in BGR order; numpy_to_pil converts them to an RGB PIL image.
+from arduino.app_peripherals.camera import Camera, WebSocketCamera
 from arduino.app_utils import App, Bridge, Logger
+from arduino.app_utils.image import numpy_to_pil
+
+import shelf_detect
+from shelf_detect import crop
 
 logger = Logger("safe-kitchen")
 TZ = ZoneInfo("Europe/Helsinki")
@@ -39,6 +45,9 @@ DEFAULT_CONFIG = {
     "backend_url": "http://192.168.1.10:8000",
     "temperature_limit_c": 6.0,
     "frame_interval_s": 1.0,  # how often the shelf is checked; the live preview runs faster, see PREVIEW_FPS
+    # "usb": camera plugged into the board. "websocket": frames sent over Wi-Fi to port 8080,
+    # for example by tools/laptop-camera.html. The app.yaml must then list "ports: [8080]".
+    "camera_source": "usb",
     "manual_slot": 3,
     # Slots as fractions of the frame: x, y, width, height.
     "slots": [
@@ -51,6 +60,9 @@ DEFAULT_CONFIG = {
     "empty_below": 0.20,
     # Without a "full" photo, a slot whose difference from the empty photo is above this is present.
     "present_diff": 0.10,
+    # When a reading becomes a stock change: confirm_frames, confirm_seconds, min_detail,
+    # mismatch_ratio, calibration_quiet_s. See shelf_detect.DEFAULTS and docs/PARALLEL_WORK.md.
+    **shelf_detect.DEFAULTS,
 }
 
 
@@ -77,10 +89,19 @@ state = {
     "buzzer": "off",
     "modulinos": None,
     "last_frame": None,
+    "frame_id": 0,  # grows with every new camera frame, so a frame is checked only once
+    "frame_time": None,  # arrival time of last_frame, in seconds
+    "last_checked_frame": None,
+    "quiet_until": 0.0,  # no stock events before this time (after a calibration or a slot move)
     "camera_ok": False,
     "camera_error": "",
     "delivery": None,  # {"ends": time, "temps": [...]} while a delivery check runs, else None
     "last_delivery": None,
+    # Interface 9: slot -> assignment_id from the backend's GET /shelf, polled every SHELF_POLL_S.
+    # Kept after a failed poll; "unknown" until the first answer (then no slot can be stale).
+    "assignments": {},
+    "assignment_check": "unknown",
+    "shelf_error": "",
 }
 
 
@@ -157,6 +178,25 @@ def buzzer_worker():
             applied = None
             time.sleep(1)
         time.sleep(0.2)
+
+
+SHELF_POLL_S = 60
+
+
+def poll_shelf():
+    """Ask the backend every minute which product each slot should hold (GET /shelf, interface 9).
+
+    Until the backend has /shelf the call fails. That is "unknown", not "stale": slots keep working.
+    """
+    while True:
+        try:
+            r = requests.get(config["backend_url"].rstrip("/") + "/shelf", timeout=5)
+            r.raise_for_status()
+            state["assignments"] = shelf_detect.assignments_from_shelf(r.json())
+            state["assignment_check"], state["shelf_error"] = "ok", ""
+        except Exception as e:
+            state["shelf_error"] = str(e)[:200]
+        time.sleep(SHELF_POLL_S)
 
 
 def poll_commands():
@@ -257,62 +297,124 @@ Bridge.provide("thermo", on_thermo)
 
 # Shelf detection -----------------------------------------------------------
 
-def crop(img: Image.Image, rect) -> np.ndarray:
-    w, h = img.size
-    x, y, cw, ch = rect
-    box = (int(x * w), int(y * h), int((x + cw) * w), int((y + ch) * h))
-    g = ImageOps.grayscale(img.crop(box)).resize((48, 48))
-    a = np.asarray(g, dtype=np.float32) / 255.0
-    return a - a.mean()  # remove overall brightness so room light matters less
-
+# The algorithm lives in shelf_detect.py, so laptop replay tests run the same code.
 
 def ref_path(slot: int, kind: str) -> Path:
     return DATA / f"slot{slot}_{kind}.npy"
 
 
-def diff(a: np.ndarray, b: np.ndarray) -> float:
-    return float(np.abs(a - b).mean())
+def load_ref(slot: int, kind: str):
+    p = ref_path(slot, kind)
+    return np.load(p) if p.exists() else None
+
+
+def meta_path(slot: int) -> Path:
+    return DATA / f"slot{slot}_meta.json"
+
+
+def load_meta(slot: int) -> dict:
+    """The slot's calibration record: for each photo, the assignment it was taken for and when."""
+    try:
+        return json.loads(meta_path(slot).read_text())
+    except Exception:
+        return {}  # photos saved before 14 Nov have no record: their assignment is unknown
+
+
+calib_meta = {s["slot"]: load_meta(s["slot"]) for s in config["slots"]}
+
+# Layout editing: which moved boxes still need new photos (kept across restarts), the setup pause,
+# and the validity of the saved layout (an invalid saved layout never produces stock events).
+LAYOUT_FILE = DATA / "layout.json"
+SETUP_MAX_S = 1800  # the setup pause ends by itself after 30 minutes without a save
+
+
+def load_layout_state() -> dict:
+    try:
+        return {"recalibrate": json.loads(LAYOUT_FILE.read_text()).get("recalibrate", {})}
+    except Exception:
+        return {"recalibrate": {}}
+
+
+layout = load_layout_state()
+state["setup_until"] = 0.0
+state["layout_errors"] = shelf_detect.config_errors(config)
+
+
+def save_layout_state():
+    try:
+        LAYOUT_FILE.write_text(json.dumps(layout, indent=2))
+    except OSError as e:
+        logger.warning(f"could not save the layout state: {e}")
+
+
+def calibrated_for(slot: int):
+    return shelf_detect.calibrated_for(calib_meta.get(slot), ref_path(slot, "full").exists())
+
+
+def calibration_of(slot: int) -> str:
+    """ok, missing or stale (interface 9)."""
+    return shelf_detect.calibration_status(ref_path(slot, "empty").exists(), calibrated_for(slot),
+                                           state["assignments"].get(slot))
 
 
 def classify(slot_cfg: dict, patch: np.ndarray):
-    empty_p, full_p = ref_path(slot_cfg["slot"], "empty"), ref_path(slot_cfg["slot"], "full")
-    if not empty_p.exists():
-        return None, None
-    d_empty = diff(patch, np.load(empty_p))
-    if full_p.exists():
-        d_full = diff(patch, np.load(full_p))
-        fill = d_empty / (d_empty + d_full + 1e-6)
-    else:
-        fill = 1.0 if d_empty > config["present_diff"] else 0.0
-    if fill >= config["full_at"]:
-        return "full", fill
-    if fill < config["empty_below"]:
-        return "empty", fill
-    return "low", fill
+    """(state, fill, why). state may be "uncertain", which never becomes a stock change."""
+    slot = slot_cfg["slot"]
+    return shelf_detect.classify(patch, load_ref(slot, "empty"), load_ref(slot, "full"), config)
 
 
-def process_frame(img: Image.Image):
+def process_frame(img: Image.Image, frame_id: int, t: float):
+    quiet = time.time() < state["quiet_until"]
+    setup = time.time() < state["setup_until"]
+    layout_ok = not state["layout_errors"]
     for s in config["slots"]:
-        patch = crop(img, s["rect"])
-        st, fill = classify(s, patch)
         slot = s["slot"]
+        # A slot whose photos are for another product is uncertain until someone saves new photos.
+        reading = shelf_detect.gate_calibration(classify(s, crop(img, s["rect"])), calibration_of(slot))
+        # Setting up, an invalid saved layout, or a moved box without new photos: uncertain, no stock event.
+        st, fill, why = shelf_detect.gate_layout(reading, layout_ok, shelf_detect.needs_recal(layout["recalibrate"], slot),
+                                                 setup)
         with lock:
-            cur = state["slots"].setdefault(slot, {"state": None, "fill": None, "units": None, "candidate": None, "count": 0})
-            cur["fill"] = None if fill is None else round(fill, 2)
-            if st is None:
-                continue
-            # A new state must show in two frames in a row before it counts.
-            if st == cur["candidate"]:
-                cur["count"] += 1
-            else:
-                cur["candidate"], cur["count"] = st, 1
-            changed = cur["count"] >= 2 and st != cur["state"]
-            if changed:
-                cur["state"] = st
-                cur["units"] = 0 if st == "empty" else round(fill * s["target_units"])
+            cur = state["slots"].setdefault(slot, shelf_detect.new_tracker())
+            changed = shelf_detect.observe(cur, st, fill, s["target_units"], frame_id, t, config, quiet, why)
         if changed:
-            post_async({"type": "slot_state", "slot": slot, "product_hint": s["product_hint"], "state": st,
-                        "estimated_units": cur["units"]})
+            # Slot event version 2 (docs/PARALLEL_WORK.md, interface 1). The backend ignores fields it
+            # does not know yet, and "uncertain" is never sent.
+            post_async({"type": "slot_state", "slot": slot, "product_hint": s["product_hint"], "state": cur["state"],
+                        "estimated_units": cur["units"], "fill": cur["fill"], "frame_id": frame_id,
+                        "frame_time": datetime.fromtimestamp(t, TZ).isoformat(timespec="seconds")})
+
+
+def mark_uncertain(why: str):
+    """Every slot is uncertain, for example when no camera frame arrives."""
+    with lock:
+        for s in config["slots"]:
+            cur = state["slots"].setdefault(s["slot"], shelf_detect.new_tracker())
+            shelf_detect.observe(cur, "uncertain", None, s["target_units"], None, time.time(), config, why=why)
+
+
+def start_quiet_period():
+    state["quiet_until"] = time.time() + float(shelf_detect.setting(config, "calibration_quiet_s"))
+
+
+def health():
+    """The health of the status event (docs/PARALLEL_WORK.md, interface 7). Health never orders."""
+    t = state["frame_time"]
+    with lock:
+        trackers = {k: dict(v) for k, v in state["slots"].items()}
+    ids = [s["slot"] for s in config["slots"]]
+    return shelf_detect.build_health(
+        trackers, ids, state["camera_ok"], None if t is None else time.time() - t, shelf_detect.config_errors(config),
+        {n: calibration_of(n) for n in ids}, {n: calibrated_for(n) for n in ids}, state["assignment_check"])
+
+
+def health_or_none():
+    """health(), or None after logging why: a bug in the health must not stop the page or the status ping."""
+    try:
+        return health()
+    except Exception as e:
+        logger.warning(f"health: {e}")
+        return None
 
 
 def sensors():
@@ -324,9 +426,15 @@ def sensors():
         "camera_ok": state["camera_ok"], "camera_error": state["camera_error"],
         "delivery_left_s": max(0, round(state["delivery"]["ends"] - time.time())) if state["delivery"] else None,
         "last_delivery": state["last_delivery"],
-        "slots": {str(k): {kk: vv for kk, vv in v.items() if kk in ("state", "fill", "units")} for k, v in state["slots"].items()},
+        "slots": {str(k): {kk: vv for kk, vv in v.items() if kk in ("state", "fill", "units", "uncertain")}
+                  for k, v in state["slots"].items()},
         "config": {k: config[k] for k in ("slots", "temperature_limit_c", "manual_slot")},
         "calibrated": {str(s["slot"]): [k for k in ("empty", "full") if ref_path(s["slot"], k).exists()] for s in config["slots"]},
+        "health": health_or_none(),
+        "shelf_error": state["shelf_error"],
+        "setup": time.time() < state["setup_until"],
+        "layout_errors": state["layout_errors"],
+        "recalibrate": layout["recalibrate"],
     }
 
 
@@ -353,19 +461,62 @@ def on_calibrate(_sid, data):
     which = [s for s in config["slots"] if data.get("slot") in ("all", s["slot"], str(s["slot"]))]
     for s in which:
         np.save(ref_path(s["slot"], kind), crop(img, s["rect"]))
+        # Interface 9: remember which assignment these photos show (None while the backend has no /shelf).
+        calib_meta[s["slot"]] = shelf_detect.calibration_meta(
+            calib_meta.get(s["slot"]), kind, state["assignments"].get(s["slot"]), now_iso())
+        try:
+            meta_path(s["slot"]).write_text(json.dumps(calib_meta[s["slot"]], indent=2))
+        except OSError as e:
+            logger.warning(f"could not save the calibration record of slot {s['slot']}: {e}")
         with lock:
             state["slots"].pop(s["slot"], None)
+        layout["recalibrate"] = shelf_detect.recal_note_photo(layout["recalibrate"], s["slot"], kind)
+    save_layout_state()
+    # Calibrating means hands and products moving in front of the camera: no stock events for a while.
+    start_quiet_period()
     logger.info(f"saved {kind} photo for slots {[s['slot'] for s in which]}")
     return {"ok": True, "slots": [s["slot"] for s in which], "kind": kind}
 
 
 def on_save_config(_sid, data):
+    """Settings and the box layout. A layout is validated complete and activated all at once; a refused
+    layout leaves the active one untouched (the page keeps its draft). Saving names, targets or other
+    settings with unchanged boxes is never blocked by the saved layout's validity."""
+    moved = []
+    if "slots" in data:
+        new = data["slots"]
+        geometry = (not isinstance(new, list) or len(new) != len(config["slots"])
+                    or shelf_detect.moved_slots(config["slots"], new))
+        if geometry:
+            result = shelf_detect.apply_layout(config, new)
+            if not result["ok"]:
+                return {"ok": False, "conflicts": result["conflicts"], "errors": result["errors"],
+                        "error": "Boxes not saved: " + "; ".join(result["errors"])
+                                 + ". Your moves are kept: move the red boxes apart and save again."}
+            moved = result["moved"]
+            layout["recalibrate"] = shelf_detect.recal_after_move(layout["recalibrate"], moved)
+            save_layout_state()
+            with lock:
+                for n in moved:
+                    state["slots"].pop(n, None)
+            state["setup_until"] = 0.0  # the new layout is saved; moved boxes stay paused until new photos
+        start_quiet_period()
     for key in ("backend_url", "temperature_limit_c", "manual_slot", "slots"):
         if key in data:
             config[key] = data[key]
     save_config()
+    state["layout_errors"] = shelf_detect.config_errors(config)
     ui.send_message("sensors", sensors())
-    return {"ok": True}
+    return {"ok": True, "moved": moved, "recalibrate": sorted(int(k) for k in layout["recalibrate"])}
+
+
+def on_setup(_sid, data):
+    """The page's "Edit boxes" (on) and "Cancel" (off): pause stock events while the person edits."""
+    on = bool((data or {}).get("on"))
+    state["setup_until"] = time.time() + SETUP_MAX_S if on else 0.0
+    logger.info(f"box setup {'started: stock events paused' if on else 'ended'}")
+    ui.send_message("sensors", sensors())
+    return {"ok": True, "setup": on}
 
 
 def on_simulate(_sid, data):
@@ -377,12 +528,91 @@ def on_simulate(_sid, data):
                        "estimated_units": units})
 
 
+# Shelf recognition (experimental, observational) ---------------------------------------------------------------
+# The page's "Recognize shelf" panel sends the newest fresh camera frame to the recognition service on the laptop
+# (experiments/recognition/shelf_service on branch exp/recognition, port 8100). Results go back to the page only:
+# nothing here calls the purchasing backend, so recognition cannot create stock events, orders or approvals.
+
+def recognition_url() -> str:
+    if config.get("recognition_url"):
+        return str(config["recognition_url"]).rstrip("/")
+    host = str(config["backend_url"]).split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+    return f"http://{host}:8100"
+
+
+def surface_rect() -> list[float]:
+    """Where to look: the configured surface, else the area around all slot boxes (a region, not a product)."""
+    if config.get("surface"):
+        return config["surface"]
+    rects = [s["rect"] for s in config.get("slots", [])]
+    if not rects:
+        return [0.0, 0.0, 1.0, 1.0]
+    pad = 0.03
+    x0, y0 = max(0.0, min(r[0] for r in rects) - pad), max(0.0, min(r[1] for r in rects) - pad)
+    x1, y1 = min(1.0, max(r[0] + r[2] for r in rects) + pad), min(1.0, max(r[1] + r[3] for r in rects) + pad)
+    return [round(x0, 4), round(y0, 4), round(x1 - x0, 4), round(y1 - y0, 4)]
+
+
+def recognition_call(sid, path: str, extra: dict, reply: str):
+    """Send the newest frame (never older than CAMERA_GRACE_S) to the service; answer the page with the result."""
+    with lock:
+        img, t = state["last_frame"], state["frame_time"]
+    if img is None or t is None or time.time() - t > CAMERA_GRACE_S:
+        ui.send_message(reply, {"ok": False, "error": "no fresh camera picture (none, or older than 2 s)"}, sid)
+        return
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    captured = datetime.fromtimestamp(t, TZ).isoformat(timespec="milliseconds")
+    surface = extra.pop("surface", None) or surface_rect()
+    body = {"image_b64": b64, "surface": surface, "captured_at": captured, **extra}
+
+    def run():
+        t0 = time.time()
+        try:
+            r = requests.post(recognition_url() + path, json=body, timeout=60)
+            try:
+                out = r.json()
+            except ValueError:
+                out = {"error": r.text[:200]}
+            ok = r.status_code == 200
+        except Exception as e:
+            out, ok = {"error": f"recognition service not reachable at {recognition_url()}: {str(e)[:120]}"}, False
+        out = dict(out) if isinstance(out, dict) else {"result": out}
+        out.update(ok=ok and not out.get("error"), round_trip_ms=round((time.time() - t0) * 1000),
+                   captured_at=captured, surface=surface)
+        if path == "/recognize":
+            out["frame"] = b64  # the exact picture that was recognised, so the boxes match it
+        ui.send_message(reply, out, sid)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def recognition_status(sid):
+    def run():
+        try:
+            out = requests.get(recognition_url() + "/enrolment", timeout=10).json()
+            ui.send_message("recognition_status_response", {"ok": True, "enrolment": out, "url": recognition_url()}, sid)
+        except Exception as e:
+            ui.send_message("recognition_status_response", {"ok": False, "error": str(e)[:160], "url": recognition_url()}, sid)
+    threading.Thread(target=run, daemon=True).start()
+
+
 ui = WebUI()
 ui.on_message("calibrate", on_calibrate)
 ui.on_message("save_config", on_save_config)
+ui.on_message("setup", on_setup)
 ui.on_message("simulate", on_simulate)
 ui.on_message("delivery_check", lambda _sid, _d: start_delivery_check())
 ui.on_message("get_state", lambda sid, _d: ui.send_message("sensors", sensors(), sid))
+ui.on_message("recognize", lambda sid, d: recognition_call(sid, "/recognize", {"surface": (d or {}).get("surface")},
+                                                            "recognize_response"))
+ui.on_message("recognition_background", lambda sid, d: recognition_call(
+    sid, "/background", {"surface": (d or {}).get("surface")}, "recognition_background_response"))
+ui.on_message("enrol_photo", lambda sid, d: recognition_call(
+    sid, "/enrol/photo", {"identity": (d or {}).get("identity"), "role": (d or {}).get("role", "reference"),
+                          "surface": (d or {}).get("surface")}, "enrol_photo_response"))
+ui.on_message("recognition_status", lambda sid, _d: recognition_status(sid))
 ui.expose_api("GET", "/state", sensors)
 
 
@@ -448,22 +678,40 @@ ui.on_message("update", on_update)
 #   loop           checks the shelf once every frame_interval_s and talks to the agent
 
 last_status = 0.0
+# A frame older than this counts as no frame. camera_worker also reports the camera missing after this
+# long without frames; the loop checks the age itself, because a capture() that hangs never reports.
+# tests/device/replay.py models the same grace (CAMERA_GRACE_S).
+CAMERA_GRACE_S = 2.0
 
 
 def camera_worker():
     camera = None
+    last_frame_at = 0.0
     while True:
         try:
+            remote = config.get("camera_source") == "websocket"
             if camera is None:
-                camera = USBCamera(resolution=(640, 480), fps=15)
+                if remote:
+                    camera = WebSocketCamera(port=8080, resolution=(640, 480), fps=15)
+                else:
+                    camera = Camera(resolution=(640, 480), fps=15)  # first plugged-in camera
                 camera.start()
-                logger.info("camera started")
-            img = camera.capture()
-            if img is None:
-                state["camera_ok"], state["camera_error"] = False, "camera gave no picture"
-                time.sleep(0.2)
+                logger.info(f"camera started ({'websocket on port 8080' if remote else 'usb'})")
+            frame = camera.capture()
+            if frame is None:
+                # capture() gives None whenever no new frame arrived in time (the WebSocket camera
+                # waits only 0.1 s). Report the camera as missing only after 2 s without any frame,
+                # so the page does not flicker between the picture and "No camera picture".
+                if time.time() - last_frame_at > CAMERA_GRACE_S:
+                    state["camera_ok"] = False
+                    state["camera_error"] = "waiting for frames on port 8080" if remote else "camera gave no picture"
+                time.sleep(0.05)
                 continue
-            state["last_frame"] = img.convert("RGB")
+            last_frame_at = time.time()
+            img = numpy_to_pil(frame)
+            with lock:  # the frame and its number change together
+                state["last_frame"], state["frame_time"] = img, last_frame_at
+                state["frame_id"] += 1
             state["camera_ok"], state["camera_error"] = True, ""
         except Exception as e:
             state["camera_ok"], state["camera_error"] = False, str(e)[:160]
@@ -498,17 +746,24 @@ def loop():
             logger.info(f"modulinos: {state['modulinos']}")
         except Exception as e:
             logger.warning(f"modulino_status failed: {e}")
-    img = state["last_frame"]
-    if img is not None and state["camera_ok"]:
-        process_frame(img)
+    with lock:
+        img, frame_id, t = state["last_frame"], state["frame_id"], state["frame_time"]
+    if img is not None and state["camera_ok"] and t is not None and time.time() - t <= CAMERA_GRACE_S:
+        if frame_id != state["last_checked_frame"]:  # a frame is checked at most once
+            state["last_checked_frame"] = frame_id
+            process_frame(img, frame_id, t)
+    else:
+        mark_uncertain("no camera frame")
     ui.send_message("sensors", sensors())
     if time.time() - last_status > 10:
         last_status = time.time()
-        post_async({"type": "status"})
+        h = health_or_none()
+        post_async({"type": "status", "health": h} if h is not None else {"type": "status"})
     time.sleep(float(config["frame_interval_s"]))
 
 
 threading.Thread(target=poll_commands, daemon=True).start()
+threading.Thread(target=poll_shelf, daemon=True).start()
 threading.Thread(target=buzzer_worker, daemon=True).start()
 threading.Thread(target=camera_worker, daemon=True).start()
 threading.Thread(target=preview_worker, daemon=True).start()

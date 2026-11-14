@@ -1,0 +1,41 @@
+span d(empty,full) = 0.2058   current rule: uncertain if min(d_e, d_f) > 0.85 x span
+case                               state      fill d_e/sp d_f/sp r=(de+df)/sp outside band
+GENUINE full                       full       0.95   0.98   0.05         1.03         0.00
+GENUINE empty                      empty      0.03   0.03   1.00         1.02         0.00
+GENUINE full, noise .03            full       0.90   0.98   0.11         1.09         0.00
+GENUINE full, blur 1               full       0.92   0.97   0.09         1.06         0.00
+GENUINE full, light x0.8           full       0.84   0.89   0.17         1.06         0.00
+GENUINE full, shifted 2 px         full       0.70   0.93   0.40         1.33         0.15
+GENUINE full, shifted 4 px         low        0.61   0.92   0.58         1.50         0.24
+GENUINE 1/3 removed (cols)         low        0.63   0.66   0.40         1.06         0.00
+GENUINE 1/2 removed (cols)         low        0.51   0.54   0.51         1.04         0.00
+GENUINE 2/3 removed (cols)         low        0.40   0.45   0.67         1.13         0.00
+GENUINE blend .5                   low        0.50   0.50   0.50         1.00         0.00
+UNRELATED recorded scene           low        0.56   1.08   0.84         1.92         0.34
+UNRELATED half covered             low        0.59   0.84   0.58         1.42         0.17
+UNRELATED third covered            low        0.63   0.86   0.51         1.37         0.11
+UNRELATED noise                    uncertain  0.48   0.95   1.01         1.96         0.43
+UNRELATED other object             uncertain  0.57   1.22   0.93         2.15         0.49
+UNRELATED slot1 full photo         full       0.77   1.00   0.29         1.29         0.13
+UNRELATED hand (smooth blob) half  low        0.58   0.76   0.55         1.31         0.11
+
+shift-tolerant distances (shifts up to 4 px)
+case                               r_shift fill_shift
+GENUINE full                          1.03       0.94
+GENUINE empty                         1.02       0.03
+GENUINE full, noise .03               1.09       0.90
+GENUINE full, blur 1                  1.06       0.91
+GENUINE full, light x0.8              1.06       0.83
+GENUINE full, shifted 2 px            1.02       0.94
+GENUINE full, shifted 4 px            1.01       0.94
+GENUINE 1/3 removed (cols)            1.13       0.63
+GENUINE 1/2 removed (cols)            1.12       0.51
+GENUINE 2/3 removed (cols)            1.21       0.40
+GENUINE blend .5                      1.07       0.50
+UNRELATED recorded scene              1.57       0.58
+UNRELATED half covered                1.48       0.58
+UNRELATED third covered               1.38       0.61
+UNRELATED noise                       1.98       0.49
+UNRELATED other object                2.07       0.56
+UNRELATED slot1 full photo            1.14       0.88
+UNRELATED hand (smooth blob) half     1.32       0.57

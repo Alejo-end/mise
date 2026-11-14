@@ -1,0 +1,45 @@
+{
+  "backend_url": "http://172.20.10.4:8000",
+  "temperature_limit_c": 35,
+  "frame_interval_s": 1.0,
+  "camera_source": "websocket",
+  "manual_slot": 1,
+  "slots": [
+    {
+      "slot": 1,
+      "product_hint": "rye bread 500 g",
+      "target_units": 1,
+      "rect": [
+        0.339,
+        0.358,
+        0.28,
+        0.45
+      ]
+    },
+    {
+      "slot": 2,
+      "product_hint": "natural yogurt 1 kg",
+      "target_units": 12,
+      "rect": [
+        0.349,
+        0.255,
+        0.28,
+        0.45
+      ]
+    },
+    {
+      "slot": 3,
+      "product_hint": "lactose-free milk 1 L",
+      "target_units": 24,
+      "rect": [
+        0.347,
+        0.128,
+        0.28,
+        0.45
+      ]
+    }
+  ],
+  "full_at": 0.66,
+  "empty_below": 0.2,
+  "present_diff": 0.1
+}

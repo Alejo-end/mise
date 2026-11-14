@@ -1,0 +1,37 @@
+{"kind": "frame", "t": 0.561, "file": "000001.jpg", "board_time": "2026-11-14T04:39:46+02:00"}
+{"kind": "reading", "t": 0.799, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "reading", "t": 0.937, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.46, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 1.657, "file": "000002.jpg", "board_time": "2026-11-14T04:39:47+02:00"}
+{"kind": "reading", "t": 1.976, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 2.68, "file": "000003.jpg", "board_time": "2026-11-14T04:39:48+02:00"}
+{"kind": "reading", "t": 2.785, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "reading", "t": 3.092, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 3.596, "file": "000004.jpg", "board_time": "2026-11-14T04:39:49+02:00"}
+{"kind": "reading", "t": 4.032, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 4.526, "file": "000005.jpg", "board_time": "2026-11-14T04:39:50+02:00"}
+{"kind": "reading", "t": 4.842, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "reading", "t": 5.055, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 5.718, "file": "000006.jpg", "board_time": "2026-11-14T04:39:52+02:00"}
+{"kind": "reading", "t": 6.087, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 6.789, "file": "000007.jpg", "board_time": "2026-11-14T04:39:52+02:00"}
+{"kind": "reading", "t": 6.8, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "reading", "t": 7.11, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 7.849, "file": "000008.jpg", "board_time": "2026-11-14T04:39:54+02:00"}
+{"kind": "reading", "t": 8.139, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 8.645, "file": "000009.jpg", "board_time": "2026-11-14T04:39:54+02:00"}
+{"kind": "reading", "t": 8.801, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "reading", "t": 9.174, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.46, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 9.58, "file": "000010.jpg", "board_time": "2026-11-14T04:39:55+02:00"}
+{"kind": "reading", "t": 10.232, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.46, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 10.496, "file": "000011.jpg", "board_time": "2026-11-14T04:39:56+02:00"}
+{"kind": "reading", "t": 10.826, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.46, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "reading", "t": 11.236, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 11.569, "file": "000012.jpg", "board_time": "2026-11-14T04:39:57+02:00"}
+{"kind": "reading", "t": 12.253, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.46, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 12.479, "file": "000013.jpg", "board_time": "2026-11-14T04:39:58+02:00"}
+{"kind": "reading", "t": 12.859, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.46, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "reading", "t": 13.273, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 13.565, "file": "000014.jpg", "board_time": "2026-11-14T04:39:59+02:00"}
+{"kind": "reading", "t": 14.307, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}
+{"kind": "frame", "t": 14.48, "file": "000015.jpg", "board_time": "2026-11-14T04:40:00+02:00"}
+{"kind": "reading", "t": 14.813, "slots": {"1": {"state": "low", "fill": 0.42, "units": 0}, "2": {"state": "low", "fill": 0.37, "units": 4}, "3": {"state": "low", "fill": 0.45, "units": 11}}, "camera_ok": true, "buzzer": "off"}

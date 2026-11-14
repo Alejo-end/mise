@@ -16,14 +16,16 @@ from typing import Annotated, Literal, Union
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .agent import Agent
 from .audit import AuditLog, story
 from .gateway import make_router
-from .rules import TZ, load_rules
+from .rules import TZ
 from .allergens import unscanned
 from .sandbox import AGENTS, DrivingTest
+from .settings import Settings
+from .shelf import Shelf, ShelfError, versions_dir_for
 from .signing import Signer
 from .valio import ValioCatalog, make_client
 
@@ -42,11 +44,19 @@ def _load_env(path: Path) -> None:
 
 
 _load_env(ROOT / ".env")
+SETTINGS = Settings.from_env()  # committed defaults in backend/settings.py; .env.example lists every key
+# Shelf recording session (tools/record_sequence.py): device events update the device view and are logged,
+# but never reach the agent, so calibration and evaluation actions cannot create orders or approvals and
+# cannot end a pending order. Empty (the default) is normal operation.
+RECORDING_SESSION = os.getenv("RECORDING_SESSION", "").strip()
 if os.getenv("ANTHROPIC_API_KEY"):  # a real model can take the Driving Test
     from .model_agent import ModelUnderTest
     AGENTS["claude"] = ModelUnderTest
 
-ruleset = load_rules(os.getenv("RULES_FILE", ROOT / "rules" / "school_kitchen.yaml"))
+# The signed rule file, then every shelf change signed after it (backend/shelf.py). The last version is active.
+shelf = Shelf(os.getenv("RULES_FILE", ROOT / "rules" / "school_kitchen.yaml"),
+              versions_dir_for(os.getenv("AUDIT_DB", DATA / "audit.sqlite")))
+ruleset = shelf.rules
 catalog = make_client()
 log = AuditLog(os.getenv("AUDIT_DB", DATA / "audit.sqlite"))
 
@@ -73,11 +83,15 @@ if TEXT_SCAN_GAPS:
     log.write("notice", {"summary": "The ingredient text scan does not cover these banned allergens: "
                          f"{', '.join(TEXT_SCAN_GAPS)}. For them, only the allergen codes are checked."},
               "rule_check", ruleset["version"])
-agent = Agent(catalog, ruleset, log)
+agent = Agent(catalog, ruleset, log, settings=SETTINGS)
+if SETTINGS.overrides():
+    log.write("notice", {"summary": "Settings differ from the committed defaults in backend/settings.py: "
+                         + ", ".join(f"{k}={v:g}" for k, v in SETTINGS.overrides().items()) + "."},
+              "agent", ruleset["version"])
 driving_test = DrivingTest(ruleset, log)
 PINS = {p.split(":", 1)[0].strip(): p.split(":", 1)[1].strip()
         for p in os.getenv("APPROVER_PINS", "").split(",") if ":" in p}
-OFFLINE_AFTER_S = 30
+OFFLINE_AFTER_S = SETTINGS.offline_after_s
 # After 5 wrong PINs within a minute, nobody can approve for 30 seconds. A PIN has four digits.
 WRONG_PINS, PIN_WINDOW_S, PIN_LOCK_S = 5, 60, 30
 pin_guard = {"wrong": [], "locked_until": 0.0}
@@ -101,7 +115,11 @@ class SlotState(_Base):
     slot: int
     state: Literal["full", "low", "empty"]
     estimated_units: int | None = Field(default=None, ge=0)
-    product_hint: str | None = None
+    product_hint: str | None = None  # a label only; the backend's shelf configuration names the product
+    # Version 2 (interface 1), all optional. With fill, units come from the backend's target, not the device's.
+    fill: float | None = Field(default=None, ge=0, le=1)
+    frame_id: int | None = Field(default=None, ge=0)
+    frame_time: str | None = None
 
 
 class ManualLow(_Base):
@@ -124,8 +142,29 @@ class DeliveryCheck(_Base):
     seconds_measured: float | None = None
 
 
+class SlotHealth(BaseModel):
+    """One slot in the board's health (interface 7). Fields it does not know are kept."""
+    model_config = ConfigDict(extra="allow")
+    state: Literal["full", "low", "empty"] | None = None  # the board's last confirmed state
+    uncertain: str | None = None  # why the newest reading is unsure; never a stock change
+    fill: float | None = Field(default=None, ge=0, le=1)
+    calibration: Literal["ok", "missing", "stale"] | None = None
+    assignment_id: str | None = None  # what the slot's photos were taken for (interface 9)
+
+
+class Health(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    camera_ok: bool | None = None
+    frame_age_s: float | None = Field(default=None, ge=0)
+    config_valid: bool | None = None
+    config_errors: list[str] = []
+    slots: dict[str, SlotHealth] = {}
+
+
 class Status(_Base):
     type: Literal["status"]
+    # Optional: old boards omit it. Health never orders and never cancels (docs/PARALLEL_WORK.md, interface 7).
+    health: Health | None = None
 
 
 Event = Annotated[Union[SlotState, ManualLow, TemperatureAlarm, DeliveryCheck, Status], Field(discriminator="type")]
@@ -202,7 +241,14 @@ def events(ev: Event):
     elif "alarm" in data:
         device["alarm"] = data["alarm"]
     if data["type"] == "slot_state":
+        data = shelf.observe(data)  # the observation; with fill, units = round(fill x the assignment's target)
         device["slots"][str(data["slot"])] = {"state": data["state"], "units": data.get("estimated_units")}
+    if RECORDING_SESSION:
+        if data["type"] in ("slot_state", "manual_low"):
+            log.write("recording", {"summary": f"Recording session {RECORDING_SESSION}: slot {data['slot']} reads "
+                                    f"{data.get('state', 'low (knob)')}. Purchasing is isolated: no trigger.",
+                                    "event": data}, "device", ruleset["version"])
+        return {"status": "ignored", "reason": f"recording session {RECORDING_SESSION}: purchasing isolated"}
     result = agent.handle_event(data)
     if data["type"] == "delivery_check" and result.get("status") == "problem":
         device["problem_until"] = time.time() + 6
@@ -288,12 +334,82 @@ def device_state():
         "last_seen": datetime.fromtimestamp(seen, TZ).isoformat(timespec="seconds") if seen else None,
         "weekly_spent_eur": agent.weekly_spent_eur, "catalog": catalog.name, "text_scan_gaps": TEXT_SCAN_GAPS, "cold_alarm_c": agent.cold_alarm_c,
         "rule_set_version": ruleset["version"], "rule_set_sha256": ruleset["sha256"][:12],
-        "signed_by": ruleset.get("signed_by"), "pins_set": bool(PINS)}
+        "signed_by": ruleset.get("signed_by"), "pins_set": bool(PINS),
+        "recording_session": RECORDING_SESSION or None} | device_health()
+
+
+def device_health() -> dict:
+    """The last health the board sent and its age. Older than HEALTH_STALE_S counts as unknown."""
+    h = agent.last_health
+    age = round((datetime.now(TZ) - h["received"]).total_seconds(), 1) if h else None
+    return {"health": h["report"] if h else None, "health_age_s": age,
+            "health_known": age is not None and age <= SETTINGS.health_stale_s}
 
 
 @app.get("/rules")
 def rules():
     return ruleset
+
+
+# Shelf configuration (docs/PARALLEL_WORK.md, interfaces 4 and 9). The expectation comes from the
+# signed rule set; the observation from the device stays apart from it.
+
+class ShelfChange(BaseModel):
+    pin: str = ""
+    product_id: str | None = Field(default=None, min_length=1, max_length=40)
+    unmapped: bool = False  # true: the slot holds `product` (a name), with no catalog product and no purchasing
+    target_units: int | None = Field(default=None, ge=1, le=10000)
+    reorder_below: int | None = Field(default=None, ge=0, le=10000)
+    product: str | None = Field(default=None, min_length=1, max_length=80)  # name for search and pack size
+    group: str | None = Field(default=None, pattern=r"^[a-z0-9_]{1,40}$")  # substitute group of the slot
+
+
+def _approver(pin: str) -> str:
+    """The approver a PIN names. Wrong PINs count toward the same lock as on approvals."""
+    if not PINS:
+        raise HTTPException(503, "No approver PINs are set. Put APPROVER_PINS in valio-challenge/.env.")
+    now = time.time()
+    if now < pin_guard["locked_until"]:
+        raise HTTPException(429, f"Too many wrong PINs. Wait {PIN_LOCK_S} seconds.")
+    approver = PINS.get(pin)
+    if approver is None:
+        pin_guard["wrong"] = [t for t in pin_guard["wrong"] if now - t < PIN_WINDOW_S] + [now]
+        if len(pin_guard["wrong"]) >= WRONG_PINS:
+            pin_guard["wrong"], pin_guard["locked_until"] = [], now + PIN_LOCK_S
+        raise HTTPException(403, "Wrong PIN")
+    return approver
+
+
+def _slot_health(slot: int) -> dict | None:
+    """The board's last health for one slot (interface 7), with its age. Older than HEALTH_STALE_S is not known."""
+    d = device_health()
+    h = ((d["health"] or {}).get("slots") or {}).get(str(slot))
+    return None if h is None else dict(h) | {"age_s": d["health_age_s"], "known": d["health_known"]}
+
+
+def _activate(new: dict) -> None:
+    """Make a newly signed rule set version the one every part of the backend uses."""
+    global ruleset
+    ruleset = new
+    agent.rules = new
+    driving_test.rules = new
+
+
+@app.get("/shelf")
+def shelf_view():
+    """Per slot: the expected assignment with its assignment_id, then the observation and any pending order."""
+    return shelf.view(pending=agent.pending_for_slot, health=_slot_health)
+
+
+@app.put("/shelf/{slot}")
+def shelf_change(slot: int, c: ShelfChange):
+    """Change what a slot holds. This signs and activates a new rule set version; it never edits one."""
+    approver = _approver(c.pin)
+    try:
+        return shelf.change(slot, c.model_dump(exclude={"pin"}), approver, catalog, log,
+                            pending=agent.pending_for_slot, activate=_activate)
+    except ShelfError as e:
+        raise HTTPException(e.status, str(e)) from e
 
 
 @app.get("/log")
