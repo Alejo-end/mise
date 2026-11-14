@@ -52,3 +52,12 @@ Board "Junction", app-bricks images 0.13.2; example `examples:inspirational/vide
 started with `arduino-app-cli app start ...`; camera 1c45:6200 at YUYV 640x480 10 fps through the replaced hub.
 Captured frames at every stage are clean; the visible artifact was not reproduced in captured data. Open points:
 the reboots without shutdown, and the single boot-time enumeration error (-71) on the camera port.
+
+## Later observation (12:22 to 12:27 local)
+
+A fifth abrupt reboot: the boot that had run stably from 10:57 ended between 12:22:47 (last journal line) and 12:23:21
+(next boot), with no shutdown, kernel or watchdog message. It followed a restart of `safe-kitchen-agent` (which also
+flashes the MCU sketch and starts the USB camera) at 12:22 and three "Recognize shelf" presses at 12:23:12 to 12:23:14
+(the board JPEG-encodes a frame and posts it to the laptop). A sudden power loss also loses the journal's last
+seconds, so the exact time is unknown. Starting `safe-kitchen-agent` again at 12:26 did not reboot the board
+(uptime kept rising; camera OK; calibration kept). Cause still unknown; worth checking the board's power supply.
