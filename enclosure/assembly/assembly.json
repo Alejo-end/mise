@@ -38,18 +38,6 @@
    "surface": "part"
   },
   {
-   "name": "uno_q_screws",
-   "file": "uno_q_screws.stl",
-   "colour": "#b9bcc0",
-   "explode": [
-    0,
-    0,
-    58
-   ],
-   "label": "4 screws M3 x 6",
-   "surface": "metal"
-  },
-  {
    "name": "knob",
    "file": "knob.stl",
    "colour": "#1d3f8f",
@@ -71,18 +59,6 @@
     34
    ],
    "label": "Modulino Knob, encoder",
-   "surface": "metal"
-  },
-  {
-   "name": "knob_screws",
-   "file": "knob_screws.stl",
-   "colour": "#b9bcc0",
-   "explode": [
-    0,
-    0,
-    58
-   ],
-   "label": "4 screws M3 x 6",
    "surface": "metal"
   },
   {
@@ -110,44 +86,20 @@
    "surface": "part"
   },
   {
-   "name": "buzzer_screws",
-   "file": "buzzer_screws.stl",
-   "colour": "#b9bcc0",
-   "explode": [
-    0,
-    0,
-    58
-   ],
-   "label": "4 screws M3 x 6",
-   "surface": "metal"
-  },
-  {
    "name": "lid",
    "file": "lid.stl",
    "colour": "#e4e4e0",
    "explode": [
     0,
     0,
-    98
+    70
    ],
    "label": "Printed lid",
    "surface": "print"
   },
   {
-   "name": "lid_screws",
-   "file": "lid_screws.stl",
-   "colour": "#b9bcc0",
-   "explode": [
-    0,
-    0,
-    128
-   ],
-   "label": "4 screws M3 x 10",
-   "surface": "metal"
-  },
-  {
-   "name": "pod_base",
-   "file": "pod_base.stl",
+   "name": "thermo_pod_base",
+   "file": "thermo_pod_base.stl",
    "colour": "#cfd0cc",
    "explode": [
     0,
@@ -164,7 +116,7 @@
    "explode": [
     0,
     0,
-    18
+    16
    ],
    "label": "Modulino Thermo",
    "surface": "board"
@@ -176,34 +128,70 @@
    "explode": [
     0,
     0,
-    18
+    16
    ],
-   "label": "Modulino Thermo, sensor",
+   "label": "Modulino Thermo, parts",
    "surface": "part"
   },
   {
-   "name": "pod_cover",
-   "file": "pod_cover.stl",
+   "name": "thermo_pod_cover",
+   "file": "thermo_pod_cover.stl",
    "colour": "#e4e4e0",
    "explode": [
     0,
     0,
-    40
+    34
    ],
    "label": "Printed Thermo pod cover",
    "surface": "print"
   },
   {
-   "name": "pod_screws",
-   "file": "pod_screws.stl",
-   "colour": "#b9bcc0",
+   "name": "tof_pod_base",
+   "file": "tof_pod_base.stl",
+   "colour": "#cfd0cc",
    "explode": [
     0,
     0,
-    62
+    0
    ],
-   "label": "4 screws M3 x 10",
-   "surface": "metal"
+   "label": "Printed Distance pod base",
+   "surface": "print"
+  },
+  {
+   "name": "tof",
+   "file": "tof.stl",
+   "colour": "#c8102e",
+   "explode": [
+    0,
+    0,
+    16
+   ],
+   "label": "SparkFun ToF Imager VL53L5CX",
+   "surface": "board"
+  },
+  {
+   "name": "tof_parts",
+   "file": "tof_parts.stl",
+   "colour": "#2b2b2b",
+   "explode": [
+    0,
+    0,
+    16
+   ],
+   "label": "SparkFun ToF Imager VL53L5CX, parts",
+   "surface": "part"
+  },
+  {
+   "name": "tof_pod_cover",
+   "file": "tof_pod_cover.stl",
+   "colour": "#e4e4e0",
+   "explode": [
+    0,
+    0,
+    34
+   ],
+   "label": "Printed Distance pod cover",
+   "surface": "print"
   }
  ]
 }
