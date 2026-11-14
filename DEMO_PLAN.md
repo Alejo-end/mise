@@ -350,7 +350,7 @@ The milestone is done after this sequence works end to end:
 
 Work in this order. Stop at any point, and the demo still runs.
 
-1. Must, by 12:00: the demo runs against the live Valio API. The pipeline works on the real product file with `rules/school_kitchen_valio.yaml`. One job is open: put `VALIO_API_KEY` in `.env`, start with `CATALOG=valio`, and run the five demo steps once.
+1. Must, by 12:00: the demo runs against the live Valio API. The pipeline works on the real product file with `rules/school_kitchen_valio.yaml`. The key is in `.env`, and a script ran the gateway on the live API on 14 November at 09:12. One job is open: run the demo steps once by hand.
 2. Must, by 15:00: idempotent orders, error handling, and the approval order fix from the Robustness table. Review with the Valio mentors, and ask how the judging runs.
 3. Next, by 18:00: the shelf trigger on the real shelf, and the dirty-data cases with their three counts.
 4. 18:00: feature freeze for the core.

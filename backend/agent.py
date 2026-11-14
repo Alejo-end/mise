@@ -140,8 +140,9 @@ class Agent:
                            self.rules["version"], run_id=run)
             return {"status": "error", "reason": str(e)}
 
-    def handle_request(self, text: str, product_id: str | None = None) -> dict:
-        """A text request from the chef, for example '1,000 litres of lactose-free milk by Monday'."""
+    def handle_request(self, text: str, product_id: str | None = None, asked_by: str | None = None) -> dict:
+        """A text request from a person in the kitchen, for example '1,000 litres of lactose-free milk by Monday'.
+        `asked_by` is the name that the log and the approval request show."""
         run = uuid.uuid4().hex[:8]
         target = match_target(text, self.rules["targets"])
         # The deadline comes out first, so "by 17.11." is not read as 17 units.
@@ -150,8 +151,9 @@ class Agent:
         understood = f"{qty} × {target['product'] if target else 'unknown product'}"
         if deadline:
             understood += f", needed by {deadline:%a %d.%m. %H:%M}"
-        self.log.write("trigger", {"summary": f"The chef asked: \"{text}\". Understood as {understood}.", "text": text,
-                                   "quantity": qty, "needed_by": deadline, "product_id": product_id}, "chef",
+        self.log.write("trigger", {"summary": f"{asked_by or 'The chef'} asked: \"{text}\". Understood as {understood}.",
+                                   "text": text, "quantity": qty, "needed_by": deadline, "product_id": product_id},
+                       asked_by or "chef",
                        self.rules["version"], run_id=run)
         if product_id:
             # The chef (or a judge) names one product. It still goes through the rule check.

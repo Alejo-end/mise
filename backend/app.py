@@ -140,6 +140,7 @@ class Decision(BaseModel):
 class TextRequest(BaseModel):
     text: str
     product_id: str | None = None
+    asked_by: str | None = Field(default=None, max_length=60)  # the person who asks; the log and the approver see it
 
 
 class DeliveryBody(BaseModel):
@@ -224,7 +225,13 @@ app.include_router(make_router(agent, catalog, driving_test, log, Signer(os.gete
 
 @app.get("/approvals/open")
 def approvals_open():
-    return agent.open_approvals()
+    """The open approval requests. Each one says who started it: a person, the shelf camera or an outside agent."""
+    waiting = agent.open_approvals()
+    runs = {a["run_id"] for a in waiting}
+    started = {e["run_id"]: e for e in log.entries(2000) if e["step"] == "trigger" and e["run_id"] in runs}
+    return [a | {"asked_by": started[a["run_id"]]["actor"] if a["run_id"] in started else None,
+                 "request": started[a["run_id"]]["detail"].get("text") if a["run_id"] in started else None}
+            for a in waiting]
 
 
 def approver_of(pin: str) -> str:
@@ -297,7 +304,7 @@ def get_log(format: str = "story", limit: int = 200):
 
 @app.post("/request")
 def text_request(r: TextRequest):
-    return agent.handle_request(r.text, r.product_id)
+    return agent.handle_request(r.text, r.product_id, (r.asked_by or "").strip() or None)
 
 
 @app.get("/orders")

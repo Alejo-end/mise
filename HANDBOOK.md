@@ -122,8 +122,8 @@ Run every command from `valio-challenge/`. You need `uv`.
 
 1. Put the approver PINs in `.env`, for example `APPROVER_PINS=4821:Head chef`.
 2. Start the backend: `uv run uvicorn backend.app:app --host 0.0.0.0 --port 8000`.
-3. Open `http://localhost:8000/approve`. On a phone, use the laptop's address on the same hotspot.
-4. Run the tests: `uv run pytest`. 155 tests pass.
+3. Open `http://localhost:8000/approve`. On a phone, use the laptop's address on the same hotspot. The page has three roles: the head chef approves, the kitchen asks, and the wholesaler admits agents. A phone opens as the head chef. Add `?as=kitchen` or `?as=valio` to the address to open another role.
+4. Run the tests: `uv run pytest`. 156 tests pass.
 
 To run on the real Valio catalog, add three lines to `.env` and start the backend again:
 
@@ -133,7 +133,7 @@ CATALOG=valio
 RULES_FILE=rules/school_kitchen_valio.yaml
 ```
 
-The product file must be in `data/valio/`. Rule set version 4 names real product codes. If the rule set and the catalog do not match, the app refuses to start.
+The product file must be in `data/valio/`. The tests always run on the stand-in catalog, whatever `.env` says. Rule set version 4 names real product codes. If the rule set and the catalog do not match, the app refuses to start.
 
 To let a real language model take the Driving Test, add `ANTHROPIC_API_KEY=<key>` to `.env`. Then send `{"agent": "claude"}` to `POST /sandbox/test`. The model gets the tool descriptions, the request and the kitchen's rules, and no hint about the scenarios. One run makes about 30 model calls.
 
@@ -176,8 +176,8 @@ In a warm room, the cold room alarm is on. Then the buzzer plays the alarm, and 
 | Rule check, buying pipeline, approvals, audit log | Work on the stand-in catalog, with tests |
 | Shelf box app and enclosure | Built, and the version of 14 November runs on the board. The camera count is a rough estimate from two photos, not a real count |
 | Shelf box on 14 November at 02:40 | The app talks to the backend. No Modulino answered on the Qwiic port, and no camera was plugged in. So the knob, the Thermo, the buzzer and the camera are not tested with this version |
-| Real catalog adapter (`backend/valio.py`, `backend/allergens.py`) | Built and tested on the real product file with a fake API. Not tested against the live API: no API key is on this laptop |
-| Buying pipeline on the real catalog | Works on the real product file with rule set version 4. Tests use a stand-in for the two live calls. Nobody ran it against the live API yet |
+| Real catalog adapter (`backend/valio.py`, `backend/allergens.py`) | Built and tested on the real product file. The two live calls answer: price and stock for one product came back in under a second |
+| Buying pipeline on the real catalog | Works on the real product file with rule set version 4. Tests use a stand-in for the two live calls. On 14 November at 09:12 the gateway ran on the live API with the script of the demo: price and stock, a signed quote, an order, and the request for 1,000 litres with an approval. The shelf box and the phone page were not part of that run |
 | Gateway calls for an outside agent | Built, with tests: lookup, quote, order, order state and audit under `/gateway`. Each call needs the licence of the Driving Test. Quotes and order answers are signed. Licences and orders survive a restart. An order never goes above the quoted price. One licence gets 60 lookups per minute, and an approver can end it |
 | Agent Driving Test | Works. The "naive agent" is a script, not a language model. An agent that does nothing fails. A pass gives a licence only with the PIN of an approver. An agent of another company takes the test over the network, and a test agent in our test suite does so. No agent of a real company took it yet. A real model can take the test (`backend/model_agent.py`), but nobody ran it yet: no model key is on this laptop |
 | Delivery check (Cold Chain Proof) | Works on the stand-in catalog. The Thermo measures air, not food |
