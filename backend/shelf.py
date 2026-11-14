@@ -252,32 +252,3 @@ class Shelf:
                     "calibration_stale": after.assignment_id != before.assignment_id,
                     "pending_order": p, "warnings": warnings, "summary": summary}
 
-
-def pending_for_slot(agent, slot: int, shelf: Shelf | None = None) -> dict | None:
-    """The open request or placed order of a slot, with the product and rule set version it was made with.
-
-    Interface 8: worktree 1 adds Agent.pending_for_slot. Until it exists, the same record is read from
-    the agent's open approvals and orders and the audit log, without changing the agent.
-    """
-    own = getattr(agent, "pending_for_slot", None)
-    if callable(own):
-        return own(slot)
-    approval = next((a for a in agent.open_approvals() if a.get("slot") == slot), None)
-    if approval is not None:
-        run, since, status = approval["run_id"], approval.get("created"), "approval"
-        lines = [l for o in approval.get("options", []) for l in o.get("lines", [])]
-    elif slot in agent.pending_slots:
-        order = max((o for o in agent.orders.values() if o.get("slot") == slot), key=lambda o: o["time"], default=None)
-        if order is None:
-            return None  # the trigger is still being worked on
-        run, since, status, lines = order["run_id"], order["time"], "ordered", order.get("lines", [])
-    else:
-        return None
-    trigger = next((e for e in reversed(agent.log.entries(limit=100000))
-                    if e["run_id"] == run and e["step"] == "trigger"), None)
-    version = trigger["rule_set_version"] if trigger else None
-    rules = shelf.by_version(version) if shelf and version is not None else None
-    target = R.target_for_slot(rules, slot) if rules else None
-    product_id = (target or {}).get("product_id") or next((l["product_id"] for l in lines if l.get("usual")), None)
-    return {"slot": slot, "product_id": None if product_id is None else str(product_id), "rule_set_version": version,
-            "run_id": run, "since": since, "status": status}

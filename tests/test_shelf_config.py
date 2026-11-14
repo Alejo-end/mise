@@ -8,6 +8,7 @@ import hashlib
 import importlib
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,8 +16,11 @@ import yaml
 from fastapi.testclient import TestClient
 
 from backend import rules as R
+from backend.shelf import assignments
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "device" / "python"))
+import shelf_detect  # noqa: E402  the board's own parser of GET /shelf
 BASE = ROOT / "rules" / "school_kitchen.yaml"
 PIN = "4821"
 
@@ -29,7 +33,6 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("GATEWAY_KEY", str(tmp_path / "key.pem"))
     monkeypatch.setenv("RULES_FILE", str(BASE))
     monkeypatch.setenv("RESTOCK_MIN_S", "0")
-    monkeypatch.delenv("RULE_VERSIONS_DIR", raising=False)
     return tmp_path
 
 
@@ -59,6 +62,36 @@ def test_the_shelf_lists_each_slot_of_the_signed_rule_set_with_its_assignment_id
     assert s3["rule_set_version"] == 3 and s3["assignment_id"] == "v3:MOCK-MILK-LF-1L"
     assert s3["observation"] is None and s3["pending_order"] is None
     assert set(s3) == ASSIGNMENT_KEYS | {"observation", "pending_order"}
+
+
+def test_the_real_rule_set_gives_the_ids_the_board_expects():
+    """Interface 9 and the board's tests use "v4:464316" for slot 2 of rule set v4 (the real catalog)."""
+    real = R.load_rules(ROOT / "rules" / "school_kitchen_valio.yaml")
+    rows = [a.to_dict() for a in assignments(real)]
+    assert shelf_detect.assignments_from_shelf(rows) == {1: "v4:477032", 2: "v4:464316", 3: "v4:463335"}
+
+
+def test_the_board_reads_the_shelf_answer_before_and_after_a_change(env):
+    _, c = start()
+    assert shelf_detect.assignments_from_shelf(c.get("/shelf").json()) == {
+        1: "v3:MOCK-BREAD-RYE-500", 2: "v3:MOCK-YOG-NAT-1KG", 3: "v3:MOCK-MILK-LF-1L"}
+    c.put("/shelf/3", json={"pin": PIN, "product_id": "MOCK-MILK-LF-1L-B"})
+    seen = shelf_detect.assignments_from_shelf(c.get("/shelf").json())
+    assert seen[3] == "v4:MOCK-MILK-LF-1L-B"  # the board marks slot 3 stale until it is calibrated again
+    assert seen[1] == "v3:MOCK-BREAD-RYE-500" and seen[2] == "v3:MOCK-YOG-NAT-1KG"  # these photos stay valid
+
+
+def test_the_boards_health_shows_with_the_observation_not_the_assignment(env):
+    _, c = start()
+    health = {"camera_ok": True, "frame_age_s": 0.4, "config_valid": True, "config_errors": [],
+              "slots": {"2": {"state": "low", "fill": 0.43, "calibration": "stale",
+                              "assignment_id": "v2:OLD"}}}
+    assert c.post("/events", json={"type": "status", "health": health}).status_code == 200
+    s2 = slot(c.get("/shelf").json(), 2)
+    assert s2["assignment_id"] == "v3:MOCK-YOG-NAT-1KG"  # the expectation; the board's photos show v2:OLD
+    h = s2["observation"]["health"]
+    assert h["calibration"] == "stale" and h["assignment_id"] == "v2:OLD" and h["known"] is True
+    assert slot(c.get("/shelf").json(), 1)["observation"] is None
 
 
 def test_the_observation_is_kept_apart_from_the_assignment(env):
@@ -348,21 +381,9 @@ def test_a_pending_order_survives_a_product_change(env):
     assert slot(after.get("/shelf").json(), 3)["product_id"] == "MOCK-MILK-LF-1L-B"
 
 
-def test_the_pending_record_of_the_agent_is_used_when_it_exists(env):
-    """Interface 8: once worktree 1's Agent.pending_for_slot exists, the shelf reads it instead of its fallback."""
+def test_versions_live_next_to_the_audit_log(env):
     m, c = start()
-    record = {"slot": 2, "product_id": "MOCK-YOG-NAT-1KG", "rule_set_version": 3, "run_id": "r1",
-              "since": "2026-11-14T06:00:00+02:00", "status": "ordered"}
-    m.agent.pending_for_slot = lambda s: record if s == 2 else None
-    p = slot(c.get("/shelf").json(), 2)["pending_order"]
-    assert p == record | {"made_for_current_assignment": True}
-    assert slot(c.get("/shelf").json(), 1)["pending_order"] is None
-
-
-def test_versions_live_next_to_the_audit_log_unless_set(env, monkeypatch):
-    m, _ = start()
     assert m.shelf.versions_dir == env / "a-rule-versions"
-    monkeypatch.setenv("RULE_VERSIONS_DIR", str(env / "elsewhere"))
-    m, c = start()
     c.put("/shelf/3", json={"pin": PIN, "product_id": "MOCK-MILK-LF-1L-B"})
-    assert (env / "elsewhere" / "school_kitchen.v4.yaml").exists()
+    assert sorted(f.name for f in m.shelf.versions_dir.iterdir()) == ["school_kitchen.v4.signed.json",
+                                                                       "school_kitchen.v4.yaml"]
