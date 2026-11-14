@@ -52,6 +52,9 @@
   .box .h { position:absolute; right:-14px; bottom:-14px; width:28px; height:28px; border-radius:50%; background:#fff; border:2px solid #000; cursor:nwse-resize }
   .box.low, .box.empty { border-color:var(--orange) } .box.low b, .box.empty b { background:var(--orange) }
   .box.empty { border-style:dashed }
+  .box.conflict { border-color:#e5484d; border-width:4px } .box.conflict b { background:#e5484d; color:#fff }
+  .cam.editing .box { outline:2px dashed rgba(255,255,255,.6); outline-offset:3px }
+  .layoutmsg { margin:.4rem 0 0; font-weight:700 } .layoutmsg.warn { color:#e5484d }
 
   /* Shelf: one channel strip per spot, like a mixer */
   .channels { display:grid; grid-template-columns:1fr; border:1.5px solid var(--line); border-radius:8px; overflow:hidden }
@@ -158,8 +161,9 @@
         <h2>set up the shelf <small>once, in order</small></h2>
         <ol class="steps" id="steps">
           <li id="s1"><div><b>Connect the camera</b><p>Camera and power supply into the dongle first, then the dongle into the board.</p></div></li>
-          <li id="s2"><div><b>Place the boxes</b><p>Drag the three boxes over the three product spots.</p>
-            <div class="keys"><button id="boxesOk">The boxes are in place</button></div></div></li>
+          <li id="s2"><div><b>Place the boxes</b><p>Press <b>Edit boxes</b>, drag every box over its product spot (drag the round corner to resize), then press <b>Save boxes</b>. Nothing is saved until then, and purchasing is paused while you edit.</p>
+            <div class="keys"><button id="editBoxes">Edit boxes</button><button class="primary" id="saveBoxes" hidden>Save boxes</button><button id="cancelBoxes" hidden>Cancel</button><button id="boxesOk">The boxes are in place</button></div>
+            <p class="layoutmsg" id="layoutMsg" aria-live="polite"></p></div></li>
           <li id="s3"><div><b>Take the empty photo</b><p>Take every product off the shelf.</p>
             <div class="keys"><button class="primary" data-cal="empty">Shelf is empty: save photo</button></div></div></li>
           <li id="s4"><div><b>Take the full photo</b><p>Put every product back.</p>
@@ -211,6 +215,18 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const socket = io(`http://${window.location.host}`);
 let S = null, slots = [], dragging = null, settingsOpen = false;
+let editing = false, conflicts = new Set(), pendingLayoutSave = false;  // box layout draft (Edit boxes)
+
+// The board's overlap rule (shelf_detect.overlapping_slots): more than 5% of the smaller box.
+function overlapPairs(list) {
+  const out = [];
+  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+    const [ax, ay, aw, ah] = list[i].rect, [bx, by, bw, bh] = list[j].rect;
+    const w = Math.min(ax + aw, bx + bw) - Math.max(ax, bx), h = Math.min(ay + ah, by + bh) - Math.max(ay, by);
+    if (Math.max(0, w) * Math.max(0, h) > 0.05 * Math.min(aw * ah, bw * bh)) out.push([list[i].slot, list[j].slot]);
+  }
+  return out;
+}
 let boxesOk = false;
 try { boxesOk = localStorage.getItem("boxesOk") === "1"; } catch (e) {}
 const KNOB_MAX = 300, SIGNED_LIMIT = 150;  // the knob's range on the box, and the limit the chef signed
@@ -221,7 +237,8 @@ function log(line) { $("log").textContent = `${new Date().toLocaleTimeString()} 
 socket.on("connect", () => socket.emit("get_state", {}));
 socket.on("disconnect", () => { S && (S._offline = true); renderPills(); });
 socket.on("frame", (m) => { const f = $("frame"); f.src = `data:image/jpeg;base64,${m.image}`; f.hidden = false; $("nocam").hidden = true; });
-socket.on("sensors", (s) => { S = s; if (!dragging) slots = JSON.parse(JSON.stringify(s.config.slots)); render(); });
+// While editing, box moves live only in the local draft: the board's updates never overwrite them.
+socket.on("sensors", (s) => { S = s; if (!dragging && !editing) slots = JSON.parse(JSON.stringify(s.config.slots)); render(); });
 socket.on("event", (m) => {
   const e = m.event, r = m.reply || {};
   log(`${e.type}${e.slot ? " slot " + e.slot : ""}${e.state ? " " + e.state : ""} → ${r.status || "?"}`);
@@ -232,7 +249,21 @@ socket.on("event", (m) => {
   }
 });
 socket.on("calibrate_response", (r) => { r.ok ? toast(`Saved the ${r.kind} photo.`) : toast(r.error); });
-socket.on("save_config_response", (r) => toast(r.ok ? "Settings saved." : r.error));
+socket.on("save_config_response", (r) => {
+  const layoutSave = pendingLayoutSave; pendingLayoutSave = false;
+  if (!r.ok) {  // refused: keep the draft and mark the boxes that still overlap
+    if (layoutSave) conflicts = new Set((r.conflicts || []).flat());
+    toast(r.error); render(); return;
+  }
+  if (layoutSave) {
+    editing = false; conflicts = new Set(); boxesOk = true;
+    try { localStorage.setItem("boxesOk", "1"); } catch (e) {}
+    const moved = r.moved || [];
+    toast(moved.length ? `Boxes saved. Spot${moved.length > 1 ? "s" : ""} ${moved.join(", ")} moved: save the empty photo and the full photo again.`
+                       : "Boxes saved.");
+  } else toast("Settings saved.");
+  render();
+});
 socket.on("simulate_response", () => {});
 socket.on("update_response", (r) => { const m = r.ok ? r.message : `Update failed: ${r.error}`; $("updateMsg").textContent = m; toast(m); });
 
@@ -297,10 +328,29 @@ function render() {
       <div class="meter" aria-hidden="true">${Array.from({length: 10}, (_, i) => `<i class="${i < lit ? "lit" : ""}"></i>`).join("")}</div></div>`;
   }).join("");
 
-  // Setup steps
-  const allEmpty = S.config.slots.every(c => (S.calibrated[c.slot] || []).includes("empty"));
-  const allFull = S.config.slots.every(c => (S.calibrated[c.slot] || []).includes("full"));
-  const done = [S.camera_ok || allEmpty, boxesOk, allEmpty, allFull];
+  // Setup steps. A moved box needs both new photos: S.recalibrate = {slot: kinds saved since the move}.
+  const recal = S.recalibrate || {}, recalSlots = Object.keys(recal);
+  const allEmpty = S.config.slots.every(c => (S.calibrated[c.slot] || []).includes("empty"))
+                   && recalSlots.every(k => recal[k].includes("empty"));
+  const allFull = S.config.slots.every(c => (S.calibrated[c.slot] || []).includes("full")) && recalSlots.length === 0;
+  const layoutBad = (S.layout_errors || []).length > 0;
+  const done = [S.camera_ok || allEmpty, boxesOk && !layoutBad && !editing, allEmpty, allFull];
+  $("editBoxes").hidden = editing; $("saveBoxes").hidden = !editing; $("cancelBoxes").hidden = !editing;
+  $("boxesOk").hidden = editing || layoutBad;
+  $("cam").classList.toggle("editing", editing);
+  const msg = $("layoutMsg");
+  if (editing) {
+    const left = overlapPairs(slots);
+    msg.className = "layoutmsg" + (left.length ? " warn" : "");
+    msg.textContent = left.length ? `Still overlapping: ${left.map(p => p.join(" and ")).join(", ")}. Purchasing is paused while you edit.`
+                                  : "No overlaps. Press Save boxes. Purchasing is paused while you edit.";
+  } else if (layoutBad) {
+    msg.className = "layoutmsg warn";
+    msg.textContent = "The saved boxes are not valid, so stock events are paused: " + S.layout_errors.join("; ") + ". Press Edit boxes.";
+  } else if (recalSlots.length) {
+    msg.className = "layoutmsg warn";
+    msg.textContent = `Spot${recalSlots.length > 1 ? "s" : ""} ${recalSlots.join(", ")} moved: save the empty photo and the full photo again. Until then ${recalSlots.length > 1 ? "they do" : "it does"} not order.`;
+  } else { msg.className = "layoutmsg"; msg.textContent = ""; }
   const now = done.indexOf(false);
   ["s1","s2","s3","s4"].forEach((id, i) => {
     const li = $(id); li.className = done[i] ? "done" : i === now ? "now" : "later";
@@ -347,16 +397,17 @@ function renderBoxes() {
   slots.forEach((s, i) => {
     const st = S && S.slots[s.slot] ? S.slots[s.slot].state || "" : "";
     const [x, y, w, h] = s.rect, b = document.createElement("div");
-    b.className = `box ${st}`; b.dataset.i = i;
+    b.className = `box ${st}${conflicts.has(s.slot) ? " conflict" : ""}`; b.dataset.i = i;
     Object.assign(b.style, {left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${h * 100}%`});
     b.innerHTML = `<b>${s.slot}</b><span class="h"></span>`; b.title = s.product_hint;
     cam.appendChild(b);
   });
 }
 
-// Drag to move, drag the corner to resize. Saved when the finger or mouse lifts.
+// Drag to move, drag the corner to resize, only after "Edit boxes". Moves stay in the draft until "Save boxes".
 $("cam").addEventListener("pointerdown", (e) => {
   const box = e.target.closest(".box"); if (!box) return;
+  if (!editing) { toast("Press Edit boxes first."); return; }
   const r = $("cam").getBoundingClientRect(), i = Number(box.dataset.i);
   dragging = {i, resize: e.target.classList.contains("h"), x0: e.clientX, y0: e.clientY, rect: slots[i].rect.slice(), r};
   $("cam").setPointerCapture(e.pointerId); e.preventDefault();
@@ -373,9 +424,19 @@ $("cam").addEventListener("pointermove", (e) => {
 $("cam").addEventListener("pointerup", () => {
   if (!dragging) return;
   dragging = null;
-  socket.emit("save_config", {slots});
-  toast("Box moved. Take the empty and full photos again so the board learns the new spot.");
+  conflicts = new Set(overlapPairs(slots).flat());  // live feedback only; nothing is saved yet
+  render();
 });
+$("editBoxes").onclick = () => {
+  editing = true; conflicts = new Set(overlapPairs(slots).flat());
+  socket.emit("setup", {on: true}); render();
+};
+$("saveBoxes").onclick = () => { pendingLayoutSave = true; socket.emit("save_config", {slots}); };
+$("cancelBoxes").onclick = () => {
+  editing = false; conflicts = new Set();
+  if (S) slots = JSON.parse(JSON.stringify(S.config.slots));  // throw the draft away
+  socket.emit("setup", {on: false}); render();
+};
 
 document.addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;

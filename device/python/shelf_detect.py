@@ -278,3 +278,83 @@ def build_health(trackers: dict, slot_ids: list[int], camera_ok: bool, frame_age
             "frame_age_s": None if frame_age_s is None else round(max(0.0, float(frame_age_s)), 1),
             "config_valid": not errors, "config_errors": list(errors), "assignment_check": assignment_check,
             "slots": slots}
+
+
+# Layout editing (14 Nov, after the "boxes overlap, cannot repair one at a time" blocker) ----------------
+#
+# The page keeps box moves in a local draft and sends the complete layout once ("Save boxes").
+# apply_layout() validates that complete layout and never changes the active one when it fails.
+# While the person edits, and while the saved layout is invalid, no slot may become a stock change.
+# A moved box needs new empty and full photos before its slot counts again.
+
+SETUP_WHY = "setting up the boxes; purchasing is paused"
+LAYOUT_WHY = "the saved boxes are not valid; edit the boxes, move them apart and save"
+RECAL_WHY = "this box moved; save the empty photo and the full photo again"
+
+
+def moved_slots(old_slots: list[dict] | None, new_slots: list[dict] | None, tol: float = 1e-3) -> list[int]:
+    """Slots whose rectangle is new or changed (by more than tol in any coordinate)."""
+    old = {s.get("slot"): s.get("rect") for s in old_slots or [] if isinstance(s, dict)}
+    out = []
+    for s in new_slots or []:
+        if not isinstance(s, dict):
+            continue
+        r0, r1 = old.get(s.get("slot")), s.get("rect")
+        if (not isinstance(r0, (list, tuple)) or not isinstance(r1, (list, tuple)) or len(r0) != 4 or len(r1) != 4
+                or any(abs(float(a) - float(b)) > tol for a, b in zip(r0, r1))):
+            out.append(s.get("slot"))
+    return sorted(n for n in out if n is not None)
+
+
+def apply_layout(cfg: dict, new_slots: list[dict]) -> dict:
+    """Validate a complete box layout. Returns {"ok", "config", "moved", "errors", "conflicts"}.
+    "config" is the new active configuration when ok, else the unchanged cfg (never a partial layout)."""
+    candidate = {**cfg, "slots": new_slots}
+    errors = config_errors(candidate)
+    shaped = [s for s in new_slots or [] if isinstance(s, dict) and isinstance(s.get("slot"), int)
+              and isinstance(s.get("rect"), (list, tuple)) and len(s["rect"]) == 4]
+    conflicts = [[a, b] for a, b in overlapping_slots(shaped)]
+    if errors:
+        return {"ok": False, "config": cfg, "moved": [], "errors": errors, "conflicts": conflicts}
+    return {"ok": True, "config": candidate, "moved": moved_slots(cfg.get("slots"), new_slots),
+            "errors": [], "conflicts": []}
+
+
+def recal_after_move(recal: dict | None, moved: list[int]) -> dict:
+    """Mark moved slots as needing new photos: slot -> kinds saved since the move (none yet)."""
+    out = {str(k): list(v) for k, v in (recal or {}).items()}
+    for n in moved:
+        out[str(n)] = []
+    return out
+
+
+def recal_note_photo(recal: dict | None, slot: int, kind: str) -> dict:
+    """Record a saved photo; a slot is done once both its empty and full photos are new."""
+    out = {str(k): list(v) for k, v in (recal or {}).items()}
+    key = str(slot)
+    if key in out:
+        kinds = sorted(set(out[key]) | {kind})
+        if {"empty", "full"} <= set(kinds):
+            out.pop(key)
+        else:
+            out[key] = kinds
+    return out
+
+
+def needs_recal(recal: dict | None, slot: int) -> bool:
+    return str(slot) in (recal or {})
+
+
+def gate_layout(reading: tuple, layout_ok: bool, recal: bool, setup: bool) -> tuple:
+    """classify()'s (state, fill, why), made uncertain while editing, with an invalid saved layout, or
+    for a moved box without new photos. Uncertain never becomes a stock change."""
+    st, fill, why = reading
+    if st is None:
+        return reading
+    if setup:
+        return "uncertain", fill, SETUP_WHY
+    if not layout_ok:
+        return "uncertain", fill, LAYOUT_WHY
+    if recal:
+        return "uncertain", fill, RECAL_WHY
+    return reading

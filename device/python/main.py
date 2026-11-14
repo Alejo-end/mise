@@ -322,6 +322,30 @@ def load_meta(slot: int) -> dict:
 
 calib_meta = {s["slot"]: load_meta(s["slot"]) for s in config["slots"]}
 
+# Layout editing: which moved boxes still need new photos (kept across restarts), the setup pause,
+# and the validity of the saved layout (an invalid saved layout never produces stock events).
+LAYOUT_FILE = DATA / "layout.json"
+SETUP_MAX_S = 1800  # the setup pause ends by itself after 30 minutes without a save
+
+
+def load_layout_state() -> dict:
+    try:
+        return {"recalibrate": json.loads(LAYOUT_FILE.read_text()).get("recalibrate", {})}
+    except Exception:
+        return {"recalibrate": {}}
+
+
+layout = load_layout_state()
+state["setup_until"] = 0.0
+state["layout_errors"] = shelf_detect.config_errors(config)
+
+
+def save_layout_state():
+    try:
+        LAYOUT_FILE.write_text(json.dumps(layout, indent=2))
+    except OSError as e:
+        logger.warning(f"could not save the layout state: {e}")
+
 
 def calibrated_for(slot: int):
     return shelf_detect.calibrated_for(calib_meta.get(slot), ref_path(slot, "full").exists())
@@ -341,10 +365,15 @@ def classify(slot_cfg: dict, patch: np.ndarray):
 
 def process_frame(img: Image.Image, frame_id: int, t: float):
     quiet = time.time() < state["quiet_until"]
+    setup = time.time() < state["setup_until"]
+    layout_ok = not state["layout_errors"]
     for s in config["slots"]:
         slot = s["slot"]
         # A slot whose photos are for another product is uncertain until someone saves new photos.
-        st, fill, why = shelf_detect.gate_calibration(classify(s, crop(img, s["rect"])), calibration_of(slot))
+        reading = shelf_detect.gate_calibration(classify(s, crop(img, s["rect"])), calibration_of(slot))
+        # Setting up, an invalid saved layout, or a moved box without new photos: uncertain, no stock event.
+        st, fill, why = shelf_detect.gate_layout(reading, layout_ok, shelf_detect.needs_recal(layout["recalibrate"], slot),
+                                                 setup)
         with lock:
             cur = state["slots"].setdefault(slot, shelf_detect.new_tracker())
             changed = shelf_detect.observe(cur, st, fill, s["target_units"], frame_id, t, config, quiet, why)
@@ -403,6 +432,9 @@ def sensors():
         "calibrated": {str(s["slot"]): [k for k in ("empty", "full") if ref_path(s["slot"], k).exists()] for s in config["slots"]},
         "health": health_or_none(),
         "shelf_error": state["shelf_error"],
+        "setup": time.time() < state["setup_until"],
+        "layout_errors": state["layout_errors"],
+        "recalibrate": layout["recalibrate"],
     }
 
 
@@ -438,6 +470,8 @@ def on_calibrate(_sid, data):
             logger.warning(f"could not save the calibration record of slot {s['slot']}: {e}")
         with lock:
             state["slots"].pop(s["slot"], None)
+        layout["recalibrate"] = shelf_detect.recal_note_photo(layout["recalibrate"], s["slot"], kind)
+    save_layout_state()
     # Calibrating means hands and products moving in front of the camera: no stock events for a while.
     start_quiet_period()
     logger.info(f"saved {kind} photo for slots {[s['slot'] for s in which]}")
@@ -445,19 +479,44 @@ def on_calibrate(_sid, data):
 
 
 def on_save_config(_sid, data):
+    """Settings and the box layout. A layout is validated complete and activated all at once; a refused
+    layout leaves the active one untouched (the page keeps its draft). Saving names, targets or other
+    settings with unchanged boxes is never blocked by the saved layout's validity."""
+    moved = []
     if "slots" in data:
-        bad = shelf_detect.overlapping_slots(data["slots"])
-        if bad:
-            pairs = ", ".join(f"{a} and {b}" for a, b in bad)
-            return {"ok": False, "error": f"Spots {pairs} overlap, so one product would move both. "
-                                          "Move them apart and save again."}
+        new = data["slots"]
+        geometry = (not isinstance(new, list) or len(new) != len(config["slots"])
+                    or shelf_detect.moved_slots(config["slots"], new))
+        if geometry:
+            result = shelf_detect.apply_layout(config, new)
+            if not result["ok"]:
+                return {"ok": False, "conflicts": result["conflicts"], "errors": result["errors"],
+                        "error": "Boxes not saved: " + "; ".join(result["errors"])
+                                 + ". Your moves are kept: move the red boxes apart and save again."}
+            moved = result["moved"]
+            layout["recalibrate"] = shelf_detect.recal_after_move(layout["recalibrate"], moved)
+            save_layout_state()
+            with lock:
+                for n in moved:
+                    state["slots"].pop(n, None)
+            state["setup_until"] = 0.0  # the new layout is saved; moved boxes stay paused until new photos
         start_quiet_period()
     for key in ("backend_url", "temperature_limit_c", "manual_slot", "slots"):
         if key in data:
             config[key] = data[key]
     save_config()
+    state["layout_errors"] = shelf_detect.config_errors(config)
     ui.send_message("sensors", sensors())
-    return {"ok": True}
+    return {"ok": True, "moved": moved, "recalibrate": sorted(int(k) for k in layout["recalibrate"])}
+
+
+def on_setup(_sid, data):
+    """The page's "Edit boxes" (on) and "Cancel" (off): pause stock events while the person edits."""
+    on = bool((data or {}).get("on"))
+    state["setup_until"] = time.time() + SETUP_MAX_S if on else 0.0
+    logger.info(f"box setup {'started: stock events paused' if on else 'ended'}")
+    ui.send_message("sensors", sensors())
+    return {"ok": True, "setup": on}
 
 
 def on_simulate(_sid, data):
@@ -472,6 +531,7 @@ def on_simulate(_sid, data):
 ui = WebUI()
 ui.on_message("calibrate", on_calibrate)
 ui.on_message("save_config", on_save_config)
+ui.on_message("setup", on_setup)
 ui.on_message("simulate", on_simulate)
 ui.on_message("delivery_check", lambda _sid, _d: start_delivery_check())
 ui.on_message("get_state", lambda sid, _d: ui.send_message("sensors", sensors(), sid))

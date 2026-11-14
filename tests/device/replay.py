@@ -118,11 +118,13 @@ def replay_baseline(frames: list[Frame], seq: Sequence, interval: float | None =
 
 
 def replay_board(frames: list[Frame], seq: Sequence, overrides: dict | None = None, interval: float | None = None,
-                 end: float | None = None, calibration: dict[int, str] | None = None) -> tuple[list[Event], dict]:
+                 end: float | None = None, calibration: dict[int, str] | None = None,
+                 recalibrate: dict | None = None, setup: bool = False) -> tuple[list[Event], dict]:
     """Run the current board loop over frames. overrides replaces config keys, for example the slots.
     calibration: slot -> "ok" / "stale" as main.calibration_of() would say (default "ok")."""
     calibration = calibration or {}
     cfg = {**seq.config, **(overrides or {})}
+    layout_ok = not sd.config_errors(cfg)  # main.state["layout_errors"]
     interval = interval or float(cfg.get("frame_interval_s", 1.0))
     trackers = {s["slot"]: sd.new_tracker() for s in cfg["slots"]}
     counted: dict[int, list[int]] = {s["slot"]: [] for s in cfg["slots"]}  # frames behind each count
@@ -142,8 +144,10 @@ def replay_board(frames: list[Frame], seq: Sequence, overrides: dict | None = No
                 for s in cfg["slots"]:
                     n, cur = s["slot"], trackers[s["slot"]]
                     empty_ref, full_ref = seq.refs[n]
-                    st, fill, why = sd.gate_calibration(sd.classify(sd.crop(img, s["rect"]), empty_ref, full_ref, cfg),
-                                                        calibration.get(n, "ok"))
+                    reading = sd.gate_calibration(sd.classify(sd.crop(img, s["rect"]), empty_ref, full_ref, cfg),
+                                                  calibration.get(n, "ok"))
+                    # main.process_frame: setup pause, invalid saved layout, moved box without new photos.
+                    st, fill, why = sd.gate_layout(reading, layout_ok, sd.needs_recal(recalibrate, n), setup)
                     changed = sd.observe(cur, st, fill, s["target_units"], newest, t, cfg, why=why)
                     counted[n] = (counted[n] + [newest])[-cur["count"]:] if cur["count"] else []
                     if changed:
