@@ -4,17 +4,41 @@ For Alejo and the team. Start here, then `HANDBOOK.md` for running the demo. Thr
 **implemented** (on `valio/integration-unattended`, tested), **proposals** (pending team agreement, nothing
 built), **experiments** (separate `exp/*` branches, never merged into integration).
 
-## 0. Priorities now (14 Nov, 14:40; details and evidence: [AUDIT_2026-11-14.md](AUDIT_2026-11-14.md))
+## 0. Proposed demo version and priorities (14 Nov, 15:00; evidence: [AUDIT_2026-11-14.md](AUDIT_2026-11-14.md))
 
-1. **End-to-end demo (30 %):** the laptop backend still runs old code (851a992) in recording mode with every slot
-   unmapped. Deploy `main`, end recording mode on purpose, sign milk -> 463335 explicitly (the observed carton is a
-   different product), rehearse need -> shortlist -> fresh quote -> approval -> recheck -> audit three times.
-2. **Autonomy and controls (20 %):** per-product auto or approval; the head-chef request when nothing safe is
-   available (fixed on `main`); the stock timeline in the approval; recognition stays observational.
-3. **Robustness (15 %):** a recheck that changes the decision; mock stock 9,999,999,999 shown as unknown (decision I).
-4. **Buyer's need (20 %):** decide the replenishment proposal, or present it as a proposal with its simulated trade-off.
-5. **Openness (15 %):** say what is simulated: stand-in catalogue, mock stock, no shelf-life or expiry data in the
-   Valio files, shelf items without an exact catalogue match (Funky Monkey Sunny Peach, Estrella).
+**Proposed demo version:** branch `valio/demo-candidate` (f7afa39) = Alejandro's `main` (56e62d5: stock timeline,
+head-chef request) + our integration branch (recognition UI and service, docs) + `SHELF_EVENTS=observe`. 372 tests
+pass. **Not deployed:** the live laptop backend still runs 851a992 in recording mode. Alejandro decides the merge.
+
+**Two separate demonstrations, by design:**
+
+| Part | Trigger | What it shows | Purchasing |
+|---|---|---|---|
+| Purchasing | An outside buyer agent on the Aimo Agent Gateway (Driving Test licence -> lookup -> signed quote -> order), or a kitchen request on Alejandro's three-role page (`POST /request`) | The Valio flow on challenge catalogue products, e.g. milk 463335 (`ST` = one 1 l carton; `KI` = 5, `CS` = 20 `ST`; lot 0.01 `ST`, whole cartons ordered) | Yes: within the licence and auto-limit, else a Head chef approval with PIN; recheck at approval |
+| Shelf | The board (old slot detector, knob) and "Recognize shelf" (vision model) | Props seen and counted: chips, Funky Monkey, a milk carton; unfamiliar bar stays unknown | **None:** `SHELF_EVENTS=observe`; the props are unmapped; no substitution of the physical milk by 463335 |
+
+**Rehearsal (isolated databases, real product file, rule set v4, recorded Valio answers replayed; tool
+`tools/rehearse_demo.py`, output `measurements/demo-rehearsal-2026-11-14.txt` on the demo branch):** R0 prop events
+from the shelf ignored, no Valio call. R1 automatic gateway order of 6 x 463335, EUR 8.40, signed (assumes decision G).
+R2 24 x 463335 needs the Head chef; PIN approval; recheck "nothing changed"; ordered EUR 33.60. R3 changes injected at
+approval time: price 1.40 -> 1.95 -> new approval; stock gone -> blocked; cut-off passed -> blocked; product loses
+`lactose_free` -> forbidden.
+
+**Implemented versus proposed:** everything above is implemented and tested on the demo branch. Proposed, pending
+team agreement: the replenishment window and "Run replenishment now" (smallest addition: one endpoint that, per
+product, takes usable stock from person or sensor counts, adds what is on order, orders `max(0, target - (usable + on
+order))` as one combined quote, sends uncertain stock to a person, and reuses the existing approval and recheck; about
+150 lines in `agent.py`/`app.py`, Alejandro's files). Outside this implementation: expiry automation, local vision,
+more sensors.
+
+**Remaining team decisions:** (1) **G**: may a delivery on the needed day with only a date count as in time? Without
+it every live-data order goes to a person (R1 needs it). (2) Merge `valio/demo-candidate` into `main` and deploy it on
+the laptop with `SHELF_EVENTS=observe` (ends recording mode on purpose). (3) The replenishment proposal.
+
+**Priorities (judging criteria):** end-to-end demo 30 % (rehearse R1-R3 live after the merge); autonomy and controls
+20 % (licence scope, auto-limit, PIN approval, head-chef request, audit); robustness 15 % (the R3 rechecks); buyer's
+need 20 % (decide replenishment or present it as a proposal); openness 15 % (state what is simulated: recorded
+answers, mock stock, no expiry data, props on the shelf).
 
 ## 1. Implemented and tested
 
