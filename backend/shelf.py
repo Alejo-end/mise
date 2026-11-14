@@ -114,9 +114,6 @@ class Shelf:
     def rules(self) -> dict:
         return self.chain[-1]
 
-    def by_version(self, version: int | None) -> dict | None:
-        return next((r for r in self.chain if r["version"] == version), None)
-
     def assignments(self) -> list[Assignment]:
         return assignments(self.rules)
 
