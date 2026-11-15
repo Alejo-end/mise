@@ -268,3 +268,10 @@ def test_a_distance_frame_reaches_the_screen():
     got = client.get("/box/tof").json()
     assert got["rows"] == got["cols"] == 8 and got["cm"][0] == 30.0 and got["cm"][63] is None
     assert client.post("/box/tof", json={"cm": [1.0] * 10}).status_code == 422
+
+
+def test_the_page_reads_the_log_where_content_blockers_do_not_answer_for_the_backend(client):
+    # Browser content blockers answer "/log?..." with an empty 204, so the page uses /history.
+    assert client.get("/history?format=json&limit=5").json() == client.get("/log?format=json&limit=5").json()
+    from pathlib import Path
+    assert "/log?" not in (Path(__file__).parent.parent / "web" / "approve.html").read_text()

@@ -952,7 +952,10 @@ def shelf_change(slot: int, c: ShelfChange):
 
 
 @app.get("/log")
+@app.get("/history", include_in_schema=False)
 def get_log(format: str = "story", limit: int = 200):
+    """The audit log. The page reads it at /history: content blockers in browsers answer "/log?..." with an empty
+    204 themselves, so the page never saw the log on the hosted link."""
     entries = log.entries(limit)
     return {"story": story(entries)} if format == "story" else entries
 

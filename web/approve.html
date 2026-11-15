@@ -974,7 +974,7 @@ let failedRefreshes = 0;
 async function tick() {
   try {
     const [approvals, dev, log, dels, rel] = await Promise.all([
-      api("/approvals/open"), api("/device"), api("/log?format=story&limit=60"),
+      api("/approvals/open"), api("/device"), api("/history?format=story&limit=60"),
       api("/deliveries"), api("/suppliers/reliability")]);
     drawStock(await api("/stock"));
     drawVisible(await api("/observations/visible"));
@@ -1020,7 +1020,7 @@ async function tick() {
     $("more").hidden = lines.length <= SHORT;
     $("more").textContent = showAll ? "Show the latest only" : `Show ${lines.length - SHORT} more`;
     $("more").setAttribute("aria-expanded", String(showAll));
-    if ($("dataBox").open) $("json").textContent = JSON.stringify((await api("/log?format=json&limit=20")).slice().reverse(), null, 1);
+    if ($("dataBox").open) $("json").textContent = JSON.stringify((await api("/history?format=json&limit=20")).slice().reverse(), null, 1);
     // When the shelf cannot be trusted, say so: no automatic order starts, and a person has a clear task.
     const camera = dev.health && dev.health_known ? dev.health.camera_ok : null;
     const fault = !dev.online ? "the shelf box is offline" : camera === false ? "the shelf camera gives no picture" : "";
