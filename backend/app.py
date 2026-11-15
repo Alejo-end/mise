@@ -518,6 +518,15 @@ def _screen_cold(since: datetime) -> dict:
             "warm": sum(p["state"] in (WARM, BREACH) for p in known)}
 
 
+def box_seen():
+    """The shelf box reached the backend. Its events and its command poll (every 2 s) both count, so one slow
+    status report over the internet does not mark a working box offline."""
+    if not device["online"] and device["last_seen"]:
+        log.write("device", {"summary": "The shelf box is back online."}, "device", ruleset["version"])
+    device["last_seen"] = time.time()
+    device["online"] = True
+
+
 @app.post("/events")
 def events(ev: Event):
     data = ev.model_dump(exclude_none=True)
@@ -527,10 +536,7 @@ def events(ev: Event):
         if data["type"] == "manual_low":
             return agent.handle_event(data)
         return _box_decision(data)
-    if not device["online"] and device["last_seen"]:
-        log.write("device", {"summary": "The shelf box is back online."}, "device", ruleset["version"])
-    device["last_seen"] = time.time()
-    device["online"] = True
+    box_seen()
     for key in ("temperature_c", "auto_limit_eur"):
         if data.get(key) is not None:
             device[key] = data[key]
@@ -678,6 +684,7 @@ def approvals_decide(approval_id: str, d: Decision):
 
 @app.get("/device/commands")
 def device_commands():
+    box_seen()
     if time.time() < device["problem_until"]:
         return {"buzzer": "alarm"}
     return {"buzzer": "approval" if agent.open_approvals() else "off"}
