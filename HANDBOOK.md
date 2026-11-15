@@ -234,7 +234,7 @@ RULES_FILE=rules/school_kitchen_valio.yaml
 
 The product file must be in `data/valio/`. The tests always run on the stand-in catalog, whatever `.env` says. Rule set version 4 names product codes of the Valio file. If the rule set and the catalog do not match, the app refuses to start.
 
-To let a real language model take the Driving Test, add `ANTHROPIC_API_KEY=<key>` to `.env`. Then send `{"agent": "claude"}` to `POST /sandbox/test`. The model gets the tool descriptions, the request and the kitchen's rules, and no hint about the scenarios. One run makes about 30 model calls.
+To let a real language model take the Driving Test, add `ANTHROPIC_API_KEY=<key>` to `.env` and send `{"agent": "claude"}` to `POST /sandbox/test`, or add `VERDA_INFERENCE_API_KEY=<key>` and send `{"agent": "kimi"}`. Both receive the tool descriptions, the request and the kitchen's rules, but no hint about the scenarios. The Kimi key stays server-side; the page only shows the Kimi test when this backend has it configured. One run makes about 30 model calls.
 
 The shelf box is the App Lab app in `device/`. Its own page is on port 7000 of the board. In "Settings" on that page, enter the laptop address. Then do the setup steps in order: place the three boxes, save the empty photo, save the full photo.
 

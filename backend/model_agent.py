@@ -4,11 +4,16 @@ The scripted naive agent shows the failure modes the Driving Test is built to ca
 agent answers the other question: what does a real tool-using model do when it gets only the
 tool descriptions, the request and the kitchen's rules? It gets no hint about the traps.
 
-It is on the list of agents when ANTHROPIC_API_KEY is set:
+Claude is on the list of agents when ANTHROPIC_API_KEY is set:
 
     POST /sandbox/test  {"agent": "claude"}
 
-One run is six scenarios with a few model calls each.
+Kimi is on the list when VERDA_INFERENCE_API_KEY is set:
+
+    POST /sandbox/test  {"agent": "kimi"}
+
+One run is six scenarios with a few model calls each. Credentials stay on the
+server; this module never sends them to the browser or writes them to the log.
 """
 
 from __future__ import annotations
@@ -20,6 +25,9 @@ from datetime import datetime, timedelta
 from . import rules as R
 
 MODEL = os.getenv("DRIVING_TEST_MODEL", "claude-opus-5-5")
+VERDA_MODEL = os.getenv("VERDA_INFERENCE_MODEL", "kimi-k3-1-pro")
+VERDA_ENDPOINT = (os.getenv("VERDA_INFERENCE_BASE_URL", "https://inference.verda.com/v1").rstrip("/")
+                  + "/chat/completions")
 MAX_TURNS = 12
 SEEN = ("id", "name", "product_group", "properties", "allergens", "traces", "supplier", "origin", "description")
 
@@ -95,3 +103,58 @@ class ModelUnderTest:
                     out = {"content": f"Error: {type(e).__name__}: {e}", "is_error": True}
                 results.append({"type": "tool_result", "tool_use_id": block.id, **out})
             messages.append({"role": "user", "content": results})
+
+
+class KimiUnderTest:
+    """The same Driving Test through Verda's OpenAI-compatible tool-call API."""
+
+    name = f"Kimi ({VERDA_MODEL}) on Verda, with the tool descriptions only"
+
+    def __init__(self, client=None):
+        if client is None:
+            import httpx
+
+            key = os.getenv("VERDA_INFERENCE_API_KEY", "").strip()
+            if not key:
+                raise RuntimeError("VERDA_INFERENCE_API_KEY is not configured")
+            client = httpx.Client(headers={"Authorization": f"Bearer {key}"}, timeout=90)
+        self.client = client
+
+    def run(self, task, catalog, ask_human):
+        needed_by = datetime.now(R.TZ) + timedelta(days=3)
+
+        def call(name: str, args: dict):
+            if name == "search_products":
+                return [{k: p.get(k) for k in SEEN} for p in catalog.search(args["query"]).value]
+            if name == "get_quote":
+                return catalog.availability(args["product_id"], args["quantity"], needed_by).value
+            if name == "place_order":
+                return catalog.place_order(args["lines"], args["idempotency_key"]).value
+            if name == "ask_human":
+                ask_human(args)
+                return "The request is with a person now. Do not order."
+            raise ValueError(f"unknown tool {name}")
+
+        tools = [{"type": "function", "function": {"name": tool["name"], "description": tool["description"],
+                                                        "parameters": tool["input_schema"]}} for tool in TOOLS]
+        messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": request_text(task)}]
+        for _ in range(MAX_TURNS):
+            body = {"model": VERDA_MODEL, "max_tokens": 8000, "temperature": 0,
+                    "reasoning_effort": "low", "tools": tools, "messages": messages}
+            response = self.client.post(VERDA_ENDPOINT, json=body)
+            response.raise_for_status()
+            message = response.json()["choices"][0]["message"]
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
+                return
+            messages.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls})
+            for tool_call in tool_calls:
+                function = tool_call.get("function") or {}
+                try:
+                    args = json.loads(function.get("arguments") or "{}")
+                    out = json.dumps(call(function.get("name", ""), args), default=str, ensure_ascii=False)
+                    result = {"role": "tool", "tool_call_id": tool_call["id"], "content": out}
+                except Exception as e:  # the model sees the error, as a real client does
+                    result = {"role": "tool", "tool_call_id": tool_call["id"],
+                              "content": f"Error: {type(e).__name__}: {e}"}
+                messages.append(result)

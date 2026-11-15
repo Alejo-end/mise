@@ -118,10 +118,6 @@ def load_rule_chain(base: Path | str, versions_dir: Path | str | None = None) ->
     return chain
 
 
-def load_active_rules(base: Path | str, versions_dir: Path | str | None = None) -> dict:
-    return load_rule_chain(base, versions_dir)[-1]
-
-
 def write_version(parent: dict, base: Path | str, versions_dir: Path | str, targets: list[dict],
                   signed_by: str, change: str) -> dict:
     """Write rule set version parent + 1 with new targets, sign it like sign(), and return it as load_rules reads it.

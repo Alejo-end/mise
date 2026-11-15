@@ -406,7 +406,7 @@ def test_a_slot_can_be_unmapped_through_the_signing_flow_and_never_buys(env):
         res = c.post("/events", json=ev).json()
         assert res["status"] == "ignored" and "not mapped" in res["reason"]
     assert c.get("/approvals/open").json() == [] and c.get("/orders").json() == []
-    m2, c2 = start()  # the signed version survives a restart
+    _, c2 = start()  # the signed version survives a restart
     assert slot(c2.get("/shelf").json(), 1)["product_id"] is None
 
 

@@ -518,6 +518,23 @@
     ]
    }
   },
+  "/sandbox/agents": {
+   "get": {
+    "description": "The test agents available on this server. No credentials or provider details leave it.",
+    "operationId": "sandbox_agents_sandbox_agents_get",
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      },
+      "description": "Successful Response"
+     }
+    },
+    "summary": "Sandbox Agents"
+   }
+  },
   "/sandbox/licences": {
    "get": {
     "operationId": "sandbox_licences_sandbox_licences_get",

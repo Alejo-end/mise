@@ -12,8 +12,8 @@ Agent Driving Test (POST /sandbox/test). The licence holds the agent's spend lim
 product groups. A product outside those groups goes to a person. The order goes through the
 same rule check, approval and audit log as an order from the kitchen itself.
 
-A restart of the backend keeps licences, placed orders and open approvals: they come back from
-the audit log. It forgets quotes, which live 15 minutes, and the answers of refused requests.
+A restart of the backend keeps licences, placed orders, open approvals and unexpired quotes: they
+come back from the audit log. Refused-request answers are not retained.
 
 What the wholesaler keeps to itself: a quote shows no more stock than the quantity asked for, and
 no raw record of the product. One licence gets a fixed number of lookups and quotes per minute,
@@ -98,6 +98,24 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
     refused: dict[str, dict] = {}  # run id -> the answer of a request that ended with no order and no approval
     asked: dict[str, deque] = defaultdict(deque)  # licence id -> the times of its lookups and quotes
 
+    # A buyer can safely retry an order after a process restart while its signed quote is still
+    # valid. Keep only the minimum order data; the signed answer remains with the buyer.
+    for entry in log.entries(100000):
+        if entry["step"] != "gateway_quote":
+            continue
+        saved = entry["detail"]
+        valid_until = _when(saved.get("valid_until"))
+        try:
+            needed_by = date.fromisoformat(saved["needed_by"]) if saved.get("needed_by") else None
+            quote_id = saved["quote_id"]
+            quote = {"licence_id": saved["licence_id"], "product_id": saved["product_id"],
+                     "quantity": int(saved["quantity"]), "needed_by": needed_by,
+                     "valid_until": valid_until, "unit_price_eur": float(saved["unit_price_eur"])}
+        except (KeyError, TypeError, ValueError):
+            continue  # An incomplete legacy entry is not a valid quote.
+        if valid_until is not None and valid_until >= datetime.now(TZ):
+            quotes[quote_id] = quote
+
     def licence(authorization: str | None) -> dict:
         token = (authorization or "").removeprefix("Bearer ").strip()
         lic = driving_test.valid(token) if token else None
@@ -166,6 +184,11 @@ def make_router(agent, catalog, driving_test, log, signer) -> APIRouter:
         quotes[quote_id] = {"licence_id": lic["id"], "product_id": body.product_id, "quantity": body.quantity,
                             "needed_by": body.needed_by, "valid_until": valid_until,
                             "unit_price_eur": q["unit_price_eur"]}
+        log.write("gateway_quote", {"summary": f"Gateway quote {quote_id} issued for {body.quantity} × {body.product_id}.",
+                                    "quote_id": quote_id, "licence_id": lic["id"], "product_id": body.product_id,
+                                    "quantity": body.quantity, "needed_by": body.needed_by,
+                                    "valid_until": valid_until, "unit_price_eur": q["unit_price_eur"]},
+                  lic["agent"], agent.rules["version"])
         deposits = q["charges"]["deposits"]
         return signer.sign({
             "quote_id": quote_id, "valid_until": valid_until.isoformat(timespec="seconds"), "valid_until_set_by": limit,

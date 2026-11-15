@@ -35,6 +35,20 @@ def test_unknown_slot_is_rejected(client):
     assert client.post("/events", json={"type": "slot_state", "slot": 9, "state": "empty"}).status_code == 400
 
 
+def test_device_reports_authoritative_spending_controls(client):
+    state = client.get("/device").json()
+    assert state["spending"] == {
+        "signed_auto_limit_eur": 150.0,
+        "knob_limit_eur": None,
+        "effective_auto_limit_eur": 150.0,
+        "weekly_limit_eur": 800.0,
+        "weekly_spent_eur": 0.0,
+        "weekly_remaining_eur": 800.0,
+    }
+    client.post("/events", json={"type": "status", "auto_limit_eur": 0})
+    assert client.get("/device").json()["spending"]["effective_auto_limit_eur"] == 0.0
+
+
 def test_bad_event_is_rejected(client):
     assert client.post("/events", json={"type": "slot_state", "slot": 3, "state": "gone"}).status_code == 422
     assert client.post("/events", json={"type": "teleport"}).status_code == 422

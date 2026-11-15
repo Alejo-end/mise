@@ -61,9 +61,15 @@ SHELF_EVENTS = os.getenv("SHELF_EVENTS", "").strip().lower()
 if SHELF_EVENTS not in ("", "purchase", "observe"):
     raise RuntimeError(f"SHELF_EVENTS must be 'observe' or 'purchase' (default), not {SHELF_EVENTS!r}")
 OBSERVE_ONLY = RECORDING_SESSION or ("shelf props, observe only" if SHELF_EVENTS == "observe" else "")
+# The shelf unit hosts its own camera and recognition interface on port 7000.
+# The backend cannot infer its LAN address, so a site may publish a known URL here.
+SHELF_UI_URL = os.getenv("SHELF_UI_URL", "").strip()
 if os.getenv("ANTHROPIC_API_KEY"):  # a real model can take the Driving Test
     from .model_agent import ModelUnderTest
     AGENTS["claude"] = ModelUnderTest
+if os.getenv("VERDA_INFERENCE_API_KEY"):  # Kimi takes the same sandboxed Driving Test through Verda
+    from .model_agent import KimiUnderTest
+    AGENTS["kimi"] = KimiUnderTest
 
 # The signed rule file, then every shelf change signed after it (backend/shelf.py). The last version is active.
 shelf = Shelf(os.getenv("RULES_FILE", ROOT / "rules" / "school_kitchen.yaml"),
@@ -589,7 +595,9 @@ def approvals_open():
     return [a | {"picture": picture(a, "picture"), "picture_large": picture(a, "picture_large"),
                  "asked_by": started[a["run_id"]]["actor"] if a["run_id"] in started else None,
                  "request": started[a["run_id"]]["detail"].get("text") if a["run_id"] in started else None,
-                 "stock": _stock_for(a)}
+                 "stock": _stock_for(a),
+                 # open_approvals deliberately hides ctx; expose only the deadline the UI needs.
+                 "needed_by": agent.approvals[a["id"]]["ctx"].needed_by.isoformat(timespec="seconds")}
             for a in waiting]
 
 
@@ -702,14 +710,26 @@ def device_file(path: str):
 @app.get("/device")
 def device_state():
     seen = device["last_seen"]
+    limits = ruleset.get("limits") or {}
+    signed_limit = float(limits.get("auto_order_eur", 0))
+    knob_limit = device["auto_limit_eur"]
+    effective_limit = signed_limit if knob_limit is None else min(signed_limit, float(knob_limit))
+    weekly_limit = float(limits.get("weekly_eur", 0))
+    weekly_spent = agent.weekly_spent_eur
     return {k: v for k, v in device.items() if k not in ("last_seen", "problem_until")} | {
         "last_seen": datetime.fromtimestamp(seen, TZ).isoformat(timespec="seconds") if seen else None,
-        "weekly_spent_eur": agent.weekly_spent_eur, "catalog": catalog.name, "text_scan_gaps": TEXT_SCAN_GAPS, "cold_alarm_c": agent.cold_alarm_c,
+        "weekly_spent_eur": weekly_spent, "catalog": catalog.name, "text_scan_gaps": TEXT_SCAN_GAPS, "cold_alarm_c": agent.cold_alarm_c,
         "rule_set_version": ruleset["version"], "rule_set_sha256": ruleset["sha256"][:12],
         "signed_by": ruleset.get("signed_by"), "pins_set": bool(PINS),
         # For a demo only: SHOW_PINS=1 puts the approver PINs on the page, so that a visitor can approve.
         "demo_pins": [{"pin": p, "name": n} for p, n in PINS.items()] if SHOW_PINS else [],
-        "recording_session": RECORDING_SESSION or None, "shelf_events": "observe" if OBSERVE_ONLY else "purchase"} | device_health()
+        "recording_session": RECORDING_SESSION or None, "shelf_events": "observe" if OBSERVE_ONLY else "purchase",
+        "shelf_ui_url": SHELF_UI_URL or None,
+        # One authoritative explanation of the two different spending controls.
+        "spending": {"signed_auto_limit_eur": signed_limit, "knob_limit_eur": knob_limit,
+                     "effective_auto_limit_eur": effective_limit, "weekly_limit_eur": weekly_limit,
+                     "weekly_spent_eur": weekly_spent,
+                     "weekly_remaining_eur": max(0.0, round(weekly_limit - weekly_spent, 2))}} | device_health()
 
 
 def device_health() -> dict:
@@ -1084,7 +1104,9 @@ def order_chain(order_id: str):
 @app.get("/orders")
 def orders():
     checked = {d["order_id"] for d in agent.deliveries}
-    return [o | {"checked": o["order_id"] in checked} for o in sorted(agent.orders.values(), key=lambda o: o["time"])]
+    # The challenge integration records a purchase rehearsal; it never submits a live Valio order.
+    return [o | {"checked": o["order_id"] in checked, "simulated_purchase": True}
+            for o in sorted(agent.orders.values(), key=lambda o: o["time"])]
 
 
 @app.post("/deliveries/{order_id}/check")
@@ -1114,6 +1136,12 @@ def sandbox_test(r: SandboxRun):
     if r.agent not in AGENTS:
         raise HTTPException(400, f"agent must be one of {sorted(AGENTS)}")
     return driving_test.run(r.agent, granted_by=approver_of(r.pin) if r.pin else None)
+
+
+@app.get("/sandbox/agents")
+def sandbox_agents():
+    """The test agents available on this server. No credentials or provider details leave it."""
+    return sorted(AGENTS)
 
 
 # The Driving Test over the network. No licence is needed to take it: the sandbox holds only the stand-in catalog.

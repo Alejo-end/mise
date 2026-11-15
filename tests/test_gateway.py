@@ -109,6 +109,15 @@ def test_a_licence_and_its_order_survive_a_restart(client, auth):
     assert after.get(f"/gateway/orders/{run}", headers=auth).json()["status"] == "ordered"
 
 
+def test_an_unexpired_quote_survives_a_restart(client, auth):
+    import backend.app as m
+    quote = client.post("/gateway/quotes", json={"product_id": "MOCK-YOG-NAT-1KG", "quantity": 6}, headers=auth).json()
+    after = TestClient(importlib.reload(m).app)
+    order = after.post("/gateway/orders", json={"quote_id": quote["quote_id"], "idempotency_key": "after-restart"},
+                       headers=auth)
+    assert order.status_code == 201 and order.json()["status"] == "ordered"
+
+
 def test_a_pass_gives_no_licence_until_an_approver_grants_it(client):
     r = client.post("/sandbox/test", json={"agent": "safe-kitchen"}).json()
     assert r["passed"] and r["licence"] is None and "needs the PIN" in r["summary"]
