@@ -872,6 +872,7 @@ function forceOptions(catalog) {
   $("forceCode").placeholder = standIn ? "or a product code" : "Product code from the Valio catalog";
 }
 
+let failedRefreshes = 0;
 async function tick() {
   try {
     const [approvals, dev, log, dels, rel] = await Promise.all([
@@ -938,8 +939,11 @@ async function tick() {
       [sec == null ? "–" : sec < 90 ? `${Math.round(sec)} s` : `${Math.round(sec / 60)} min`, "median time from request to decision"],
     ].map(([v, k]) => `<div><dd>${v}</dd><dt>${k}</dt></div>`).join("");
     $("health").hidden = true;
+    failedRefreshes = 0;
   } catch (e) {
-    // What failed, in words, and when. The rest of the page keeps its last content.
+    // What failed, in words, and when. The rest of the page keeps its last content. One failed refresh in a row
+    // is often a server that is being replaced or a network blip, so the notice waits for a second one.
+    if (++failedRefreshes < 2) return;
     $("health").hidden = false;
     $("health").textContent = `${e.message || "The page could not refresh."} Last try: ${new Date().toTimeString().slice(0, 8)}.`;
   }
