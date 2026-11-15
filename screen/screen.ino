@@ -23,6 +23,8 @@
 
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+
 #include <ArduinoJson.h>
 #include <Arduino_GFX_Library.h>
 #include <Wire.h>
@@ -76,6 +78,17 @@ Arduino_GFX *gfx = new FactoryPanel(bus, GFX_NOT_DEFINED /* RST */, 2 /* rotatio
 // Its reset and interrupt pins stay untouched.
 uint8_t touchAddr = 0;   // 0: no chip found
 int touchReads = 0, touchTaps = 0, touchErrors = 0;  // counters for the backend's log
+// A request to the backend over plain HTTP, or over HTTPS when BACKEND starts with https:// (the online copy on
+// Modal). The server's certificate is not checked (setInsecure): the screen holds no certificate store, and it
+// sends no secret. Each request opens its own connection, so a request over HTTPS takes some 300 ms longer.
+bool begin(HTTPClient &http, WiFiClientSecure &tls, const String &url) {
+  if (url.startsWith("https://")) {
+    tls.setInsecure();
+    return http.begin(tls, url);
+  }
+  return http.begin(url);
+}
+
 bool touchRead(uint16_t reg, uint8_t *out, size_t len) {
   if (!touchAddr) return false;
   // The register address goes out with a stop, then a separate read. This chip accepts both ways,
@@ -251,9 +264,10 @@ String screenUrl() {
 void fetchView(Answer &out) {
   ui::View &next = out.view;
   HTTPClient http;
+  WiFiClientSecure tls;
   http.setConnectTimeout(2500);
   http.setTimeout(4000);
-  if (WiFi.status() == WL_CONNECTED && http.begin(screenUrl()) && http.GET() == 200) {
+  if (WiFi.status() == WL_CONNECTED && begin(http, tls, screenUrl()) && http.GET() == 200) {
     // ArduinoJson 7 sizes the document by itself. The answer is about 3 to 4 KB; a failed allocation is a failed parse.
     JsonDocument doc;
     if (!deserializeJson(doc, http.getString())) {
@@ -326,10 +340,11 @@ void fetchPicture(PictureSlots &ps) {
   xSemaphoreGive(lock);
   if (busy || WiFi.status() != WL_CONNECTED || !ps.buf[into]) return;
   HTTPClient http;
+  WiFiClientSecure tls;
   http.setConnectTimeout(2000);
   http.setTimeout(3000);
   const char *keys[] = {"X-Frame-Age", "X-Frame-Width", "X-Frame-Height"};
-  if (!http.begin(String(BACKEND) + "/box/camera.rgb565?w=" + ps.w + "&h=" + ps.h)) return;
+  if (!begin(http, tls, String(BACKEND) + "/box/camera.rgb565?w=" + ps.w + "&h=" + ps.h)) return;
   http.collectHeaders(keys, 3);
   int code = http.GET();
   if (code == 204) {  // the backend has no picture at all
@@ -365,9 +380,10 @@ void fetchPicture(PictureSlots &ps) {
 void fetchDepth() {
   if (WiFi.status() != WL_CONNECTED) return;
   HTTPClient http;
+  WiFiClientSecure tls;
   http.setConnectTimeout(800);
   http.setTimeout(1200);
-  if (!http.begin(String(BACKEND) + "/box/tof")) return;
+  if (!begin(http, tls, String(BACKEND) + "/box/tof")) return;
   int code = http.GET();
   DepthAnswer *a = nullptr;
   if (code == 204) {
@@ -477,9 +493,10 @@ void takeFetched(uint32_t now) {
 // One request to the backend's log of events. It gives back the HTTP code, and the answer when the code is 200.
 int post(const String &body, uint32_t timeout, String *answer = nullptr) {
   HTTPClient http;
+  WiFiClientSecure tls;
   http.setTimeout(timeout);
   int code = -1;
-  if (WiFi.status() == WL_CONNECTED && http.begin(String(BACKEND) + "/events")) {
+  if (WiFi.status() == WL_CONNECTED && begin(http, tls, String(BACKEND) + "/events")) {
     http.addHeader("Content-Type", "application/json");
     code = http.POST(body);
     if (code == 200 && answer) *answer = http.getString();
@@ -630,9 +647,26 @@ void setup() {
   if (touchAddr && !cal.set) startCalibration();
 }
 
+// Every 10 seconds the serial log says how the screen is connected: the Wi-Fi state, the signal and the address.
+// The network name and the password are never printed.
+void logWifi(uint32_t now) {
+  static uint32_t last = 0;
+  if (now - last < 10000) return;
+  last = now;
+  wl_status_t st = WiFi.status();
+  const char *why = st == WL_CONNECTED ? "connected" : st == WL_NO_SSID_AVAIL ? "network not found (the screen sees only 2.4 GHz)"
+                  : st == WL_CONNECT_FAILED ? "connect failed (wrong password?)" : st == WL_DISCONNECTED ? "disconnected" : "joining";
+  if (st == WL_CONNECTED)
+    Serial.printf("wifi %s, signal %d dBm, channel %d, address %s, backend %s\n", why, WiFi.RSSI(), WiFi.channel(),
+                  WiFi.localIP().toString().c_str(), BACKEND);
+  else
+    Serial.printf("wifi %s (status %d)\n", why, (int)st);
+}
+
 void loop() {
   uint32_t now = millis();
   model.setWifi(WiFi.status() == WL_CONNECTED);
+  logWifi(now);
   // The start picture stays while the screen joins the network, for up to 15 seconds.
   if (!model.wifi && now < 15000 && !model.view.reached && calStep < 0) { delay(50); return; }
   takeFetched(now);

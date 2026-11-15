@@ -461,11 +461,16 @@ def cap_first(text: str) -> str:
     return text[:1].upper() + text[1:]
 
 
+SCREEN_SEEN = {"at": None}  # when the touch screen last fetched its view; the box app fetches it too, as Python
+
+
 @app.get("/box/screen")
-def box_screen():
+def box_screen(request: Request):
     """What the touch screen of the box shows: the order to decide at the door, with the temperature. The screen
     draws this as it is, so every text is short and plain. It has no PIN: it accepts or rejects a delivery and
     confirms an alarm, and it never approves an order."""
+    if "ESP32" in request.headers.get("user-agent", ""):
+        SCREEN_SEEN["at"] = time.time()
     decided = {e["order_id"] for e in log.entries(5000) if e["step"] == "delivery_decision" and e.get("order_id")}
     waiting = [o for o in agent.orders.values() if o["order_id"] not in decided]
     order = max(waiting, key=lambda o: o["time"]) if waiting else None
@@ -870,6 +875,7 @@ def device_state():
         "demo_pins": [{"pin": p, "name": n} for p, n in PINS.items()] if SHOW_PINS else [],
         "recording_session": RECORDING_SESSION or None, "shelf_events": "observe" if OBSERVE_ONLY else "purchase",
         "shelf_ui_url": SHELF_UI_URL or None,
+        "screen_last_seen": datetime.fromtimestamp(SCREEN_SEEN["at"], TZ).isoformat(timespec="seconds") if SCREEN_SEEN["at"] else None,
         # One authoritative explanation of the two different spending controls.
         "spending": {"signed_auto_limit_eur": signed_limit, "knob_limit_eur": knob_limit,
                      "effective_auto_limit_eur": effective_limit, "weekly_limit_eur": weekly_limit,
