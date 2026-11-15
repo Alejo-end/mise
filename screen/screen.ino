@@ -24,7 +24,6 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
-
 #include <ArduinoJson.h>
 #include <Arduino_GFX_Library.h>
 #include <Wire.h>
@@ -78,17 +77,6 @@ Arduino_GFX *gfx = new FactoryPanel(bus, GFX_NOT_DEFINED /* RST */, 2 /* rotatio
 // Its reset and interrupt pins stay untouched.
 uint8_t touchAddr = 0;   // 0: no chip found
 int touchReads = 0, touchTaps = 0, touchErrors = 0;  // counters for the backend's log
-// A request to the backend over plain HTTP, or over HTTPS when BACKEND starts with https:// (the online copy on
-// Modal). The server's certificate is not checked (setInsecure): the screen holds no certificate store, and it
-// sends no secret. Each request opens its own connection, so a request over HTTPS takes some 300 ms longer.
-bool begin(HTTPClient &http, WiFiClientSecure &tls, const String &url) {
-  if (url.startsWith("https://")) {
-    tls.setInsecure();
-    return http.begin(tls, url);
-  }
-  return http.begin(url);
-}
-
 bool touchRead(uint16_t reg, uint8_t *out, size_t len) {
   if (!touchAddr) return false;
   // The register address goes out with a stop, then a separate read. This chip accepts both ways,
@@ -253,6 +241,15 @@ volatile bool wantThumb = false, wantFull = false, wantDepth = false;
 DepthAnswer *depthReady = nullptr;  // the newest reading of the distance sensor, waiting for the loop
 PictureSlots thumbs = {160, 90}, fulls = {480, 270};
 
+// The backend is the laptop (http) or the hosted link (https). The screen keeps no certificate store, so it reaches
+// the hosted link over TLS without a certificate check. It sends no secret and cannot approve an order.
+bool openUrl(HTTPClient &http, WiFiClientSecure &tls, const String &url) {
+  if (!url.startsWith("https://")) return http.begin(url);
+  tls.setInsecure();
+  tls.setHandshakeTimeout(8);
+  return http.begin(tls, url);
+}
+
 // The query of the view carries the touch counters and the calibration, for the backend's log.
 String screenUrl() {
   return String(BACKEND) + "/box/screen?touch=" + String(touchAddr, HEX) + "&reads=" + touchReads + "&errors=" + touchErrors +
@@ -263,11 +260,14 @@ String screenUrl() {
 
 void fetchView(Answer &out) {
   ui::View &next = out.view;
-  HTTPClient http;
-  WiFiClientSecure tls;
-  http.setConnectTimeout(2500);
-  http.setTimeout(4000);
-  if (WiFi.status() == WL_CONNECTED && begin(http, tls, screenUrl()) && http.GET() == 200) {
+  // Only the fetch task calls this, so one kept connection serves every request: over TLS a new connection costs
+  // more than the request itself.
+  static WiFiClientSecure tls;
+  static HTTPClient http;
+  http.setReuse(true);
+  http.setConnectTimeout(5000);
+  http.setTimeout(5000);
+  if (WiFi.status() == WL_CONNECTED && openUrl(http, tls, screenUrl()) && http.GET() == 200) {
     // ArduinoJson 7 sizes the document by itself. The answer is about 3 to 4 KB; a failed allocation is a failed parse.
     JsonDocument doc;
     if (!deserializeJson(doc, http.getString())) {
@@ -284,6 +284,16 @@ void fetchView(Answer &out) {
       next.room.minutes = c["minutes_above"] | 0;
       next.room.allowed = c["allowed_minutes"] | 120;
       next.coldWarm = c["warm"] | 0;
+      next.quietS = c["quiet_s"] | 0;
+      for (JsonObject r : c["rows"].as<JsonArray>()) {
+        if (next.coldRowCount >= ui::COLD_ROWS) break;
+        ui::ColdRow &row = next.coldRows[next.coldRowCount++];
+        row.name = r["name"] | "";
+        row.state = r["state"] | "unknown";
+        row.hasLimit = !r["limit_c"].isNull();
+        row.limit = r["limit_c"] | 0.0f;
+        row.minutes = r["minutes_above"] | 0;
+      }
       next.coldState = c["state"] | "unknown";
       next.hasPeak = !c["peak_c"].isNull();
       next.peak = c["peak_c"] | 0.0f;
@@ -339,12 +349,15 @@ void fetchPicture(PictureSlots &ps) {
   int into = ps.incoming;
   xSemaphoreGive(lock);
   if (busy || WiFi.status() != WL_CONNECTED || !ps.buf[into]) return;
-  HTTPClient http;
-  WiFiClientSecure tls;
-  http.setConnectTimeout(2000);
-  http.setTimeout(3000);
+  // Only the fetch task calls this, so one kept connection serves every request: over TLS a new connection costs
+  // more than the request itself.
+  static WiFiClientSecure tls;
+  static HTTPClient http;
+  http.setReuse(true);
+  http.setConnectTimeout(5000);
+  http.setTimeout(5000);
   const char *keys[] = {"X-Frame-Age", "X-Frame-Width", "X-Frame-Height"};
-  if (!begin(http, tls, String(BACKEND) + "/box/camera.rgb565?w=" + ps.w + "&h=" + ps.h)) return;
+  if (!openUrl(http, tls, String(BACKEND) + "/box/camera.rgb565?w=" + ps.w + "&h=" + ps.h)) return;
   http.collectHeaders(keys, 3);
   int code = http.GET();
   if (code == 204) {  // the backend has no picture at all
@@ -379,11 +392,14 @@ void fetchPicture(PictureSlots &ps) {
 // or 204 when no reading ever arrived. About 400 bytes, so a short timeout.
 void fetchDepth() {
   if (WiFi.status() != WL_CONNECTED) return;
-  HTTPClient http;
-  WiFiClientSecure tls;
-  http.setConnectTimeout(800);
-  http.setTimeout(1200);
-  if (!begin(http, tls, String(BACKEND) + "/box/tof")) return;
+  // Only the fetch task calls this, so one kept connection serves every request: over TLS a new connection costs
+  // more than the request itself.
+  static WiFiClientSecure tls;
+  static HTTPClient http;
+  http.setReuse(true);
+  http.setConnectTimeout(5000);  // over the internet the hosted link needs more than the laptop on the same Wi-Fi
+  http.setTimeout(5000);
+  if (!openUrl(http, tls, String(BACKEND) + "/box/tof")) return;
   int code = http.GET();
   DepthAnswer *a = nullptr;
   if (code == 204) {
@@ -492,11 +508,12 @@ void takeFetched(uint32_t now) {
 
 // One request to the backend's log of events. It gives back the HTTP code, and the answer when the code is 200.
 int post(const String &body, uint32_t timeout, String *answer = nullptr) {
+  WiFiClientSecure tls;  // declared first, so it outlives the request
   HTTPClient http;
-  WiFiClientSecure tls;
+  http.setConnectTimeout(5000);
   http.setTimeout(timeout);
   int code = -1;
-  if (WiFi.status() == WL_CONNECTED && begin(http, tls, String(BACKEND) + "/events")) {
+  if (WiFi.status() == WL_CONNECTED && openUrl(http, tls, String(BACKEND) + "/events")) {
     http.addHeader("Content-Type", "application/json");
     code = http.POST(body);
     if (code == 200 && answer) *answer = http.getString();

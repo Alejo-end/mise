@@ -228,7 +228,7 @@ static void drawBar(Canvas &c, const Model &m, uint32_t now, Frame &f) {
     strokeRound(c, x - 2 - 3 * b, y - 2 - 3 * b, w + 4 + 6 * b, h + 4 + 6 * b, (h + 4 + 6 * b) / 2, 1.5f, col::PINK,
                 (int)(150 * (1 - b)));
     fillRound(c, x + in, y + in, w - 2 * in, h - 2 * in, (h - 2 * in) / 2, down ? col::PINK_DOWN : col::PINK_FILL);
-    drawTextCentre(c, CAPTION, x + w / 2, y + 18.5f, "Cold alarm. Tap when seen", col::WHITE);
+    drawTextCentre(c, CAPTION, x + w / 2, y + 18.5f, "Cold alarm. Tap to silence", col::WHITE);
     return;
   }
   Link link = m.link();
@@ -384,7 +384,7 @@ struct Plot {
 
 // The air over the last 2 hours: a smooth line, a soft fill under it, the limit as a dashed line.
 // reveal (0 to 1) draws the line from the left; the last point breathes once the line is complete.
-static void chart(Canvas &c, const Model &m, const Rect &box, float reveal, uint32_t now, Frame &f) {
+[[maybe_unused]] static void chart(Canvas &c, const Model &m, const Rect &box, float reveal, uint32_t now, Frame &f) {
   const View &v = m.view;
   fillRound(c, box.x, box.y, box.w, box.h, 16, col::SURFACE);
   strokeRound(c, box.x, box.y, box.w, box.h, 16, 1, col::HAIRLINE);
@@ -548,22 +548,54 @@ static void chart(Canvas &c, const Model &m, const Rect &box, float reveal, uint
   fillCircle(c, lx, ly, 4, dc);
 }
 
-// Two short lines under the state chip: the product above its limit, or the peak of the 2 hours.
+// Two short lines under the state chip: what a person does now, and how to silence the buzzer.
 static void coldLines(const Model &m, char *a, char *b, int size) {
   const View &v = m.view;
   a[0] = b[0] = 0;
   if (m.coldIsWarm()) {
-    snprintf(a, size, "%s above its limit", v.room.product.empty() ? "A product" : v.room.product.c_str());
-    snprintf(b, size, "for %d of %d min", v.room.minutes, v.room.allowed);
+    snprintf(a, size, v.coldState == "breach" ? "Check it before use." : "Move it somewhere colder.");
+    if (v.alarm) snprintf(b, size, "Silence: tap the pink bar");
+    else if (v.quietS > 0) snprintf(b, size, "Buzzer quiet, %d min left", (v.quietS + 59) / 60);
   } else if (v.coldState == "ok") {
     snprintf(a, size, "Every product cold enough.");
     if (v.hasPeak) snprintf(b, size, "Peak %s" DEG " in 2 hours", formatTemp(v.peak).c_str());
   } else if (v.hasTemp) {
-    snprintf(a, size, "No storage limit");
-    snprintf(b, size, "in the product data.");
+    snprintf(a, size, "No storage limit.");
+    snprintf(b, size, "Set it on the page.");
   } else {
     snprintf(a, size, "The box sends");
     snprintf(b, size, "no temperature.");
+  }
+}
+
+// Each shelf product against its own limit, the ones that need a person first. A row: the name, its limit and the
+// time above it, and its state in colour (pink: too warm, green: cold enough, grey: no limit).
+static void coldRows(Canvas &c, const View &v, const Rect &box) {
+  fillRound(c, box.x, box.y, box.w, box.h, 14, col::SURFACE);
+  strokeRound(c, box.x, box.y, box.w, box.h, 14, 1, col::HAIRLINE);
+  int left = box.x + 14, right = box.x + box.w - 14;
+  drawText(c, CAPTION, left, box.y + 22, "Each product, its own limit", col::TEXT2);
+  if (v.coldRowCount == 0) {
+    drawText(c, BODY, left, box.y + 60, "No shelf product.", col::TEXT2);
+    return;
+  }
+  const float rowH = (box.h - 34) / (float)COLD_ROWS;
+  char fit[64], line[48];
+  for (int i = 0; i < v.coldRowCount; i++) {
+    const ColdRow &r = v.coldRows[i];
+    float y = box.y + 32 + i * rowH;
+    if (i > 0) fillRound(c, left, y, right - left, 1, 0, col::HAIRLINE);
+    bool warm = r.state == "warm" || r.state == "breach";
+    const char *word = r.state == "breach" ? "Check" : warm ? "Too warm" : r.state == "ok" ? "OK" : "No limit";
+    uint16_t colour = warm ? col::PINK : r.state == "ok" ? col::GREEN : col::TEXT2;
+    int cw = chip(c, 0, 0, word, 0, 0, 0, true);
+    chip(c, right - cw, y + (rowH - 24) / 2, word, colour, colour, warm ? 40 : 26);
+    int textW = right - cw - 10 - left;
+    drawText(c, LABEL, left, y + 21, fitText(LABEL, r.name.c_str(), textW, fit, sizeof fit), warm ? col::TEXT : col::TEXT);
+    if (!r.hasLimit) snprintf(line, sizeof line, "Set one on the page");
+    else if (warm) snprintf(line, sizeof line, "Over %s" DEG " for %d min", formatTemp(r.limit, r.limit == roundf(r.limit) ? 0 : 1).c_str(), r.minutes);
+    else snprintf(line, sizeof line, "Limit %s" DEG, formatTemp(r.limit, r.limit == roundf(r.limit) ? 0 : 1).c_str());
+    drawText(c, CAPTION, left, y + 39, fitText(CAPTION, line, textW, fit, sizeof fit), warm ? col::PINK : col::TEXT2);
   }
 }
 
@@ -572,31 +604,30 @@ static void drawCold(Canvas &c, const Model &m, uint32_t now, Frame &f) {
   Verdict vd = roomVerdict(m);
   int x = SIDE;
   int after = drawText(c, CAPTION, x, 66, "Cold room", col::TEXT2);
-  if (v.coldWarm > 1) {
+  if (v.coldWarm > 0) {
     char s[24];
     snprintf(s, sizeof s, "%d too warm", v.coldWarm);
     drawText(c, CAPTION, after + 8, 66, s, col::PINK);
   }
-  // The hero: the air now in large numerals, a drawn degree sign and a small C.
+  // The hero: the air now in large numerals, a drawn degree sign and a small C. Pink while a product is too warm.
   float base = 128;
+  uint16_t hero = m.coldIsWarm() ? col::PINK : col::TEXT;
   if (v.hasTemp) {
-    int end = rolling(c, HERO, x - 3, base, m.temp, now, col::TEXT, f);
+    int end = rolling(c, HERO, x - 3, base, m.temp, now, hero, f);
     float top = base - HERO.cap;
-    degree(c, end + 3, top + 1, 5.5f, 2.6f, col::TEXT);
+    degree(c, end + 3, top + 1, 5.5f, 2.6f, hero);
     drawText(c, TITLE, end + 18, top + TITLE.cap + 1, "C", col::TEXT2);
   } else {
     drawText(c, HERO, x - 3, base, "--", col::TEXT3);  // a placeholder; the chip under it says why
   }
-  // The state as a chip, and two quiet lines under it.
+  // The state as a chip, and two lines under it: what to do, and how to silence the buzzer.
   chip(c, x, 140, vd.text, vd.colour, vd.colour, vd.known ? 34 : 0);
   if (!vd.known) strokeRound(c, x, 140, chip(c, 0, 0, vd.text, 0, 0, 0, true), 24, 12, 1, col::HAIRLINE);
   char a[64], b[64], fit[70];
   coldLines(m, a, b, sizeof a);
-  drawText(c, CAPTION, x, 186, fitText(CAPTION, a, 172, fit, sizeof fit), col::TEXT2);
-  drawText(c, CAPTION, x, 204, fitText(CAPTION, b, 172, fit, sizeof fit), col::TEXT2);
-
-  float reveal = easeOut(progress(now, m.coldAt, 520, f));
-  chart(c, m, Rect{204, 48, W - SIDE - 204, BODY_B - 48}, reveal, now, f);
+  drawText(c, CAPTION, x, 186, fitText(CAPTION, a, 176, fit, sizeof fit), m.coldIsWarm() ? col::TEXT : col::TEXT2);
+  drawText(c, CAPTION, x, 204, fitText(CAPTION, b, 176, fit, sizeof fit), v.alarm ? col::PINK : col::TEXT2);
+  coldRows(c, v, Rect{204, 48, W - SIDE - 204, BODY_B - 48});
 }
 
 // ---------------------------------------------------------------------------------------------------------

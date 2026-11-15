@@ -85,7 +85,26 @@ class ColdLog:
         with self.lock:
             self.db.execute("CREATE TABLE IF NOT EXISTS cold_readings "
                             "(id INTEGER PRIMARY KEY, time TEXT NOT NULL, temperature_c REAL NOT NULL, source TEXT NOT NULL)")
+            # The head chef's own limit per product. It wins over the catalog: the kitchen knows how it stores the food.
+            self.db.execute("CREATE TABLE IF NOT EXISTS cold_limits "
+                            "(product TEXT PRIMARY KEY, limit_c REAL NOT NULL, set_by TEXT NOT NULL, time TEXT NOT NULL)")
             self.db.commit()
+
+    def set_limit(self, product: str, limit_c: float | None, set_by: str, when: datetime) -> None:
+        """Keep the head chef's limit for one product. None removes it, so the catalog's limit counts again."""
+        with self.lock:
+            if limit_c is None:
+                self.db.execute("DELETE FROM cold_limits WHERE product = ?", (product,))
+            else:
+                self.db.execute("INSERT OR REPLACE INTO cold_limits (product, limit_c, set_by, time) VALUES (?,?,?,?)",
+                                (product, float(limit_c), set_by, when.isoformat(timespec="seconds")))
+            self.db.commit()
+
+    def limits(self) -> dict[str, dict]:
+        """The head chef's limits: product -> {limit_c, set_by, time}."""
+        with self.lock:
+            rows = self.db.execute("SELECT product, limit_c, set_by, time FROM cold_limits").fetchall()
+        return {p: {"limit_c": c, "set_by": by, "time": t} for p, c, by, t in rows}
 
     def record(self, temperature_c: float, source: str, when: datetime) -> bool:
         """Keep a reading if the temperature moved by 0.2 °C or the last one is a minute old. True if kept."""

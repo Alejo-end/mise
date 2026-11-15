@@ -9,6 +9,10 @@ bool Cold::operator==(const Cold &o) const {
   return hasLimit == o.hasLimit && limit == o.limit && product == o.product && minutes == o.minutes && allowed == o.allowed;
 }
 
+bool ColdRow::operator==(const ColdRow &o) const {
+  return name == o.name && state == o.state && hasLimit == o.hasLimit && limit == o.limit && minutes == o.minutes;
+}
+
 bool Slot::operator==(const Slot &o) const {
   return slot == o.slot && units == o.units && target == o.target && reorder == o.reorder && onOrder == o.onOrder &&
          low == o.low && stale == o.stale && name == o.name && emptyAt == o.emptyAt;
@@ -21,8 +25,10 @@ bool View::operator==(const View &o) const {
       tooWarm != o.tooWarm || hasPeak != o.hasPeak || temp != o.temp || peak != o.peak || approvals != o.approvals ||
       more != o.more || coldWarm != o.coldWarm || !(room == o.room) || !(door == o.door) || approval != o.approval ||
       orderId != o.orderId || total != o.total || coldState != o.coldState || lineCount != o.lineCount ||
-      pointCount != o.pointCount || slotCount != o.slotCount || home != o.home)
+      pointCount != o.pointCount || slotCount != o.slotCount || home != o.home || coldRowCount != o.coldRowCount ||
+      quietS / 60 != o.quietS / 60)
     return false;
+  for (int i = 0; i < coldRowCount; i++) if (!(coldRows[i] == o.coldRows[i])) return false;
   for (int i = 0; i < lineCount; i++) if (lines[i] != o.lines[i]) return false;
   for (int i = 0; i < pointCount; i++) if (!samePoint(points[i], o.points[i])) return false;
   for (int i = 0; i < slotCount; i++) if (!(slots[i] == o.slots[i])) return false;

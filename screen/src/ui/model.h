@@ -11,7 +11,7 @@
 namespace ui {
 
 const int W = 480, H = 272;
-const int POINTS = 48, SLOTS = 3, LINES = 3;
+const int POINTS = 48, SLOTS = 3, LINES = 3, COLD_ROWS = 3;
 const uint32_t IDLE_MS = 60000;      // a minute without a touch: back to the backend's view
 const uint32_t CAMERA_IDLE_MS = 30000;
 const uint32_t TOAST_MS = 2600;
@@ -27,6 +27,15 @@ struct Cold {
   std::string product;
   int minutes = 0, allowed = 120;
   bool operator==(const Cold &o) const;
+};
+
+// One shelf product in the cold room: its own limit and its state against it ("ok", "warm", "breach", "unknown").
+struct ColdRow {
+  std::string name, state = "unknown";
+  bool hasLimit = false;
+  float limit = 0;
+  int minutes = 0;
+  bool operator==(const ColdRow &o) const;
 };
 
 // One shelf slot. A count, target, reorder point or order that the backend does not know is -1.
@@ -49,6 +58,9 @@ struct View {
   int pointCount = 0;
   Slot slots[SLOTS];
   int slotCount = 0;
+  ColdRow coldRows[COLD_ROWS];  // every shelf product with its own limit, the ones that need a person first
+  int coldRowCount = 0;
+  int quietS = 0;               // the buzzer is silenced for this many more seconds
   Tab home = TAB_COLD;  // the view the backend opens on
   bool operator==(const View &o) const;
 };

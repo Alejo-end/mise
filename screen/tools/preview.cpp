@@ -127,6 +127,10 @@ static View baseView() {
   v.pointCount = POINTS;
   for (int i = 0; i < POINTS; i++) v.points[i] = 3.4f + 0.5f * sinf(i * 0.21f) + 0.15f * sinf(i * 0.9f);
   v.points[47] = 3.4f;
+  v.coldRowCount = 3;
+  v.coldRows[0].name = "Butter 500 g"; v.coldRows[0].state = "ok"; v.coldRows[0].hasLimit = true; v.coldRows[0].limit = 6;
+  v.coldRows[1].name = "Valio milk 1 l"; v.coldRows[1].state = "ok"; v.coldRows[1].hasLimit = true; v.coldRows[1].limit = 6;
+  v.coldRows[2].name = "Rye bread 500 g"; v.coldRows[2].state = "unknown";
   v.slotCount = 3;
   v.slots[0] = Slot();
   v.slots[0].slot = 1; v.slots[0].name = "Valio milk 1 l"; v.slots[0].units = 14; v.slots[0].target = 30; v.slots[0].reorder = 10;
@@ -261,6 +265,8 @@ int main(int argc, char **argv) {
     v.coldState = "warm";
     v.coldWarm = 2;
     v.room.minutes = 34;
+    v.alarm = true;
+    for (int i = 0; i < 2; i++) { v.coldRows[i].state = "warm"; v.coldRows[i].minutes = 34; }
     v.points[8] = NAN; v.points[9] = NAN;
     Model m = modelFor(v, TAB_COLD);
     shot("cold-rising", m, T);

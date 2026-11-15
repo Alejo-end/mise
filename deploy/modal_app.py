@@ -28,7 +28,7 @@ image = (
     .pip_install_from_pyproject(str(ROOT / "pyproject.toml"))
     .pip_install("numpy", "pillow")
     .env({"CATALOG": "local", "RULES_FILE": "/root/app/rules/school_kitchen.yaml", "SHOW_PINS": "1",
-          "APPROVER_PINS": f"{DEMO_PIN}:Head chef", "OPEN_FOOD_FACTS": "1",
+          "APPROVER_PINS": f"{DEMO_PIN}:Head chef", "OPEN_FOOD_FACTS": "1", "COLD_DEMO_MIN_C": "25",
           "AUDIT_DB": "/state/audit.sqlite", "GATEWAY_KEY": "/state/gateway_key.pem"})
     .add_local_dir(ROOT, remote_path="/root/app",
                    ignore=[".venv", ".git", "**/__pycache__", ".pytest_cache", ".env", "data", "docs/decks",

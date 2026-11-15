@@ -175,6 +175,24 @@
       border-radius:0.5rem; padding:0.625rem 0.875rem; margin-bottom:0.875rem }
   .alert h3 { color:var(--pink); font-size:0.875rem } .alert p { margin:0.25rem 0 0; font-size:0.8125rem; color:var(--soft) }
 
+  /* The cold alarm: the first thing on every page while a product is too warm */
+  .coldalarm { background:var(--pink-soft); border:1px solid color-mix(in srgb, var(--pink) 45%, var(--line)); border-left:6px solid var(--pink);
+      border-radius:0.625rem; padding:0.875rem 1rem; margin-bottom:1rem }
+  .coldalarm .head { display:flex; gap:1rem; align-items:center; flex-wrap:wrap }
+  .coldalarm .air { font-size:2.25rem; font-weight:700; letter-spacing:-0.03em; color:var(--pink); line-height:1; white-space:nowrap }
+  .coldalarm .what { flex:1 1 16rem } .coldalarm h3 { color:var(--pink); font-size:1.0625rem; margin:0 }
+  .coldalarm .what p { margin:0.25rem 0 0; font-size:0.875rem }
+  .coldalarm ul { list-style:none; margin:0.75rem 0 0; padding:0; font-size:0.875rem }
+  .coldalarm li { padding:0.375rem 0; border-top:1px solid color-mix(in srgb, var(--pink) 25%, transparent) }
+  .coldalarm li b { margin-right:0.375rem } .coldalarm .quiet { font-size:0.8125rem; color:var(--soft) }
+  .coldalarm.silenced { border-left-color:var(--warn) } .coldalarm.silenced .air, .coldalarm.silenced h3 { color:var(--warn) }
+  .coldrow { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0.25rem 0.75rem; align-items:center; padding:0.625rem 0;
+      border-top:1px solid var(--line2) }
+  .coldrow .meta { grid-column:1 } .coldrow .state { grid-column:2; grid-row:1 }
+  .coldrow .setlimit { grid-column:1 / -1; display:flex; gap:0.375rem; align-items:center; flex-wrap:wrap }
+  .coldrow .setlimit input { width:5.5rem; flex:none; min-height:1.875rem; padding:0.1875rem 0.5rem }
+  html:not([data-as="chef"]) .coldrow .setlimit { display:none }
+
   /* Lists inside panels: rows with hairlines */
   .slots { list-style:none; margin:0; padding:0; background:var(--panel); border:1px solid var(--line); border-radius:0.625rem }
   .slots li { padding:0.625rem 0.875rem; border-top:1px solid var(--line2); display:grid; grid-template-columns:minmax(0,1fr) auto;
@@ -275,6 +293,7 @@
   <span>Outside buying agents order from Valio Aimo under the kitchen's signed rules: a licence, a signed quote, a person's approval and a record of every step.</span></div>
 <p class="alert" id="health" role="alert" hidden></p>
 <p class="alert" id="safety" role="status" hidden></p>
+<div id="coldBanner" role="alert" aria-live="assertive"></div>
 <div class="topbar">
   <h1 id="pageTitle">Head chef</h1>
   <div class="meta" id="ruleset"></div>
@@ -404,18 +423,17 @@
   </section>
 
   <section data-role="chef kitchen">
-    <details class="fold" id="coldBox">
-      <summary><span><b>Cold room</b> <span id="coldLine" class="meta">no reading yet</span></span></summary>
-      <div class="inside">
+    <h2>Cold room <small class="meta" id="coldLine">no reading yet</small></h2>
+    <div class="sheet" id="coldBox">
       <div class="therm"><span class="num" id="coldNow">–</span><span id="coldWhen" class="meta">No reading yet.</span></div>
-      <ul class="plain coldlist" id="coldProducts"></ul>
-      <div class="count">
+      <div id="coldProducts"></div>
+      <div class="count" style="margin-top:0.75rem">
         <input id="tempIn" type="number" step="0.1" inputmode="decimal" placeholder="°C" aria-label="Temperature that you measured">
         <button class="small" id="tempSave">Save a measured temperature</button>
       </div>
-      <p class="meta" style="margin:0.5rem 0 0">The sensor measures the air, not the food. A limit is the storage temperature that the manufacturer gave.</p>
-      </div>
-    </details>
+      <p class="meta" style="margin:0.5rem 0 0">The sensor measures the air, not the food. Each product has its own limit: the
+        head chef's, else the manufacturer's from the catalog. The head chef changes a limit here with the PIN.</p>
+    </div>
   </section>
 
   <section data-role="kitchen valio">
@@ -771,20 +789,69 @@ $("visBtn").onclick = async () => {
   drawVisible(await api("/observations/visible"));
   visFollow();
 };
+let shownCold = null, shownBanner = null;
+const SOURCE_WORDS = (src) => !src ? "no limit known" : src === "catalog" ? "from the catalog" : src;
 function drawCold(c) {
   $("coldNow").textContent = c.temperature_c == null ? "–" : `${c.temperature_c.toFixed(1)} °C`;
   $("coldWhen").textContent = c.measured_at ? `${c.source === "person" ? "Measured by a person" : "Sensor"} at ${c.measured_at.slice(11, 16)}` : "No reading yet.";
-  $("coldProducts").innerHTML = c.products.map(p => `<li><span>${esc(cap(p.product || "Slot " + p.slot))}
-      <span class="meta">${p.limit_c == null ? "" : `keep at ${p.limit_c} °C or colder`}${p.minutes_above_now ? `, above it for ${p.minutes_above_now} min` : ""}</span></span>
-      <span class="state ${p.state}">${STATE[p.state]}</span></li>`).join("");
   const bad = c.products.filter(p => p.state === "breach"), warm = c.products.filter(p => p.state === "warm");
   $("coldLine").innerHTML = c.temperature_c == null ? "no reading yet" : `${c.temperature_c.toFixed(1)} °C, ` +
     (bad.length ? `<b class="forbidden">${bad.length} product${bad.length > 1 ? "s" : ""} to check</b>`
-     : warm.length ? `<b class="needs_approval">${warm.length} too warm</b>` : "every product cold enough");
-  $("coldAlert").innerHTML = bad.length ? `<div class="alert"><h3>Check ${bad.map(p => esc(p.product)).join(" and ")} before use</h3>
-      <p>The cold room is at ${c.temperature_c.toFixed(1)} °C. It was above the limit for ${Math.max(...bad.map(p => p.minutes_above_now))} minutes,
-      and this kitchen allows ${c.allowed_minutes}. The sensor measures the air, so measure the product itself.</p></div>` : "";
+     : warm.length ? `<b class="forbidden">${warm.length} too warm</b>` : "every product cold enough");
+  // The rows change only when the data does, and never while a person types a limit.
+  const key = JSON.stringify(c.products.map(p => [p.product_key, p.state, p.limit_c, p.limit_source, p.minutes_above_now]));
+  if (key !== shownCold && !$("coldProducts").contains(document.activeElement)) {
+    shownCold = key;
+    $("coldProducts").innerHTML = c.products.map(p => `<div class="coldrow">
+      <b>${esc(cap(p.product || "Slot " + p.slot))}</b>
+      <span class="state ${p.state}">${STATE[p.state]}</span>
+      <span class="meta">${p.limit_c == null ? "No limit known: set one." : `Keep at ${p.limit_c} °C or colder, ${esc(SOURCE_WORDS(p.limit_source))}`}${p.minutes_above_now ? `. Above it for ${p.minutes_above_now} of ${c.allowed_minutes} min` : ""}.</span>
+      <span class="setlimit"><input type="number" step="0.5" min="-30" max="30" inputmode="decimal" placeholder="°C" aria-label="New limit for ${esc(p.product || "slot " + p.slot)}" data-limit-for="${esc(p.product_key)}">
+        <button class="small" data-set-limit="${esc(p.product_key)}">Set limit</button>
+        ${String(p.limit_source || "").startsWith("set by") ? `<button class="small" data-clear-limit="${esc(p.product_key)}">Use the catalog limit</button>` : ""}</span>
+    </div>`).join("") || '<p class="empty">No shelf product.</p>';
+  }
+  drawColdBanner(c);
+  $("coldAlert").innerHTML = "";
 }
+function drawColdBanner(c) {
+  const a = c.alert;
+  const key = JSON.stringify(a && [a.level, a.products, a.action, c.temperature_c, Math.ceil((c.quiet_s || 0) / 60)]);
+  if (key === shownBanner) return;
+  shownBanner = key;
+  if (!a) { $("coldBanner").innerHTML = ""; return; }
+  const quiet = c.quiet_s > 0;
+  $("coldBanner").innerHTML = `<div class="coldalarm ${a.level}${quiet ? " silenced" : ""}">
+    <div class="head"><span class="air">${a.air_c == null ? "–" : a.air_c.toFixed(1) + " °C"}</span>
+      <div class="what"><h3>Cold alarm: ${esc(a.headline)}</h3><p>${esc(a.action)}</p></div>
+      ${quiet ? `<span class="quiet">Buzzer silenced, ${Math.ceil(c.quiet_s / 60)} min left</span>`
+              : `<button class="primary" id="silenceBtn">Silence the buzzer for 10 min</button>`}</div>
+    <ul>${a.products.map(p => `<li><b>${esc(p.product)}</b>limit ${p.limit_c} °C (${esc(SOURCE_WORDS(p.limit_source))}),
+      ${p.state === "breach" ? "check before use" : "too warm"}: above the limit for ${p.minutes_above} of ${c.allowed_minutes} min</li>`).join("")}</ul>
+  </div>`;
+}
+document.addEventListener("click", async (e) => {
+  if (e.target.id === "silenceBtn") {
+    e.target.disabled = true;
+    try { await post("/alarm/silence", {by: $("who").value.trim() || null}); $("result").textContent = "The buzzer is quiet for 10 minutes."; }
+    catch (err) { $("result").textContent = err.message; }
+    shownBanner = null; tick();
+  }
+});
+$("coldProducts").addEventListener("click", async (e) => {
+  const set = e.target.closest("[data-set-limit]"), clear = e.target.closest("[data-clear-limit]");
+  if (!set && !clear) return;
+  const product = (set || clear).dataset.setLimit || (set || clear).dataset.clearLimit;
+  const input = $("coldProducts").querySelector(`[data-limit-for="${CSS.escape(product)}"]`);
+  if (set && input.value === "") { input.focus(); return; }
+  if (!$("pin").value) { $("pin").focus(); $("result").textContent = "Type your PIN first: only the head chef changes a limit."; return; }
+  try {
+    const p = await post("/cold/limits", {product, limit_c: set ? Number(input.value) : null, pin: $("pin").value});
+    if (p.detail) throw new Error(typeof p.detail === "string" ? p.detail : "A limit is a number from -30 to 30 °C.");
+    $("result").textContent = `${cap(p.product || "The product")}: keep at ${p.limit_c} °C or colder.`;
+  } catch (err) { $("result").textContent = err.message; }
+  document.activeElement.blur(); shownCold = null; tick();
+});
 $("tempSave").onclick = async () => {
   if ($("tempIn").value === "") { $("tempIn").focus(); return; }
   await post("/cold/reading", {temperature_c: Number($("tempIn").value), measured_by: $("who").value.trim() || null});
@@ -976,12 +1043,14 @@ async function tick() {
     const [approvals, dev, log, dels, rel] = await Promise.all([
       api("/approvals/open"), api("/device"), api("/history?format=story&limit=60"),
       api("/deliveries"), api("/suppliers/reliability")]);
-    drawStock(await api("/stock"));
-    drawVisible(await api("/observations/visible"));
-    drawCold(await api("/cold"));
-    drawChains(await api("/orders"));
-    drawUseFirst(await api("/insights"));
-    const lics = await api("/sandbox/licences");
+    // The rest at once: over the internet one request after another made the page slow to fill.
+    const [stockNow, vis, coldNow, ordersNow, ins, lics] = await Promise.all([api("/stock"), api("/observations/visible"),
+      api("/cold"), api("/orders"), api("/insights"), api("/sandbox/licences")]);
+    drawCold(coldNow);
+    drawStock(stockNow);
+    drawVisible(vis);
+    drawChains(ordersNow);
+    drawUseFirst(ins);
     const live = lics.filter(l => !l.revoked && new Date(l.expires) > new Date());
     $("licCount").textContent = live.length ? `${live.length} in force` : "none in force";
     $("licences").innerHTML = lics.slice().reverse().slice(0, 8).map(l => { const on = live.includes(l); return `<li>

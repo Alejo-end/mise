@@ -291,7 +291,7 @@ def _box_decision(data: dict) -> dict:
     where = "on the touch screen" if data.get("source") == "screen" else "at the box"
     if data["type"] == "alarm_seen":
         log.write("alarm_seen", {"summary": f"A person {where} confirmed the cold alarm{at}."
-                                 + (" The buzzer is quiet for 10 minutes." if data.get("source") != "screen" else ""),
+                                 + " The buzzer is quiet for 10 minutes.",
                                  "temperature_c": temp}, data.get("source", "box"), ruleset["version"])
         device["alarm_seen_at"] = time.time()
         return {"status": "logged"}
@@ -483,7 +483,7 @@ def box_screen(request: Request):
     since = now - timedelta(hours=24)
     door = exposure(cold_log.readings(since), limit, _allowed_minutes(), since, now)
     approvals = agent.open_approvals()
-    alarm = bool(device.get("alarm")) and time.time() - device.get("alarm_seen_at", 0) > 600
+    alarm = _cold_alarm_now() and not _quiet_s()
     return {
         # The view the screen opens on: the door when a delivery waits or an alarm runs, else the cold room.
         "view": "door" if order or alarm else "cold",
@@ -514,13 +514,23 @@ def _screen_cold(since: datetime) -> dict:
     That is the product longest above its limit, or, when every product is cold enough, the one closest to its limit.
     """
     rank = {BREACH: 0, WARM: 1, OK: 2, UNKNOWN: 3}
-    known = [p for p in _cold_products(since) if p["limit_c"] is not None]
+    products = _cold_products(since)
+    alert = _cold_alert(products)
+    # Every shelf product with its own limit, the ones that need a person first: the screen lists them.
+    rows = [{"name": _plain(cap_first(p["product"] or f"slot {p['slot']}"), 24), "limit_c": p["limit_c"], "state": p["state"],
+             "minutes_above": p["minutes_above_now"]}
+            for p in sorted(products, key=lambda p: (rank[p["state"]], -p["minutes_above_now"]))][:4]
+    extra = {"rows": rows, "quiet_s": _quiet_s(),
+             "headline": _plain(alert["headline"], 34) if alert else "",
+             "action": _wrapped(_plain(alert["action"], 200), 44)[:2] if alert else []}
+    known = [p for p in products if p["limit_c"] is not None]
     if not known:
-        return {"state": UNKNOWN, "limit_c": None, "product": None, "minutes_above": 0, "allowed_minutes": _allowed_minutes(), "warm": 0}
+        return {"state": UNKNOWN, "limit_c": None, "product": None, "minutes_above": 0, "allowed_minutes": _allowed_minutes(),
+                "warm": 0} | extra
     first = min(known, key=lambda p: (rank[p["state"]], -p["minutes_above_now"], p["limit_c"]))
     return {"state": first["state"], "limit_c": first["limit_c"], "product": _plain(first["product"] or "", 22) or None,
             "minutes_above": first["minutes_above_now"], "allowed_minutes": first["allowed_minutes"],
-            "warm": sum(p["state"] in (WARM, BREACH) for p in known)}
+            "warm": sum(p["state"] in (WARM, BREACH) for p in known)} | extra
 
 
 def box_seen():
@@ -692,8 +702,11 @@ def approvals_decide(approval_id: str, d: Decision):
 @app.get("/device/commands")
 def device_commands():
     box_seen()
+    quiet = _quiet_s()
     out = {"buzzer": "alarm"} if time.time() < device["problem_until"] else {
-        "buzzer": "approval" if agent.open_approvals() else "off"}
+        "buzzer": "approval" if agent.open_approvals() and not quiet else "off"}
+    # The cold alarm follows each product's own limit here; the box only adds its sound. quiet_s: a person silenced it.
+    out["cold_alarm"], out["quiet_s"] = _cold_alarm_now(), quiet
     asked = observation["requested"]
     if asked and time.time() - asked["at_s"] <= OBSERVATION_REQUEST_S:
         out["recognize"] = {"request_id": asked["request_id"], "requested_by": asked["requested_by"]}
@@ -1136,13 +1149,42 @@ def _allowed_minutes() -> int:
     return int(demo) if demo.isdigit() else int((ruleset.get("cold_chain") or {}).get("max_minutes_above", DEFAULT_ALLOWED_MIN))
 
 
-def _limit_for(product: dict) -> float | None:
-    """The storage limit of a product: the manufacturer's from the catalog, or else the kitchen's own from the rule set."""
+def _product_key(product_id, slot) -> str:
+    """The key of a product's own cold limit: its catalog id, or its slot when the slot names no catalog product."""
+    return str(product_id) if product_id is not None else f"slot:{slot}"
+
+
+# The demo has one air sensor in a warm room, so no product's limit is under this (COLD_DEMO_MIN_C, for example 25).
+# Empty: the limits count as they are.
+COLD_DEMO_MIN_C = float(os.environ["COLD_DEMO_MIN_C"]) if os.getenv("COLD_DEMO_MIN_C", "").strip() else None
+
+
+def _limit_and_source(product: dict, key: str | None = None) -> tuple[float | None, str | None]:
+    """The storage limit of a product and where it comes from, raised to the demo's minimum when one is set."""
+    limit, source = _own_limit_and_source(product, key)
+    if limit is not None and COLD_DEMO_MIN_C is not None and limit < COLD_DEMO_MIN_C:
+        return COLD_DEMO_MIN_C, f"demo minimum (one air sensor; {source} {limit:g} °C)"
+    return limit, source
+
+
+def _own_limit_and_source(product: dict, key: str | None = None) -> tuple[float | None, str | None]:
+    """The head chef's own limit wins; else the manufacturer's from the catalog; else the kitchen's from the rule set
+    or the COLD_LIMITS setting."""
+    chef = cold_log.limits().get(key or str(product.get("id")))
+    if chef:
+        return chef["limit_c"], f"set by {chef['set_by']}"
     if product.get("max_temp_c") is not None:
-        return product["max_temp_c"]
+        return product["max_temp_c"], "catalog"
     own = next((t.get("keep_at_or_below_c") for t in ruleset["targets"]
                 if product.get("id") is not None and str(t.get("product_id")) == str(product["id"])), None)
-    return own if own is not None else COLD_LIMITS.get(str(product.get("id")))
+    if own is not None:
+        return own, "rule set"
+    setting = COLD_LIMITS.get(str(product.get("id")))
+    return (setting, "kitchen setting") if setting is not None else (None, None)
+
+
+def _limit_for(product: dict) -> float | None:
+    return _limit_and_source(product)[0]
 
 
 def _own_cold_limits() -> dict[str, float]:
@@ -1169,9 +1211,51 @@ def _cold_products(since: datetime | None = None) -> list[dict]:
     readings, now, out = cold_log.readings(since), datetime.now(TZ), []
     for t in sorted(ruleset["targets"], key=lambda t: t["slot"]):
         product = (catalog.product(t["product_id"]).value if t.get("product_id") else None) or {}
-        e = exposure(readings, _limit_for(product | {"id": t.get("product_id")}), _allowed_minutes(), since, now)
-        out.append(e.to_dict() | {"slot": t["slot"], "product": t.get("product")})
+        key = _product_key(t.get("product_id"), t["slot"])
+        limit, source = _limit_and_source(product | {"id": t.get("product_id")}, key)
+        e = exposure(readings, limit, _allowed_minutes(), since, now)
+        out.append(e.to_dict() | {"slot": t["slot"], "product": t.get("product"), "product_key": key,
+                                  "limit_source": source})
     return out
+
+
+ALARM_QUIET_S = 600  # after a person silences the alarm, the buzzer stays quiet this long
+_alarm_cache = {"at": 0.0, "on": False}
+
+
+def _quiet_s() -> int:
+    """The seconds left of the quiet time after a person silenced the alarm (on the page, the screen or the knob)."""
+    return max(0, round(ALARM_QUIET_S - (time.time() - device.get("alarm_seen_at", 0))))
+
+
+def _cold_alarm_now() -> bool:
+    """True while a shelf product is above its own limit. The box polls every second, so this is kept for 5 s."""
+    if time.time() - _alarm_cache["at"] > 5:
+        since = datetime.now(TZ) - timedelta(hours=24)
+        _alarm_cache.update(at=time.time(), on=any(p["state"] in (WARM, BREACH) for p in _cold_products(since)))
+    return _alarm_cache["on"]
+
+
+def _cold_alert(products: list[dict]) -> dict | None:
+    """What is wrong in the cold room, in words a person can act on at once. None when every product is cold enough."""
+    hot = sorted((p for p in products if p["state"] in (WARM, BREACH)),
+                 key=lambda p: (p["state"] != BREACH, -p["minutes_above_now"]))
+    if not hot:
+        return None
+    name = lambda p: cap_first(p["product"] or f"slot {p['slot']}")  # noqa: E731
+    breach = [p for p in hot if p["state"] == BREACH]
+    allowed = hot[0]["allowed_minutes"]
+    if breach:
+        action = (f"Check {', '.join(name(p) for p in breach)} before use: above the limit for longer than the "
+                  f"{allowed} min the kitchen allows.")
+    else:
+        action = f"Move it to a colder place now. After {allowed} min above its limit, a person must check it before use."
+    return {"level": "breach" if breach else "warm", "air_c": hot[0]["temperature_c"],
+            "headline": f"{name(hot[0])} is too warm" if len(hot) == 1 else f"{len(hot)} products are too warm",
+            "products": [{"product": name(p), "product_key": p["product_key"], "limit_c": p["limit_c"],
+                          "limit_source": p["limit_source"], "minutes_above": p["minutes_above_now"], "state": p["state"]}
+                         for p in hot],
+            "action": action, "quiet_s": _quiet_s()}
 
 
 class TempReading(BaseModel):
@@ -1184,6 +1268,45 @@ def cold_reading(t: TempReading):
     """A temperature that a person measured, for example with a probe thermometer. It goes into the cold log."""
     cold_log.record(t.temperature_c, "person", datetime.now(TZ))
     return {"temperature_c": t.temperature_c, "source": "person"}
+
+
+class ColdLimit(BaseModel):
+    product: str = Field(min_length=1, max_length=40)           # the product_key that /cold gives
+    limit_c: float | None = Field(default=None, ge=-30, le=30)  # None: back to the catalog's limit
+    pin: str
+
+
+@app.post("/cold/limits")
+def cold_set_limit(c: ColdLimit):
+    """The head chef sets the storage limit of one product, with the PIN. It changes what counts as too warm."""
+    approver = approver_of(c.pin)
+    before = next((p for p in _cold_products() if p["product_key"] == c.product), None)
+    if before is None:
+        raise HTTPException(404, "No shelf product has this key.")
+    cold_log.set_limit(c.product, c.limit_c, approver, datetime.now(TZ))
+    _alarm_cache["at"] = 0.0
+    after = next(p for p in _cold_products(datetime.now(TZ) - timedelta(hours=24)) if p["product_key"] == c.product)
+    was = f"{before['limit_c']:g} °C ({before['limit_source']})" if before["limit_c"] is not None else "no limit"
+    now_ = f"{after['limit_c']:g} °C" if after["limit_c"] is not None else "no limit"
+    log.write("cold_limit", {"summary": f"{approver} set the cold limit of {cap_first(after['product'] or '')} to {now_}"
+                             f"{' (the catalog limit again)' if c.limit_c is None else ''}; it was {was}.",
+                             "product": c.product, "limit_c": after["limit_c"]}, approver, ruleset["version"])
+    return after
+
+
+class Silence(BaseModel):
+    by: str | None = Field(default=None, max_length=60)
+
+
+@app.post("/alarm/silence")
+def alarm_silence(s: Silence):
+    """A person saw the cold alarm: the buzzer of the box stays quiet for 10 minutes. It changes no limit and no order."""
+    device["alarm_seen_at"] = time.time()
+    temp = device.get("temperature_c")
+    log.write("alarm_seen", {"summary": f"{(s.by or 'A person').strip()} silenced the buzzer for 10 minutes on the page"
+                             + (f" at {temp:.1f} °C." if temp is not None else "."), "temperature_c": temp},
+              (s.by or "page").strip(), ruleset["version"])
+    return {"quiet_s": _quiet_s()}
 
 
 @app.get("/cold")
@@ -1206,6 +1329,7 @@ def cold():
     return {"temperature_c": last.temperature_c if last else None,
             "measured_at": last.time.isoformat(timespec="seconds") if last else None,
             "source": last.source if last else None, "allowed_minutes": _allowed_minutes(), "products": products,
+            "alert": _cold_alert(products), "quiet_s": _quiet_s(),
             "history": [{"time": x.time.isoformat(timespec="seconds"), "temperature_c": x.temperature_c} for x in readings[-120:]]}
 
 

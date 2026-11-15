@@ -295,8 +295,10 @@ def buzzer_worker():
             if status != state.get("status_sent"):
                 Bridge.call("set_status", status)
                 state["status_sent"] = status
-            # The local temperature alarm wins over the approval beep.
-            loud = state["alarm"] and time.time() >= state.get("alarm_quiet_until", 0)
+            # The cold alarm wins over the approval beep. It is the backend's (each product's own limit); without the
+            # backend, the box's own limit (temperature_limit_c) stands in.
+            alarm = state["alarm"] if state.get("backend_alarm") is None else state["backend_alarm"]
+            loud = alarm and time.time() >= state.get("alarm_quiet_until", 0)
             mode = "alarm" if loud else buzzer_wanted["mode"]
             if mode != applied:
                 Bridge.call("set_buzzer", BUZZER_MODES[mode])
@@ -336,6 +338,11 @@ def poll_commands():
             state["backend_ok"], state["backend_error"] = True, ""
             cmd = r.json()
             set_buzzer(cmd.get("buzzer", "off"))
+            # The cold alarm follows each product's own limit, which the backend knows. A person who silenced it on
+            # the page or the touch screen makes the buzzer quiet here too.
+            state["backend_alarm"] = bool(cmd["cold_alarm"]) if "cold_alarm" in cmd else None
+            if cmd.get("quiet_s"):
+                state["alarm_quiet_until"] = max(state.get("alarm_quiet_until", 0), time.time() + float(cmd["quiet_s"]))
             ask = cmd.get("recognize")
             if isinstance(ask, dict) and ask.get("request_id"):  # the demo page asked through the backend
                 shelf_view.request(str(ask.get("requested_by") or "demo page")[:40], str(ask["request_id"])[:40])
@@ -352,6 +359,7 @@ def poll_commands():
                 state["delivery_waiting"] = bool(screen.get("delivery"))
         except Exception as e:
             state["backend_ok"], state["backend_error"] = False, str(e)[:200]
+            state["backend_alarm"] = None
             set_buzzer("off")
         time.sleep(1)  # the demo page's "Recognize now" reaches the box within about a second
 

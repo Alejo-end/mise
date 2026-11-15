@@ -141,3 +141,57 @@ def test_the_demo_setting_shortens_the_time_before_the_alert(client, monkeypatch
     assert m._allowed_minutes() == 120
     monkeypatch.setenv("COLD_ALLOWED_MINUTES", "2")
     assert m._allowed_minutes() == 2
+
+
+def test_the_head_chef_sets_a_products_own_limit_with_the_pin(client):
+    client.post("/cold/reading", json={"temperature_c": 9.5})
+    yogurt = next(p for p in client.get("/cold").json()["products"] if p["slot"] == 2)
+    assert (yogurt["state"], yogurt["limit_source"]) == ("warm", "catalog")
+    assert client.post("/cold/limits", json={"product": yogurt["product_key"], "limit_c": 12, "pin": "0000"}).status_code == 403
+    after = client.post("/cold/limits", json={"product": yogurt["product_key"], "limit_c": 12, "pin": "4821"}).json()
+    assert (after["limit_c"], after["state"], after["limit_source"]) == (12, "ok", "set by Head chef")
+    entry = [e for e in client.get("/log?format=json&limit=20").json() if e["step"] == "cold_limit"][-1]
+    assert entry["actor"] == "Head chef" and "to 12 °C" in entry["detail"]["summary"]
+    back = client.post("/cold/limits", json={"product": yogurt["product_key"], "limit_c": None, "pin": "4821"}).json()
+    assert (back["limit_c"], back["limit_source"]) == (yogurt["limit_c"], "catalog")
+
+
+def test_the_alert_says_which_product_is_too_warm_and_what_to_do(client):
+    assert client.get("/cold").json()["alert"] is None
+    client.post("/cold/reading", json={"temperature_c": 9.5})
+    alert = client.get("/cold").json()["alert"]
+    names = [p["product"] for p in alert["products"]]
+    assert alert["level"] == "warm" and "Natural yogurt 1 kg" in names and "Rye bread 500 g" not in names
+    assert alert["headline"] == f"{len(names)} products are too warm" and "colder place" in alert["action"]
+
+
+def test_silencing_on_the_page_quiets_the_box_for_ten_minutes(client):
+    client.post("/cold/reading", json={"temperature_c": 9.5})
+    loud = client.get("/device/commands").json()
+    assert loud["cold_alarm"] and loud["quiet_s"] == 0 and client.get("/box/screen").json()["alarm"]
+    assert client.post("/alarm/silence", json={"by": "Aino"}).json()["quiet_s"] == 600
+    quiet = client.get("/device/commands").json()
+    assert quiet["quiet_s"] > 590 and quiet["buzzer"] == "off" and not client.get("/box/screen").json()["alarm"]
+    assert any("Aino silenced the buzzer" in e["detail"]["summary"]
+               for e in client.get("/log?format=json&limit=20").json() if e["step"] == "alarm_seen")
+
+
+def test_the_screen_lists_every_product_with_its_limit_the_warm_ones_first(client):
+    client.post("/cold/reading", json={"temperature_c": 9.5})
+    cold = client.get("/box/screen").json()["cold"]
+    assert cold["rows"][0]["state"] == "warm" and cold["rows"][-1]["name"] == "Rye bread 500 g"
+    assert cold["headline"].endswith("too warm") and cold["action"]
+
+
+def test_a_demo_minimum_raises_every_limit_under_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("AUDIT_DB", str(tmp_path / "a.sqlite"))
+    monkeypatch.setenv("APPROVER_PINS", "4821:Head chef")
+    monkeypatch.setenv("GATEWAY_KEY", str(tmp_path / "key.pem"))
+    monkeypatch.setenv("COLD_DEMO_MIN_C", "25")
+    import backend.app as m
+    client = TestClient(importlib.reload(m).app)
+    client.post("/cold/reading", json={"temperature_c": 24.0})
+    yogurt = next(p for p in client.get("/cold").json()["products"] if p["slot"] == 2)
+    assert (yogurt["limit_c"], yogurt["state"]) == (25, "ok") and yogurt["limit_source"].startswith("demo minimum")
+    higher = client.post("/cold/limits", json={"product": yogurt["product_key"], "limit_c": 27, "pin": "4821"}).json()
+    assert (higher["limit_c"], higher["limit_source"]) == (27, "set by Head chef")
