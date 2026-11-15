@@ -1,5 +1,7 @@
 # mise: the Aimo Agent Gateway and its kitchen
 
+**Try it online:** https://alejo-end--mise.us-east.modal.run/approve (hosted on Modal, on the stand-in catalog; the demo PIN of the head chef shows on the page; `deploy/modal_app.py` serves it).
+
 Our entry to "Trusted Trade Agents" by Valio Aimo. Read `HANDBOOK.md` for the full explanation with pictures. The build brief is `DEMO_PLAN.md`.
 
 ## In brief
