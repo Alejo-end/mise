@@ -260,6 +260,11 @@ def set_buzzer(mode: str):
         buzzer_wanted["mode"] = mode
 
 
+def matrix_status() -> int:
+    """What the LED face shows besides the limit: bit 0 while a delivery waits for a decision at the door."""
+    return 1 if state.get("delivery_waiting") else 0
+
+
 def buzzer_worker():
     applied = None
     while True:
@@ -269,6 +274,15 @@ def buzzer_worker():
                 Bridge.call("set_buzzer", BUZZER_MODES["confirm"])
                 applied = None  # the confirm beep ends in "off" on the board, so resend the mode
                 time.sleep(0.2)
+            if time.time() - tof.get("logged", 0) > 10:   # the distance sensor's state, in the log once in 10 s
+                tof["logged"] = time.time()
+                v = int(Bridge.call("tof_info"))
+                logger.info(f"tof: state {v // 10000000 - 10}, frames {(v // 100) % 100000}, valid zones {v % 100}, "
+                            f"frames sent {tof.get('sent', 0)}")
+            status = matrix_status()
+            if status != state.get("status_sent"):
+                Bridge.call("set_status", status)
+                state["status_sent"] = status
             # The local temperature alarm wins over the approval beep.
             loud = state["alarm"] and time.time() >= state.get("alarm_quiet_until", 0)
             mode = "alarm" if loud else buzzer_wanted["mode"]
@@ -309,6 +323,10 @@ def poll_commands():
             r.raise_for_status()
             state["backend_ok"], state["backend_error"] = True, ""
             set_buzzer(r.json().get("buzzer", "off"))
+            if time.time() - state.get("screen_at", 0) > 10:  # the LED face shows a parcel while a delivery waits
+                state["screen_at"] = time.time()
+                screen = requests.get(config["backend_url"].rstrip("/") + "/box/screen", timeout=3).json()
+                state["delivery_waiting"] = bool(screen.get("delivery"))
         except Exception as e:
             state["backend_ok"], state["backend_error"] = False, str(e)[:200]
             set_buzzer("off")
@@ -360,7 +378,7 @@ def on_knob_long_press():
 
 # The knob menu of the sketch: page number -> name. The sketch owns the pages and the matrix;
 # this side gives each confirmed page its meaning.
-MENU_PAGES = {0: "limit", 1: "delivery", 2: "alarm", 3: "slot"}
+MENU_PAGES = {0: "limit", 1: "delivery", 2: "cold", 3: "stock"}
 ALARM_QUIET_S = 600  # after "I have seen the alarm" the buzzer stays quiet this long
 
 
@@ -368,10 +386,10 @@ def menu_choice(page: str, choice: int) -> str:
     """What the choice of a page means, in words for the page of the board."""
     if page == "delivery":
         return "accept" if choice == 0 else "reject"
-    if page == "slot":
+    if page == "stock":
         slots = sorted(config["slots"], key=lambda s: s["slot"])
         return f"slot {slots[choice]['slot']}: {slots[choice]['product_hint']}" if choice < len(slots) else "no such slot"
-    return "seen" if page == "alarm" else ""
+    return "seen" if page == "cold" else ""
 
 
 def on_knob_menu(page, choice):
@@ -382,17 +400,44 @@ def on_knob_menu(page, choice):
 
 def on_knob_confirm(page, choice):
     """A hold on a menu page: the person decided. The box has no PIN, so nothing here orders or approves."""
-    name, choice = MENU_PAGES.get(int(page)), int(choice)
-    set_buzzer("confirm")
+    name, choice = MENU_PAGES.get(int(page)), int(choice)  # the sketch plays its own chime
     if name == "delivery":
         post_async({"type": "delivery_decision", "accepted": choice == 0})
-    elif name == "alarm":
+    elif name == "cold":                                  # the sketch sends this only during an alarm
         state["alarm_quiet_until"] = time.time() + ALARM_QUIET_S
         post_async({"type": "alarm_seen"})
-    elif name == "slot":
+    elif name == "stock":
         slots = sorted(config["slots"], key=lambda s: s["slot"])
         if choice < len(slots):
             post_async({"type": "manual_low", "slot": slots[choice]["slot"], "product_hint": slots[choice]["product_hint"]})
+
+
+# The distance sensor: eight rows of eight distances in mm (-1: no valid target). A full frame goes to the backend.
+tof = {"rows": [None] * 8, "seen": 0}
+
+
+def on_tof_row(row, *mm):
+    try:
+        _tof_row(int(row), mm)
+    except Exception as e:
+        logger.warning(f"tof row: {e}")
+
+
+def _tof_row(row, mm):
+    if 0 <= row < 8 and len(mm) == 8:
+        tof["rows"][row] = [None if int(v) < 0 else round(int(v) / 10, 1) for v in mm]
+        if row == 7 and all(r is not None for r in tof["rows"]):
+            frame = [v for r in tof["rows"] for v in r]
+            tof["seen"] = time.time()
+            tof["sent"] = tof.get("sent", 0) + 1
+            threading.Thread(target=post_tof, args=(frame,), daemon=True).start()
+
+
+def post_tof(cm):
+    try:
+        requests.post(config["backend_url"].rstrip("/") + "/box/tof", json={"cm": cm}, timeout=2)
+    except Exception as e:
+        logger.debug(f"tof: {e}")
 
 
 def finite(value):
@@ -436,6 +481,7 @@ Bridge.provide("knob_long_press", on_knob_long_press)
 Bridge.provide("knob_menu", on_knob_menu)
 Bridge.provide("knob_confirm", on_knob_confirm)
 Bridge.provide("thermo", on_thermo)
+Bridge.provide("tof_row", on_tof_row)
 
 
 # Shelf detection -----------------------------------------------------------
@@ -805,6 +851,7 @@ def on_update(_sid, _data):
             body = requests.get(f"{base}/device/files/{f['path']}", timeout=10).content
             if hashlib.sha256(body).hexdigest() != f["sha256"]:
                 return {"ok": False, "error": f"{f['path']} changed during the download, try again"}
+            local.parent.mkdir(parents=True, exist_ok=True)   # a new file can sit in a new folder
             tmp = local.with_suffix(local.suffix + ".new")
             tmp.write_bytes(body)
             tmp.replace(local)
@@ -879,6 +926,27 @@ def camera_worker():
             time.sleep(10)  # the app only sees cameras plugged in at start, so retrying fast does not help
 
 
+CAMERA_PUSH_S = 0.25  # the touch screen shows the shelf: four pictures a second go to the backend
+
+
+def camera_push_worker():
+    """Send the newest camera picture to the backend about once a second, for the touch screen. A picture is
+    sent once, only while it is fresh, and a failed send is skipped."""
+    last_sent = None
+    while True:
+        img, t = state["last_frame"], state["frame_time"]
+        if img is not None and img is not last_sent and t and time.time() - t < CAMERA_GRACE_S:
+            try:
+                buf = io.BytesIO()
+                img.convert("RGB").resize((480, 360)).save(buf, format="JPEG", quality=75)   # the screen is 480 wide
+                requests.post(config["backend_url"].rstrip("/") + "/box/camera", data=buf.getvalue(),
+                              headers={"Content-Type": "image/jpeg"}, timeout=3)
+                last_sent = img
+            except Exception as e:
+                logger.debug(f"camera push: {e}")
+        time.sleep(CAMERA_PUSH_S)
+
+
 def preview_worker():
     last_sent = None
     while True:
@@ -923,4 +991,5 @@ threading.Thread(target=buzzer_worker, daemon=True).start()
 threading.Thread(target=shortage_worker, daemon=True).start()
 threading.Thread(target=camera_worker, daemon=True).start()
 threading.Thread(target=preview_worker, daemon=True).start()
+threading.Thread(target=camera_push_worker, daemon=True).start()
 App.run(user_loop=loop)

@@ -195,7 +195,7 @@ class Agent:
                                   "rule_set_version": self.rules["version"], "since": now.isoformat(timespec="seconds")}
             self.stocked_hold.pop(slot, None)
 
-        how = "knob press" if kind == "manual_low" else "camera"
+        how = ("the touch screen" if ev.get("source") == "screen" else "knob press") if kind == "manual_low" else "camera"
         self.log.write(
             "trigger",
             {"summary": f"Slot {slot} ({target['product']}) is {state} by {how}, about {units} units left.", "event": ev,

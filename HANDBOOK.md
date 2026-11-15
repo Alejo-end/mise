@@ -44,9 +44,20 @@ Valio's challenge API has only two live calls: price and availability. It has no
 
 ## The shelf box
 
-![The parts of the shelf box, pulled apart](enclosure/renders/exploded.png)
+![The parts of the box, pulled apart](enclosure/renders/exploded.png)
 
-The case holds the UNO Q, the Knob and the Buzzer. The Thermo sits in its own small pod on a long cable, away from the heat of the board. `enclosure/README.md` has the print settings, the screws and the assembly steps. `enclosure/cad/sk1_assembly.FCStd` opens in FreeCAD.
+One housing hangs on the wall. It holds the UNO Q, the Knob, the Buzzer and the touch screen. The Thermo and the distance sensor sit in two small pods on long cables. No screw holds a part to another. `enclosure/README.md` has the print orientation, the fit tolerance, the assembly steps and the dimensions to measure before printing. `enclosure/cad/sk1_assembly.FCStd` opens in FreeCAD.
+
+Each part of the box has one job:
+
+| Part | Job |
+|---|---|
+| LED face (13 x 8 dots) | The spend limit, and one symbol when a person is needed: a blinking thermometer for a cold alarm, a parcel for a delivery at the door, a ring with "!" for an order to approve. |
+| Knob | A turn sets the spend limit, €10 a step. A full hold starts a 60 s delivery check. A tap does nothing, so a knock never acts. |
+| Touch screen | The data and the decisions that need context. Door: the delivery with its temperature against the product's limit, Accept or Reject. Cold: the last 2 hours against the limit. Stock: each slot against its target, "Report low", the live shelf camera, and an 8 x 8 depth view of the distance sensor. `screen/README.md` describes it. |
+| Phone | The head chef's approval, with a PIN. Neither the knob nor the screen can approve an order. |
+
+When the box is offline or its camera gives no picture, every page says "No automatic orders from the shelf" and what a person must do. It clears when the data returns.
 
 ## How it decides
 
@@ -90,7 +101,7 @@ The limits:
 1. A camera count is an estimate from a fill level. The page names the source of each count.
 2. The use rate needs at least one hour of readings, and it reads only the last 14 days. It is a plain average with no weekday pattern.
 3. "A full shelf lasts N days" shows stock that sits. We have no shelf life in the data, so the app claims no waste figure. Food waste also arises in preparation, at serving and on the plate. A shelf count can only touch waste from ordering too much. The Finnish research institute Luke measures these waste streams apart (`https://www.luke.fi/en/projects/lukeloki`).
-4. No real kitchen data exists yet. The tests use made-up readings, and the distance sensor is not connected.
+4. No real kitchen data exists yet. The tests use made-up readings. The distance sensor sends its 8 x 8 grid to the screen, but it does not feed the stock count yet, and on 15 November it did not answer on the bus at the last check.
 5. Order timing is unchanged: a low reading still starts a request at once. Anatoly's proposal moves orders to set times. His simulator, on a partial and synthetic run, shows the price of that: about half as many supplier orders, and about three times the hours with an empty shelf (57.7 against 177.4). An urgent path wins part of that back (127.5). The team has not decided.
 
 ## The cold log, the scan and "use first"
@@ -239,6 +250,8 @@ The board holds a copy of the version before 14 November in `~/safe-kitchen-agen
 In a warm room, the cold room alarm is on. Then the buzzer plays the alarm, and every order waits for the chef. For a demo, raise the alarm limit in "Settings", or put the Thermo pod in a cool box.
 
 ## Demo in six steps
+
+`DEMO_SCRIPT.md` is the script for the judges: one incident from an empty milk shelf to the trust scorecard, in seven steps. The six steps below are the older gateway walk-through, kept for a longer session.
 
 1. Start with the gateway. Run the Agent Driving Test on the naive agent and on our agent. Only our agent passes. Enter the PIN to grant its licence.
 2. With that licence, an outside agent asks for a quote for "1,000 litres of lactose-free milk by Monday". Show the price, the time of the price and the signature. Change one digit of the answer, and the signature fails.

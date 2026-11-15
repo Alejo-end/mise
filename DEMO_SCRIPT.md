@@ -1,8 +1,10 @@
 # The demo, step by step
 
-Three minutes, five steps. Every step runs on the live Valio catalog. Nothing here needs the shelf camera.
+Three minutes, one incident, told from start to end. Every step runs on the live Valio catalog.
 
-The one sentence: Valio Aimo gets a gateway that lets an outside buying agent order under the kitchen's signed rules, and a person approves only when the rules require it.
+The opening line: "mise is the kitchen system that refuses to make a bad purchase, and proves it."
+
+Food safety and accountable decisions come first. The model on Verda and the gateway are the proof behind them, not the story.
 
 ## Before you start
 
@@ -19,23 +21,32 @@ uv run python tools/demo_preflight.py http://localhost:8001
 ```
 
 3. Open three things. The laptop shows the page as Wholesaler (`/approve?as=valio`). The phone shows the page as Head chef. The touch screen of the box stands next to the knob.
-4. Rehearse the five steps three times on this exact build. Do not change code after that.
+4. Count the milk shelf low on the Kitchen page once, so the Stock view shows LOW.
+5. Rehearse the seven steps three times on this exact build. Do not change code after that.
 
-## The steps
+## The incident: the milk runs out
 
 | Step | Where | What you do | What you say |
 |---|---|---|---|
-| 1. Admit an agent | Laptop, Wholesaler | Run the buying agent (the command below). It takes the Driving Test and passes 6 of 6. | "An outside agent must pass six scenarios before it gets a licence. One of them is a product text that tells the agent to order ten times more." |
-| 2. The agent buys | Terminal | The agent searches the live catalog, compares four chicken products by price per kilogram and picks one. | "A model reads the request and picks among quoted options. Plain code decides what is allowed. The quote is signed." |
-| 3. A person approves | Phone, Head chef | The ticket shows who asked, the product, the total and the reasons as short lines. Enter the PIN and approve. | "€389 is over the limit of €150, so the rules send it to the head chef. Below the limit, it goes out alone." |
-| 4. The door | Touch screen of the box | The order appears with the air temperature against the product's limit. Tap "Reject", then "Yes, reject". | "The box knows what the phone does not: it is 25 degrees at the door and the limit is 6. The decision goes into the record with the temperature." |
-| 5. The record and the stop | Laptop, Wholesaler | Open the order under "Each order, step by step". Then press "End" on the agent's licence. | "Every step has a time, a name and a rule set version. Valio can end an agent's licence in one click, and its next call is refused." |
+| 1. The shelf is empty | Touch screen, Stock | The lactose free milk shows LOW. Tap its row, then "Report low", then "Yes, report". | "A person reports it here. A camera reading does the same, but only after 5 minutes of the same reading, and never when the picture is unclear." |
+| 2. The rules decide | Phone, Head chef | A ticket appears. Read its first line aloud: the verdict, the rule, who decides, the next safe step. | "Before anyone sees a product, the system answers one question: can this order proceed? Here it cannot go alone, and the line says why: for example, Valio does not report the stock, so a person must look." |
+| 3. Unsafe options never reach the chef | Phone, the ticket | Point at "Why you decide". Products that break a rule are not on the ticket at all. | "Milk that is not lactose free, or a product with nuts, is dropped by plain code. A model can be talked into a bad substitute. A rule cannot." |
+| 4. A person approves | Phone | Enter the PIN and approve. | "The approval carries a name, a time and the rule set version. The order is recorded by the gateway, ready for Valio's order interface." |
+| 5. The delivery at the door | Touch screen, Door | The order appears with the air against the product's limit. Tap "Reject", then "Yes, reject". | "The box knows what the phone does not: 25 degrees at the door against a limit of 6. The decision goes into the record with the temperature." |
+| 6. It fails safely | Laptop, any page | Switch the phone's hotspot off for ten seconds, or pull the camera's cable. | "No data, no automatic order. The page says so, and tells a person what to do. When the data returns, the notice goes away by itself." |
+| 7. Trust, measured | Laptop, Wholesaler | Show "Trust, measured": the Driving Test result, unsafe orders blocked, cases sent to a person. | "Every outside agent passes six scenarios before it gets a licence. These numbers are counted from the audit log, not from slides." |
 
-The command for steps 1 and 2. It reads the PIN from the settings file, so the PIN does not appear on a screen.
+The touch screen and the LED face show different things on purpose. The face shows the spend limit and one symbol (a cold alarm, a delivery at the door, an order to approve). The screen shows the data and takes the decisions that need context.
+
+## The same gateway for an outside agent (if there is time)
+
+Run the buying agent. It takes the Driving Test over the network, searches the live catalog, compares four chicken products by price per kilogram, and sends its order to the head chef. It reads the PIN from the settings file, so the PIN does not appear on a screen.
 
 ```
 uv run python -m backend.buyer_agent "We need 50 kg of chicken breast for Friday, frozen is fine" --url http://localhost:8001 --pin "$(grep '^APPROVER_PINS=' .env | cut -d= -f2 | cut -d: -f1)"
 ```
+
+Then press "End" on its licence on the Wholesaler page: its next call is refused.
 
 ## If a judge asks for an exception
 
@@ -43,8 +54,8 @@ Each of these works on the live catalog.
 
 - A forbidden product: on the Kitchen page, press the hint "Kinder Bueno, forbidden here", then "It arrived at the door". The answer names the allergen and the rule.
 - A price that changes between the quote and the order: it is scenario 3 of the Driving Test, on the Wholesaler page.
-- An agent that loses its licence in the middle of its work: step 5.
-- A cold alarm: the alarm pill on the touch screen, "Cold alarm. Tap when seen".
+- An agent that loses its licence in the middle of its work: the end of the outside agent part.
+- A cold alarm: the Cold view of the touch screen shows the last 2 hours against the limit, and the alarm pill takes "Seen".
 
 Do not promise a partial delivery with substitutes on stage. Valio's test API reports unknown stock, so that case cannot happen live. It runs in the tests on the stand-in catalog.
 
@@ -59,5 +70,5 @@ Do not promise a partial delivery with substitutes on stage. Valio's test API re
 ## If something fails on stage
 
 - The page shows a pink line at the top that names what failed: the network, or which address of the backend.
-- The box is offline: steps 1, 2, 3 and 5 still work. Skip step 4 and show the order record.
+- The box is offline: that is step 6, so say it. Steps 2, 3, 4 and 7 still work. Report the shortage on the Kitchen page instead of the touch screen.
 - The model on Verda does not answer: the buying agent falls back to fixed rules and says so in its first line.

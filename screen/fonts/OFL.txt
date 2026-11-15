@@ -1,0 +1,13 @@
+Inter
+
+Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
+
+The files Inter-Regular.ttf, Inter-Medium.ttf and Inter-SemiBold.ttf in this folder are the Inter typeface.
+They are licensed under the SIL Open Font License, Version 1.1.
+The licence is available with a FAQ at https://openfontlicense.org
+
+The screen uses them through tools/make_fonts.py, which renders them into the bitmap atlases
+src/ui/font_*.h. The atlases are a rendering of the fonts and carry the same licence.
+
+The wordmark (src/ui/wordmark_*.h) is rendered from Borel, Copyright 2023 The Borel Project Authors,
+also under the SIL Open Font License, Version 1.1. That font and its licence are in enclosure/fonts/.

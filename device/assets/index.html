@@ -209,13 +209,13 @@
     <div class="col">
       <section class="mod">
         <h2>knob</h2>
-        <p class="hint" id="knobHint" style="margin:0 0 10px">Turn it to set the spend limit. Hold it to check a delivery. Press it for the next page of its menu.</p>
-        <ol class="menu" id="menu" aria-label="Knob menu">
-          <li data-page="limit"><b>Limit</b><span>turn: the spend limit. Hold: check a delivery.</span></li>
-          <li data-page="delivery"><b>Delivery</b><span>turn: accept or reject. Hold: send it with the temperature.</span></li>
-          <li data-page="alarm"><b>Alarm</b><span>hold: "I have seen the cold alarm". The buzzer rests 10 minutes.</span></li>
-          <li data-page="slot"><b>Slot</b><span>turn: pick a slot. Hold: report it as low.</span></li>
-        </ol>
+        <p class="hint" id="knobHint" style="margin:0 0 10px">Turn it to set the spend limit. Hold it until the bar under the number is full to check a delivery for 60 s; let go early and nothing happens. A tap does nothing.</p>
+        <ul class="menu" aria-label="What the LED face shows">
+          <li class="on"><b>The limit</b><span>"40€" and a level bar, after every turn.</span></li>
+          <li><b>Cold alarm</b><span>a blinking thermometer and the °C.</span></li>
+          <li><b>Delivery at the door</b><span>a parcel. Accept or reject it on the touch screen.</span></li>
+          <li><b>Order to approve</b><span>a ring with "!". The head chef approves on the phone.</span></li>
+        </ul>
         <div class="dialrow">
           <svg class="dial" id="dial" viewBox="0 0 150 150" role="img" aria-label="Spend limit"></svg>
           <div class="readouts" id="facts"></div>
@@ -428,12 +428,6 @@ function render() {
 
   // Knob, temperature, buzzer
   renderDial(S.auto_limit_eur);
-  const menu = S.menu || {page: "limit", label: ""};
-  document.querySelectorAll("#menu li").forEach(li => {
-    const on = li.dataset.page === menu.page;
-    li.classList.toggle("on", on);
-    li.querySelector("b").textContent = li.dataset.page[0].toUpperCase() + li.dataset.page.slice(1) + (on && menu.label ? `: ${menu.label}` : "");
-  });
   const buzz = {off: "quiet", approval: "beeping: approve on the phone", alarm: "alarm", confirm: "beep"}[S.buzzer] || S.buzzer;
   const waits = S.shortage_wait || [];
   const orderWait = waits.length ? waits.map(w => w.held ? `spot ${w.slot}: waiting for a clear camera reading` : `spot ${w.slot}: ${w.seconds_left} s before order`).join(" · ") : `wait ${(S.config.shortage_confirm_s || 0) / 60} min after a camera shortage`;

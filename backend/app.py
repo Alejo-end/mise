@@ -14,8 +14,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from .agent import Agent
@@ -30,7 +30,7 @@ from .shelf import Shelf, ShelfError, versions_dir_for
 from .signing import Signer
 from .batches import Batches, insight, parse_gs1
 from . import openfoodfacts, recognize
-from .cold import BREACH, DEFAULT_ALLOWED_MIN, ColdLog, exposure
+from .cold import BREACH, DEFAULT_ALLOWED_MIN, OK, UNKNOWN, WARM, ColdLog, exposure
 from .stock import StockHistory, against_delivery, outlook
 from .valio import ValioCatalog, make_client
 
@@ -144,6 +144,7 @@ class ManualLow(_Base):
     type: Literal["manual_low"]
     slot: int
     product_hint: str | None = None
+    source: Literal["box", "screen"] = "box"   # the knob of the box, or "Report low" on the touch screen
 
 
 class TemperatureAlarm(_Base):
@@ -332,6 +333,128 @@ def _wrapped(text: str, width: int) -> list[str]:
     return [_plain(line, width) for line in lines[:2]]
 
 
+# The shelf camera, for the touch screen. The box sends its newest picture about once a second. The backend
+# keeps only that one picture, in memory: it is never written to disk or to the log.
+camera = {"jpeg": None, "at": 0.0}
+CAMERA_MAX_BYTES = 2_000_000
+
+
+@app.post("/box/camera")
+async def box_camera_put(request: Request):
+    body = await request.body()
+    if not body or len(body) > CAMERA_MAX_BYTES or body[:2] != b"\xff\xd8":
+        raise HTTPException(400, "Send one JPEG picture, at most 2 MB.")
+    camera["jpeg"], camera["at"] = body, time.time()
+    return {"status": "ok"}
+
+
+tof_frame = {"cm": None, "at": 0.0}   # the newest frame of the distance sensor, in memory only
+
+
+class TofFrame(BaseModel):
+    cm: list[float | None] = Field(min_length=64, max_length=64)
+
+
+@app.post("/box/tof")
+def box_tof_put(f: TofFrame):
+    tof_frame["cm"], tof_frame["at"] = [None if v is None else round(max(0.0, min(400.0, v)), 1) for v in f.cm], time.time()
+    return {"status": "ok"}
+
+
+@app.get("/box/tof")
+def box_tof():
+    """The newest 8 x 8 frame of the distance sensor in cm (None: no valid target), row by row."""
+    if tof_frame["cm"] is None:
+        return Response(status_code=204)
+    return {"cm": tof_frame["cm"], "age": int(time.time() - tof_frame["at"]), "rows": 8, "cols": 8}
+
+
+@app.get("/box/camera.rgb565")
+def box_camera_rgb565(w: int = 160, h: int = 90):
+    """The newest camera picture, scaled and centre-cropped to w x h, as raw RGB565, 2 bytes a pixel, little-endian
+    (the ESP32's own order), row by row. The touch screen draws it without decoding anything."""
+    if camera["jpeg"] is None:
+        return Response(status_code=204)
+    import io
+    import numpy as np
+    from PIL import Image, ImageOps
+    w, h = max(8, min(480, w)), max(8, min(272, h))
+    img = ImageOps.fit(Image.open(io.BytesIO(camera["jpeg"])).convert("RGB"), (w, h), Image.Resampling.BILINEAR)
+    a = np.asarray(img, dtype=np.uint16)
+    rgb565 = ((a[..., 0] >> 3) << 11) | ((a[..., 1] >> 2) << 5) | (a[..., 2] >> 3)
+    return Response(rgb565.astype("<u2").tobytes(), media_type="application/octet-stream",
+                    headers={"X-Frame-Age": str(int(time.time() - camera["at"])), "X-Frame-Width": str(w),
+                             "X-Frame-Height": str(h), "Cache-Control": "no-store"})
+
+
+@app.get("/scorecard")
+def scorecard():
+    """Five numbers that show the system earns trust, each counted from the audit log."""
+    entries = log.entries(100000)
+    tests = [e for e in entries if e["step"] == "driving_test"]
+    last = tests[-1]["detail"] if tests else None   # entries come oldest first
+    results = (last or {}).get("results") or []
+    forbidden = sum(1 for e in entries if e["step"] == "rule_check" and e["detail"].get("result") == R.FORBIDDEN)
+    blocked = sum(1 for e in entries if e["step"] == "blocked")
+    duplicates = sum(1 for e in entries if e["step"] == "recheck" and "already placed" in e["detail"].get("summary", ""))
+    asked = sum(1 for e in entries if e["step"] == "approval" and e["detail"].get("status") == "open")
+    # From a request (its trigger) to its order or to the person's decision, in seconds. A run id can come
+    # back (an outside agent that repeats its idempotency key), so each trigger starts a new span.
+    start, spans = {}, []
+    for e in entries:                               # oldest first
+        run = e.get("run_id")
+        if not run:
+            continue
+        t = datetime.fromisoformat(e["time"])
+        if e["step"] == "trigger":
+            start[run] = t
+        elif run in start and (e["step"] == "order" or (e["step"] == "approval" and e["detail"].get("status") in ("approved", "skipped"))):
+            spans.append((t - start.pop(run)).total_seconds())
+    spans.sort()
+    median = spans[len(spans) // 2] if spans else None
+    return {"driving_test": {"agent": (last or {}).get("agent"), "passed": sum(1 for r in results if r.get("passed")),
+                             "scenarios": len(results)},
+            "unsafe_blocked": forbidden + blocked, "duplicates_prevented": duplicates, "sent_to_a_person": asked,
+            "median_seconds_to_decision": median, "runs_decided": len(spans)}
+
+
+CHART_MIN, CHART_POINTS = 120, 48   # the cold chart of the screen: the last 2 hours, one point each 2.5 minutes
+
+
+def _screen_chart(now: datetime) -> dict:
+    """The air at the box over the last 2 hours as 48 averages (None where no reading fell), oldest first,
+    with the peak and the limit of the shelf product that needs attention first."""
+    step = CHART_MIN * 60 / CHART_POINTS
+    since = now - timedelta(minutes=CHART_MIN)
+    sums, counts = [0.0] * CHART_POINTS, [0] * CHART_POINTS
+    for r in cold_log.readings(since):
+        i = min(CHART_POINTS - 1, int((r.time - since).total_seconds() // step))
+        if i >= 0:
+            sums[i] += r.temperature_c
+            counts[i] += 1
+    points = [round(sums[i] / counts[i], 1) if counts[i] else None for i in range(CHART_POINTS)]
+    known = [p for p in points if p is not None]
+    return {"span_min": CHART_MIN, "points": points, "peak_c": max(known) if known else None}
+
+
+def _screen_stock() -> list[dict]:
+    """The shelf slots for the screen: name, count against target, the reorder point, and when the slot runs empty."""
+    out = []
+    for s in stock():
+        empty = None
+        if s.get("runs_out_at") and s.get("units"):
+            empty = datetime.fromisoformat(s["runs_out_at"]).astimezone(TZ).strftime("%a %H:%M")
+        out.append({"slot": s["slot"], "name": _plain(cap_first(s.get("product") or f"slot {s['slot']}"), 24),
+                    "units": s.get("units"), "target": s.get("target_units"), "reorder": s.get("reorder_below"),
+                    "low": s.get("units") is not None and s.get("reorder_below") is not None and s["units"] < s["reorder_below"],
+                    "empty_at": empty, "on_order": s.get("on_order"), "stale": bool(s.get("stale"))})
+    return out
+
+
+def cap_first(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
 @app.get("/box/screen")
 def box_screen():
     """What the touch screen of the box shows: the order to decide at the door, with the temperature. The screen
@@ -340,13 +463,23 @@ def box_screen():
     decided = {e["order_id"] for e in log.entries(5000) if e["step"] == "delivery_decision" and e.get("order_id")}
     waiting = [o for o in agent.orders.values() if o["order_id"] not in decided]
     order = max(waiting, key=lambda o: o["time"]) if waiting else None
-    limits = [_limit_for((catalog.products.get(str(l["product_id"])) or {}) | {"id": l["product_id"]}) for l in order["lines"]] if order else []
-    limit = min((x for x in limits if x is not None), default=None)
+    # The order's coldest product sets the limit at the door.
+    limits = [(_limit_for((catalog.products.get(str(l["product_id"])) or {}) | {"id": l["product_id"]}), l["name"])
+              for l in order["lines"]] if order else []
+    limit, limit_of = min(((x, name) for x, name in limits if x is not None), default=(None, None))
     temp = device.get("temperature_c") if device["online"] else None
+    now = datetime.now(TZ)
+    since = now - timedelta(hours=24)
+    door = exposure(cold_log.readings(since), limit, _allowed_minutes(), since, now)
     approvals = agent.open_approvals()
+    alarm = bool(device.get("alarm")) and time.time() - device.get("alarm_seen_at", 0) > 600
     return {
+        # The view the screen opens on: the door when a delivery waits or an alarm runs, else the cold room.
+        "view": "door" if order or alarm else "cold",
         "temperature_c": temp, "online": device["online"], "recalibrate": screen_recalibrate,
-        "alarm": bool(device.get("alarm")) and time.time() - device.get("alarm_seen_at", 0) > 600,
+        "cold": _screen_cold(since) | _screen_chart(now),
+        "stock": _screen_stock(),
+        "alarm": alarm,
         "approvals": len(approvals),
         "approval": _plain(f"{approvals[0]['what']}, EUR {approvals[0]['options'][0]['total_eur']:.2f}" if approvals and approvals[0]["options"]
                            else approvals[0]["what"] if approvals else "", 40),
@@ -356,10 +489,27 @@ def box_screen():
             "lines": [part for l in order["lines"][:3] for part in _wrapped(f"{l['quantity']} x {l['name']}", 40)][:3],
             "total": f"EUR {order['total_eur']:.2f}",
             "limit_c": limit,
+            "limit_of": _plain(limit_of, 22) if limit_of else None,
             # Too warm for this order: the air at the box is above the storage limit of its coldest product.
             "too_warm": temp is not None and limit is not None and temp > limit,
+            "minutes_above": door.minutes_above_now, "allowed_minutes": door.allowed_minutes,
         },
     }
+
+
+def _screen_cold(since: datetime) -> dict:
+    """The cold room for the screen: the shelf product that needs attention first, against its own limit.
+
+    That is the product longest above its limit, or, when every product is cold enough, the one closest to its limit.
+    """
+    rank = {BREACH: 0, WARM: 1, OK: 2, UNKNOWN: 3}
+    known = [p for p in _cold_products(since) if p["limit_c"] is not None]
+    if not known:
+        return {"state": UNKNOWN, "limit_c": None, "product": None, "minutes_above": 0, "allowed_minutes": _allowed_minutes(), "warm": 0}
+    first = min(known, key=lambda p: (rank[p["state"]], -p["minutes_above_now"], p["limit_c"]))
+    return {"state": first["state"], "limit_c": first["limit_c"], "product": _plain(first["product"] or "", 22) or None,
+            "minutes_above": first["minutes_above_now"], "allowed_minutes": first["allowed_minutes"],
+            "warm": sum(p["state"] in (WARM, BREACH) for p in known)}
 
 
 @app.post("/events")
@@ -368,6 +518,8 @@ def events(ev: Event):
     if data["type"] in ("slot_state", "manual_low") and not any(t["slot"] == data["slot"] for t in ruleset["targets"]):
         raise HTTPException(400, f"slot {data['slot']} is not in rule set v{ruleset['version']}")
     if data.get("source") == "screen":  # the touch screen is not the shelf box: its events say nothing about the box
+        if data["type"] == "manual_low":
+            return agent.handle_event(data)
         return _box_decision(data)
     if not device["online"] and device["last_seen"]:
         log.write("device", {"summary": "The shelf box is back online."}, "device", ruleset["version"])
@@ -525,8 +677,11 @@ def device_commands():
 
 DEVICE_DIR = ROOT / "device"
 # Every file of the box app. main.py imports shelf_detect.py, so an update that leaves it out can break the box.
-DEVICE_FILES = ["python/main.py", "python/shelf_detect.py", "assets/index.html", "sketch/sketch.ino", "sketch/sketch.yaml",
-                "app.yaml"]
+DEVICE_FILES = ["python/main.py", "python/shelf_detect.py", "assets/index.html", "sketch/sketch.ino", "sketch/matrix_ui.h",
+                "sketch/sketch.yaml", "app.yaml"]
+# Libraries of the sketch live in sketch/src/, the one folder that App Lab compiles besides the sketch itself.
+# The box's update makes missing folders (python/main.py, on_update).
+DEVICE_FILES += sorted(str(p.relative_to(ROOT / "device")) for p in (ROOT / "device" / "sketch" / "src").rglob("*") if p.is_file())
 
 
 @app.get("/device/files")

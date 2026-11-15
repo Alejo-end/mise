@@ -161,6 +161,20 @@ def test_the_screen_shows_the_newest_undecided_order_and_a_decision_removes_it()
     assert delivered["accepted"] is False and "on the touch screen rejected" in delivered["text"] and "9.0 °C" in delivered["text"]
 
 
+def test_the_screen_names_the_limit_it_judges_by_and_the_cold_room():
+    from backend import app as A
+    client = TestClient(A.app)
+    client.post("/events", json={"type": "status", "temperature_c": 9.0, "auto_limit_eur": 150})
+    client.post("/request", json={"text": "6 lactose-free milk", "asked_by": "Aino"})
+    screen = client.get("/box/screen").json()
+    door, room = screen["delivery"], screen["cold"]
+    assert {"limit_of", "minutes_above", "allowed_minutes"} <= door.keys()
+    assert (door["limit_of"] is None) == (door["limit_c"] is None)
+    assert door["limit_of"] is None or (door["limit_of"].isascii() and len(door["limit_of"]) <= 22)
+    assert room["state"] in ("ok", "warm", "breach", "unknown") and room["allowed_minutes"] > 0
+    assert room["limit_c"] is None or room["state"] != "unknown"
+
+
 def test_the_screen_cannot_decide_an_order_that_does_not_exist():
     from backend import app as A
     r = TestClient(A.app).post("/events", json={"type": "delivery_decision", "accepted": True, "order_id": "ORD-NOPE", "source": "screen"})
@@ -171,4 +185,72 @@ def test_the_box_update_offers_every_python_file_of_the_box_app():
     from backend import app as A
     offered = {f["path"] for f in TestClient(A.app).get("/device/files").json()}
     on_disk = {f"python/{p.name}" for p in (A.DEVICE_DIR / "python").glob("*.py")}
+    on_disk |= {f"sketch/{p.name}" for p in (A.DEVICE_DIR / "sketch").iterdir() if p.suffix in (".ino", ".h", ".cpp")}
     assert on_disk <= offered, on_disk - offered
+
+
+def test_the_screen_gets_a_cold_chart_and_the_stock():
+    from backend import app as A
+    client = TestClient(A.app)
+    client.post("/events", json={"type": "status", "temperature_c": 5.2, "auto_limit_eur": 150})
+    screen = client.get("/box/screen").json()
+    chart = screen["cold"]
+    assert chart["span_min"] == 120 and len(chart["points"]) == 48 and chart["points"][-1] is not None  # an average of this bucket
+    assert screen["view"] in ("door", "cold")
+    rows = screen["stock"]
+    assert [r["slot"] for r in rows] == sorted(t["slot"] for t in A.ruleset["targets"])
+    for r in rows:
+        assert r["name"].isascii() and len(r["name"]) <= 24 and isinstance(r["low"], bool)
+
+
+def test_report_low_on_the_screen_names_the_screen_and_leaves_the_box_offline():
+    from backend import app as A
+    client = TestClient(A.app)
+    A.device["online"], A.device["last_seen"] = False, None
+    slot = A.ruleset["targets"][0]["slot"]
+    A.agent.pending_slots.discard(slot)  # an earlier test can leave an order for this slot unsettled
+    A.agent.pending.pop(slot, None)
+    r = client.post("/events", json={"type": "manual_low", "slot": slot, "source": "screen"})
+    assert r.status_code == 200 and r.json()["status"] != "ignored", r.json()
+    assert A.device["online"] is False
+    summaries = [e["detail"].get("summary", "") for e in A.log.entries(200) if e["step"] == "trigger"]
+    assert any("by the touch screen" in t for t in summaries), (r.json(), summaries[:3])
+
+
+def test_the_scorecard_counts_from_the_log():
+    from backend import app as A
+    client = TestClient(A.app)
+    client.post("/sandbox/test", json={"agent": "safe-kitchen"})
+    card = client.get("/scorecard").json()
+    assert card["driving_test"]["scenarios"] == 6 and card["driving_test"]["passed"] == 6
+    assert card["unsafe_blocked"] >= 0 and card["duplicates_prevented"] >= 0 and card["sent_to_a_person"] >= 0
+    assert card["median_seconds_to_decision"] is None or card["median_seconds_to_decision"] >= 0
+
+
+def test_the_camera_picture_reaches_the_screen_as_rgb565_and_stays_in_memory():
+    import io
+    from PIL import Image
+    from backend import app as A
+    client = TestClient(A.app)
+    A.camera["jpeg"] = None
+    assert client.get("/box/camera.rgb565").status_code == 204
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 36), (255, 0, 0)).save(buf, format="JPEG")
+    assert client.post("/box/camera", content=buf.getvalue(), headers={"Content-Type": "image/jpeg"}).json() == {"status": "ok"}
+    r = client.get("/box/camera.rgb565?w=160&h=90")
+    assert r.status_code == 200 and len(r.content) == 160 * 90 * 2 and r.headers["X-Frame-Width"] == "160"
+    px = int.from_bytes(r.content[:2], "little")
+    assert px >> 11 > 28 and (px & 0x1F) < 4          # red, in RGB565
+    assert client.post("/box/camera", content=b"not a picture").status_code == 400
+
+
+def test_a_distance_frame_reaches_the_screen():
+    from backend import app as A
+    client = TestClient(A.app)
+    A.tof_frame["cm"] = None
+    assert client.get("/box/tof").status_code == 204
+    cm = [30.0] * 63 + [None]
+    assert client.post("/box/tof", json={"cm": cm}).json() == {"status": "ok"}
+    got = client.get("/box/tof").json()
+    assert got["rows"] == got["cols"] == 8 and got["cm"][0] == 30.0 and got["cm"][63] is None
+    assert client.post("/box/tof", json={"cm": [1.0] * 10}).status_code == 422
