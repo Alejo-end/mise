@@ -8,7 +8,9 @@ all ending in an explicit owner confirmation; nothing is assigned because it mer
   uv run python tools/enrol_product.py 2 --from-orders                # owner picks from previous orders
   uv run python tools/enrol_product.py unfamiliar --none             # record: no exact catalogue item
 
-SLOT is 1, 2, 3 or "unfamiliar". The result goes into tools/recording_products.json as catalogue_match. The
+SLOT is 1, 2, 3 or "unfamiliar". The result went into the set file as catalogue_match. That set (props, 14 Nov) is archived
+unchanged in products/archive/kitchen-20261114-b.json, so this tool no longer writes; the active set's catalogue entries
+are the owner's EAN selections in products/active.json (tools/catalogue_units.py reads their ordering facts). The
 observed identity (exp:...) and the purchasing mapping (signed rule set, unmapped) do not change here.
 """
 
@@ -23,7 +25,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SET_FILE = HERE / "recording_products.json"
+SET_FILE = HERE.parent / "products" / "archive" / "kitchen-20261114-b.json"  # archived: read-only
 CATALOGUE = Path(os.getenv("VALIO_PRODUCT_DATA", "/Users/bigboss/Ai/Claudecode/valio-source-data/2026-11-14/"
                                                    "valio_aimo_junction26_product_data.json"))
 
@@ -85,6 +87,8 @@ def main() -> None:
     ap.add_argument("--backend", default="http://localhost:8000")
     a = ap.parse_args()
     ps = json.loads(SET_FILE.read_text())
+    raise SystemExit(f"{SET_FILE.name} is an archived product set ({ps['set_id']}); its identities stay as they were. "
+                     "The active set is products/active.json, selected by EAN in the catalogue.")
     entry = ps["unfamiliar"] if a.slot == "unfamiliar" else ps["slots"][a.slot]
     print(f"Enrolling {a.slot}: {entry['label']} (observed identity {entry['identity']})")
 

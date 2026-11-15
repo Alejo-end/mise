@@ -1,0 +1,209 @@
+{
+ "captured_at": "2026-11-14T14:05:15.857000+02:00",
+ "surface": [
+  0.019,
+  0.363,
+  0.956,
+  0.531
+ ],
+ "objects": [
+  {
+   "box": [
+    0.158,
+    0.4,
+    0.111,
+    0.502
+   ],
+   "visible_count": 1,
+   "description": "Tall blue-and-white drink carton with a white screw cap and a white glass graphic on the front.",
+   "brand": null,
+   "variant": null,
+   "size": null,
+   "readable_text": "MAITO JUOMA",
+   "evidence": "Rectangular carton shape, folded top, white cap, blue front panel, and legible product wording.",
+   "obstruction": null,
+   "status": "known",
+   "identity": "exp:milk",
+   "label": "milk",
+   "match_reason": "The carton is labeled 'MAITO JUOMA' (milk drink) and has a typical milk-carton design.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.259,
+    0.235,
+    0.283,
+    0.66
+   ],
+   "visible_count": 1,
+   "description": "Large yellow flexible snack bag with red and green lettering and a pale chip/crisp illustration on the front.",
+   "brand": "Estrella",
+   "variant": "SPICY Cheddar",
+   "size": null,
+   "readable_text": "Limited Estrella SPICY Cheddar",
+   "evidence": "Yellow crimped bag standing upright, with the brand logo and flavor wording visible on its front.",
+   "obstruction": null,
+   "status": "known",
+   "identity": "exp:chips",
+   "label": "chips",
+   "match_reason": "The flexible snack bag has a chip illustration and readable Estrella SPICY Cheddar flavor wording.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.538,
+    0.438,
+    0.084,
+    0.45
+   ],
+   "visible_count": 1,
+   "description": "Clear plastic bottle with a black cap, orange-colored drink, and a white label featuring black lettering and a monkey face.",
+   "brand": "FUNKY MONKEY",
+   "variant": null,
+   "size": null,
+   "readable_text": "FUNKY MONKEY",
+   "evidence": "Transparent bottle, dark screw cap, orange liquid, and illustrated white front label.",
+   "obstruction": null,
+   "status": "known",
+   "identity": "exp:energy-drink",
+   "label": "energy drink",
+   "match_reason": "The bottle is clearly labeled FUNKY MONKEY, an energy drink, and contains an orange-colored drink.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.642,
+    0.438,
+    0.088,
+    0.448
+   ],
+   "visible_count": 1,
+   "description": "Clear plastic bottle with a black cap, orange-colored drink, and a white label featuring black lettering and a monkey face.",
+   "brand": "FUNKY MONKEY",
+   "variant": null,
+   "size": null,
+   "readable_text": "FUNKY MONKEY",
+   "evidence": "Transparent bottle, dark screw cap, orange liquid, and illustrated white front label.",
+   "obstruction": null,
+   "status": "known",
+   "identity": "exp:energy-drink",
+   "label": "energy drink",
+   "match_reason": "The bottle is clearly labeled FUNKY MONKEY, an energy drink, and contains an orange-colored drink.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.0,
+    0.565,
+    0.166,
+    0.285
+   ],
+   "visible_count": 1,
+   "description": "Dark black appliance or container at the far left, with a small blue-and-silver detail near its base.",
+   "brand": null,
+   "variant": null,
+   "size": null,
+   "readable_text": null,
+   "evidence": "Large dark upright form beside the carton and a small illuminated-looking detail near the bottom.",
+   "obstruction": "Partly cut off by the left image edge and obscured by darkness.",
+   "status": "obstructed",
+   "identity": null,
+   "label": "unknown",
+   "match_reason": "The dark appliance or container does not clearly match any inventory product.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.256,
+    0.602,
+    0.075,
+    0.183
+   ],
+   "visible_count": 1,
+   "description": "Partly visible white cup or mug with a red heart-like design.",
+   "brand": null,
+   "variant": null,
+   "size": null,
+   "readable_text": null,
+   "evidence": "Curved white surface and red motif visible behind the main packages.",
+   "obstruction": "Mostly covered by the milk carton and yellow snack bag.",
+   "status": "obstructed",
+   "identity": null,
+   "label": "unknown",
+   "match_reason": "A white cup or mug with a red design is unrelated to the inventory products.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.253,
+    0.756,
+    0.292,
+    0.094
+   ],
+   "visible_count": 1,
+   "description": "Black cables lying across the rear of the shelf surface.",
+   "brand": null,
+   "variant": null,
+   "size": null,
+   "readable_text": null,
+   "evidence": "Several thin dark loops and lines visible behind and between the products.",
+   "obstruction": "Partly hidden behind the carton, snack bag, and bottles.",
+   "status": "obstructed",
+   "identity": null,
+   "label": "unknown",
+   "match_reason": "Black cables are unrelated objects.",
+   "candidates": []
+  }
+ ],
+ "visible_units": {
+  "exp:milk": 1,
+  "exp:chips": 1,
+  "exp:energy-drink": 2
+ },
+ "uncertain": true,
+ "reasons": [
+  "image quality: glare"
+ ],
+ "provider": "Verda inference API",
+ "mode": "vision-model",
+ "model": {
+  "name": "kimi-k3-1-pro",
+  "device": "Verda API",
+  "reasoning_effort": "low"
+ },
+ "timing_ms": {
+  "describe_api": 20005,
+  "match_api": 4356,
+  "total": 24381
+ },
+ "note": "Proposed by a vision-language model (Kimi K3.1 Pro on Verda). Boxes are approximate; matches are proposals, not measured accuracy. Observes only: no stock events, no orders.",
+ "usage": {
+  "describe": {
+   "prompt_tokens": 786,
+   "total_tokens": 2259,
+   "completion_tokens": 1473,
+   "prompt_tokens_details": {
+    "cached_tokens": 64,
+    "image_tokens": 414
+   },
+   "reasoning_tokens": 762,
+   "completion_tokens_details": {
+    "reasoning_tokens": 762
+   }
+  },
+  "match": {
+   "prompt_tokens": 754,
+   "total_tokens": 1046,
+   "completion_tokens": 292,
+   "prompt_tokens_details": {
+    "cached_tokens": 64
+   },
+   "reasoning_tokens": 75,
+   "completion_tokens_details": {
+    "reasoning_tokens": 75
+   }
+  }
+ },
+ "scene_obstruction": null,
+ "image_quality": "glare"
+}

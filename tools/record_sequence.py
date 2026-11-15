@@ -13,7 +13,7 @@ Only the integration session runs this: it needs the live board.
 
 Guided shelf recordings (names from tools/recording_plan.py, i.e. experiments/recognition/MISSING_DATA.md):
 
-  uv run --with "python-socketio[client]" python tools/record_sequence.py eval-removal-s3-day-a
+  uv run --with "python-socketio[client]" python tools/record_sequence.py eval-carton-removal-day-a
 
 shows the steps, checks that the boxes are valid and calibrated, starts when you press Enter, and records a
 mark each time you press Enter as you do a step (typed text + Enter = a free note). Marks use the recording
@@ -191,16 +191,18 @@ def show_plan(name: str, plan: dict, seconds: float) -> None:
 
 
 def ask_counts(plan: dict) -> dict[str, int]:
-    """The number of items actually in each slot now, typed by the person (never the configured target)."""
+    """The number of units (bottles, cartons) of each product on the shelf now, wherever they stand, typed by the
+    person (never a target)."""
     if plan["start"] == "empty":
         return {s: 0 for s in rp.SLOTS}
-    names = ", ".join(f"slot {s} {rp.LABEL[s]}" for s in rp.SLOTS)
+    names = ", ".join(rp.LABEL[s] for s in rp.SLOTS)
     while True:
-        raw = input(f"How many items are in each slot right now ({names})? Type {len(rp.SLOTS)} numbers, e.g. 2 1 2: ")
+        raw = input(f"How many units of each product are on the shelf right now ({names})? Type {len(rp.SLOTS)} numbers, e.g. "
+                    f"{' '.join('2' for _ in rp.SLOTS)}: ")
         parts = raw.replace(",", " ").split()
         if len(parts) == len(rp.SLOTS) and all(x.isdigit() and int(x) >= 1 for x in parts):
             return dict(zip(rp.SLOTS, map(int, parts)))
-        print("  Please type one whole number of at least 1 per slot.")
+        print("  Please type one whole number of at least 1 per product.")
 
 
 def write_labels(out: Path, a, plan: dict, counts: dict, marks: list[tuple[float, str]], ask) -> None:
@@ -217,9 +219,9 @@ def write_labels(out: Path, a, plan: dict, counts: dict, marks: list[tuple[float
     final = start
     for st in plan["steps"]:
         final = rp.apply_ops(final, st["ops"])
-    print("Items per slot at the start -> at the end: " + "; ".join(
-        f"slot {s} {start[s]['count']} -> {final[s]['count']}" + (" (fitness bar)" if final[s]["identity"] == rp.UNFAMILIAR else "")
-        for s in rp.SLOTS))
+    print("Units per product at the start -> at the end: " + "; ".join(
+        f"{rp.LABEL.get(s) or (rp.UNFAMILIAR_LABEL if s == rp.UNFAMILIAR else rp.REMOVED_LABEL)} {start[s]['count']} -> {final[s]['count']}"
+        + (" (unknown item)" if s == rp.UNFAMILIAR else " (not inventory)" if s == rp.REMOVED else "") for s in start))
     problems = []
     if len(step_marks) < len(plan["steps"]):
         problems.append(f"{len(plan['steps']) - len(step_marks)} step(s) not marked")
@@ -234,8 +236,8 @@ def write_labels(out: Path, a, plan: dict, counts: dict, marks: list[tuple[float
         "scenario": plan.get("scenario", "reference"), "session_id": session, "occasion": plan["occasion"],
         "lighting": plan["lighting"], "product_set": rp.SET_ID, "assigned": rp.IDENTITY,
         "unfamiliar": {"identity": rp.UNFAMILIAR, "label_value": "unknown", "in_reference_gallery": False},
-        "identity_note": "observed identities (tools/recording_products.json); purchasing eligibility is the signed rule set",
-        "counts_start": {s: start[s]["count"] for s in rp.SLOTS}, "counts_end": {s: final[s]["count"] for s in rp.SLOTS},
+        "identity_note": "labels per product of the active set (products/active.json), independent of where each stands; purchasing eligibility is the signed rule set",
+        "counts_start": {s: start[s]["count"] for s in start}, "counts_end": {s: final[s]["count"] for s in final},
         "counts_source": "typed by the person before the recording, then changed only by the marked steps",
         "steps": steps,
         "notes": notes, "labels": labels, "seconds": a.seconds,

@@ -1,0 +1,12 @@
+# Model weights, Valio data, reference images and large outputs stay out of git (Modal Volume only).
+refs/
+outputs/
+volume/
+*.safetensors
+*.bin
+*.pt
+*.npy
+*.jpg
+*.jpeg
+*.png
+.venv/

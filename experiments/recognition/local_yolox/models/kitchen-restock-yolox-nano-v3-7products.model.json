@@ -1,0 +1,19 @@
+{
+  "name": "kitchen-restock-yolox-nano-v3-7products",
+  "file": "kitchen-restock-yolox-nano-v3-7products (ONNX).onnx, as supplied by the owner on 15 Nov 06:27",
+  "sha256": "ddeb2f00c303b649e0658ebe2d142cb65943d2961748d4818c7ce6c5e04e29ec",
+  "bytes": 3694671,
+  "role": "hybrid-local",
+  "product_set": null,
+  "classes": null,
+  "num_classes": 10,
+  "class_map_status": "awaiting trainer metadata",
+  "input": {"name": "images", "shape": [1, 3, 416, 416], "dtype": "float32"},
+  "output": {"name": "output", "shape": [1, 3549, 15], "decoded_in_graph": true,
+             "layout": "cx, cy, w, h in 416-px input pixels (decoded inside the graph: (xy + grid) * stride, exp(wh) * stride; strides 8/16/32, 52*52 + 26*26 + 13*13 = 3549 places), objectness, then 10 class values; objectness and class values already passed a sigmoid"},
+  "export": {"producer": "pytorch 2.11.0", "opset": 11, "ir_version": 6, "metadata_props": [],
+             "class_heads": "head.cls_preds.0/1/2 have 10 output channels each (10 classes, not 7)"},
+  "preprocessing": {"variant": "rgb255", "letterbox": "top-left on a 114-grey 416 x 416 square, no mean/std", "status": "provisional",
+                    "basis": "Not in the export. Chosen from a runtime check on six saved raw frames (laptop CPU, 15 Nov 06:45): RGB 0-255 top-left gave the highest objectness (0.87-0.97) with boxes on packages; BGR 0-255 gave 0.05-0.83; 0-1 scaling and ImageNet normalisation gave a flat 0.82-0.95 everywhere and no box at 0.3. Replace with the trainer's configuration when it arrives."},
+  "note": "Hybrid local detector of 15 Nov. The owner states it keeps old assets and has no Aito class, intentionally; it need not cover every active product. The class order and names are not in the export and have not been supplied, so every class keeps its number and is unmapped: its boxes are shown at once and identified by the automatic whole-frame Kimi check. Never infer the class order from the filename, the inventory order or predictions."
+}

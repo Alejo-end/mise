@@ -1,0 +1,26 @@
+{
+ "captured_at": "2026-11-14T14:12:17.241000+02:00",
+ "visible_counts": {
+  "exp:milk": 0,
+  "exp:chips": 1,
+  "exp:energy-drink": 1
+ },
+ "unfamiliar_present": {
+  "exp:fitness-bar": 1
+ },
+ "note": "the milk was replaced with the unenrolled fitness bar; the bar must stay unknown or not inventory, never milk; 'milk not seen' is a visual observation only, never a purchasing decision",
+ "labelled_by": "owner (Anatoly), 14 Nov 2026",
+ "validation_source": "human",
+ "owner_verdict": "pass (unfamiliar-product case)",
+ "identities": {
+  "exp:energy-drink": "Funky Monkey Sunny Peach (owner-confirmed)",
+  "exp:chips": "Estrella Spicy Cheddar (owner-confirmed)"
+ },
+ "original_outcome": {
+  "visible_units": {
+   "exp:chips": 1,
+   "exp:energy-drink": 1
+  },
+  "implementation": "exp/recognition 49e392e (vision mode, text-only model matching, before owner-confirmed matching); board page build 140aaeb-1347"
+ }
+}

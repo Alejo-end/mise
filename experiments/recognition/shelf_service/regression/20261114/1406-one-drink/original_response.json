@@ -1,0 +1,167 @@
+{
+ "captured_at": "2026-11-14T14:06:06.427000+02:00",
+ "surface": [
+  0.019,
+  0.363,
+  0.956,
+  0.531
+ ],
+ "objects": [
+  {
+   "box": [
+    0.158,
+    0.398,
+    0.114,
+    0.504
+   ],
+   "visible_count": 1,
+   "description": "Tall blue drink carton with a white screw cap and a white glass illustration on the front.",
+   "brand": "Kotimaan",
+   "variant": null,
+   "size": null,
+   "readable_text": "Kotimaan; LAKTOOSITON; MAITO JUOMA",
+   "evidence": "Blue rectangular carton, white cap, and visible front labeling.",
+   "obstruction": null,
+   "status": "known",
+   "identity": "exp:milk",
+   "label": "milk",
+   "match_reason": "The carton is explicitly labeled as lactose-free milk drink.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.258,
+    0.235,
+    0.286,
+    0.66
+   ],
+   "visible_count": 1,
+   "description": "Large yellow snack bag with red and green branding and a pale food illustration on the front.",
+   "brand": "Estrella",
+   "variant": "Spicy Cheddar",
+   "size": null,
+   "readable_text": "Limited; Estrella; SPICY; Cheddar",
+   "evidence": "Yellow flexible bag with the Estrella logo and visible Spicy Cheddar wording.",
+   "obstruction": null,
+   "status": "known",
+   "identity": "exp:chips",
+   "label": "chips",
+   "match_reason": "The Estrella snack bag is clearly labeled Spicy Cheddar.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.639,
+    0.438,
+    0.092,
+    0.452
+   ],
+   "visible_count": 1,
+   "description": "Clear plastic bottle containing a yellow drink, with a dark cap and a white label featuring a monkey face.",
+   "brand": "Funky Monkey",
+   "variant": null,
+   "size": null,
+   "readable_text": "FUNKY MONKEY",
+   "evidence": "Transparent bottle, yellow liquid, dark cap, monkey graphic, and visible label text.",
+   "obstruction": null,
+   "status": "known",
+   "identity": "exp:energy-drink",
+   "label": "energy drink",
+   "match_reason": "The Funky Monkey bottle and yellow drink clearly identify the energy drink product.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.255,
+    0.596,
+    0.073,
+    0.19
+   ],
+   "visible_count": 1,
+   "description": "Part of a small light-colored circular fan visible behind the carton and snack bag.",
+   "brand": null,
+   "variant": null,
+   "size": null,
+   "readable_text": null,
+   "evidence": "Curved fan grille and a small red central detail are visible.",
+   "obstruction": "Mostly covered by the blue carton and yellow snack bag.",
+   "status": "obstructed",
+   "identity": null,
+   "label": "unknown",
+   "match_reason": "The object is a fan, not an inventory product.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.244,
+    0.756,
+    0.756,
+    0.104
+   ],
+   "visible_count": 1,
+   "description": "Black cables lying across the rear of the shelf surface.",
+   "brand": null,
+   "variant": null,
+   "size": null,
+   "readable_text": null,
+   "evidence": "Several dark loops and lines run behind the products and along the window.",
+   "obstruction": "Partly covered by the products.",
+   "status": "obstructed",
+   "identity": null,
+   "label": "unknown",
+   "match_reason": "The objects are cables, not inventory products.",
+   "candidates": []
+  }
+ ],
+ "visible_units": {
+  "exp:milk": 1,
+  "exp:chips": 1,
+  "exp:energy-drink": 1
+ },
+ "uncertain": true,
+ "reasons": [
+  "image quality: glare"
+ ],
+ "provider": "Verda inference API",
+ "mode": "vision-model",
+ "model": {
+  "name": "kimi-k3-1-pro",
+  "device": "Verda API",
+  "reasoning_effort": "low"
+ },
+ "timing_ms": {
+  "describe_api": 18725,
+  "match_api": 4148,
+  "total": 22887
+ },
+ "note": "Proposed by a vision-language model (Kimi K3.1 Pro on Verda). Boxes are approximate; matches are proposals, not measured accuracy. Observes only: no stock events, no orders.",
+ "usage": {
+  "describe": {
+   "prompt_tokens": 786,
+   "total_tokens": 1991,
+   "completion_tokens": 1205,
+   "prompt_tokens_details": {
+    "cached_tokens": 64,
+    "image_tokens": 414
+   },
+   "reasoning_tokens": 707,
+   "completion_tokens_details": {
+    "reasoning_tokens": 707
+   }
+  },
+  "match": {
+   "prompt_tokens": 598,
+   "total_tokens": 808,
+   "completion_tokens": 210,
+   "prompt_tokens_details": {
+    "cached_tokens": 64
+   },
+   "reasoning_tokens": 79,
+   "completion_tokens_details": {
+    "reasoning_tokens": 79
+   }
+  }
+ },
+ "scene_obstruction": null,
+ "image_quality": "glare"
+}

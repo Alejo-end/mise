@@ -1,0 +1,342 @@
+{
+  "schema": "shelf-product-set/2",
+  "set_id": "kitchen-20261115-a",
+  "active_from": "2026-11-15T03:00:00+02:00",
+  "replaces": "kitchen-20261114-b",
+  "note": "The products on the shelf from 15 Nov 2026. The owner selected each EAN directly in the Valio Aimo catalogue and confirmed its availability there; these exact entries are used, with no search for alternatives and no retail EAN substituted. This file names products for recognition, labels and display: it grants no purchasing authority (the signed rule set decides what may be ordered and is unchanged). The camera counts consumer units (count_unit); the catalogue sells in its sales unit; the two quantities are kept apart (backend/products.py).",
+  "selection": {
+    "by": "owner (Anatoly)",
+    "source": "Valio Aimo catalogue",
+    "statement": "EANs selected directly from the Valio Aimo catalogue; availability there confirmed by the owner",
+    "at": "2026-11-15"
+  },
+  "purchasing_authority": "none: recognition and display only. Purchasing eligibility is the signed rule set (version 4: rye bread, natural yoghurt, lactose-free milk drink), unchanged. Shelf events stay observe-only; automatic cloud recognition grants no purchasing authority.",
+  "routing": {
+    "note": "A local detection whose score is at or below its product's kimi_at_or_below goes to the cloud model (Kimi) automatically in detection/repeat mode, once a local model trained for this set is running. This routing threshold is separate from the minimum score for showing a box (display_min_score). Values marked provisional are adjustable.",
+    "default_kimi_at_or_below": 0.85,
+    "default_basis": "owner's choice from testing (15 Nov)",
+    "display_min_score": 0.3,
+    "conflict_overlap": 0.5,
+    "conflict_note": "Two local boxes of different products that overlap by at least this share of the smaller box are one object with conflicting classes: escalated, never counted twice.",
+    "flavour_margin": 0.25,
+    "flavour_margin_note": "provisional: a shake whose best flavour score is within this margin of another flavour's score is escalated even above its threshold",
+    "scene_unchanged_mean_abs_diff": 8.0,
+    "scene_unchanged_box_iou": 0.7,
+    "scene_note": "provisional: a cloud answer is reused only while the object's box and its crop stay the same (box IoU and mean absolute pixel difference of a small grey thumbnail)",
+    "cloud_timeout_s": 60,
+    "cloud_in_flight": 1,
+    "cloud_answer_max_age_s": 600,
+    "cloud_timeout_note": "covers the vision model's two steps (38 s + 14 s at most)"
+  },
+  "families": {
+    "profeel-shake": {
+      "label": "PROfeel protein shake",
+      "flavour_required": true,
+      "brand_text": [
+        "profeel"
+      ],
+      "note": "Three flavours in near-identical bottles. Only a readable flavour decides the product; an unreadable flavour stays 'PROfeel shake, flavour uncertain' and is never a guessed product."
+    }
+  },
+  "products": [
+    {
+      "identity": "aimo:profeel-salted-caramel",
+      "label": "PROfeel Salted Caramel shake",
+      "short_label": "Salted Caramel",
+      "family": "profeel-shake",
+      "ean": "6408430401260",
+      "count_unit": "bottle",
+      "kimi_at_or_below": 0.95,
+      "threshold_status": "provisional, adjustable (owner, 15 Nov): similar-looking shakes",
+      "match_text": [
+        "profeel"
+      ],
+      "variant_text": [
+        "salted caramel"
+      ],
+      "catalogue": {
+        "status": "not found",
+        "product_id": null,
+        "selected_ean": "6408430401260",
+        "records": [],
+        "searched": "every unit GTIN, product GTIN and unit-conversion GTIN of the product file, exact digits",
+        "consequence": "catalogue id, sales unit, pack conversion and lot size unknown; recognition still uses the product, no ordering facts are derived from other entries",
+        "source": {
+          "file": "valio_aimo_junction26_product_data.json",
+          "sha256": "50651aae31ca842112afdc16fcce92f9858d7f5d05e9928a3748aef16b22ea02",
+          "records": 17546,
+          "read_at": "2026-11-15T02:26:28+02:00",
+          "note": "challenge product file (sponsor data, read locally, not in git)",
+          "downloaded": "Valio Aimo Junction 2026 challenge files, downloaded once on 2026-11-14 05:45 EET by worker 3"
+        }
+      }
+    },
+    {
+      "identity": "aimo:profeel-strawberry",
+      "label": "PROfeel Strawberry shake",
+      "short_label": "Strawberry",
+      "family": "profeel-shake",
+      "ean": "6408430101290",
+      "count_unit": "bottle",
+      "kimi_at_or_below": 0.95,
+      "threshold_status": "provisional, adjustable (owner, 15 Nov): similar-looking shakes",
+      "match_text": [
+        "profeel"
+      ],
+      "variant_text": [
+        "strawberry",
+        "mansikka",
+        "mansikkainen",
+        "jordgubb",
+        "jordgubbsmak"
+      ],
+      "catalogue": {
+        "status": "found",
+        "product_id": "464893",
+        "selected_ean": "6408430101290",
+        "selected_ean_is_unit": "ST",
+        "name_en": "Valio PROfeel® no added sugar protein drink strawberry flavour 250 ml UHT lactose free",
+        "name_fi": "Valio PROfeel® sokeroimaton proteiinijuoma mansikkainen 250 ml UHT laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "10431",
+        "sales_unit": "KI",
+        "sales_unit_name": "case",
+        "base_unit": "ST",
+        "units": {
+          "KRS": 360.0,
+          "PAL": 2520.0,
+          "KI": 15.0,
+          "ST": 1.0
+        },
+        "unit_gtins": {
+          "PAL": "6408431423827",
+          "KI": "6408430214501",
+          "ST": "6408430101290"
+        },
+        "count_unit_code": "ST",
+        "count_unit_gtin": "6408430101290",
+        "count_units_per_sales_unit": 15,
+        "consumer_unit_size": {
+          "text": "250 ml",
+          "source": "catalogue name (no unit conversion with a volume)"
+        },
+        "lot_size_sales_units": 1,
+        "lot_size_raw": 0.01,
+        "deleted": false,
+        "source": {
+          "file": "valio_aimo_junction26_product_data.json",
+          "sha256": "50651aae31ca842112afdc16fcce92f9858d7f5d05e9928a3748aef16b22ea02",
+          "records": 17546,
+          "read_at": "2026-11-15T02:26:28+02:00",
+          "note": "challenge product file (sponsor data, read locally, not in git)",
+          "downloaded": "Valio Aimo Junction 2026 challenge files, downloaded once on 2026-11-14 05:45 EET by worker 3"
+        }
+      }
+    },
+    {
+      "identity": "aimo:profeel-mint-chocolate",
+      "label": "PROfeel Mint Chocolate shake",
+      "short_label": "Mint Chocolate",
+      "family": "profeel-shake",
+      "ean": "6408430011629",
+      "count_unit": "bottle",
+      "kimi_at_or_below": 0.95,
+      "threshold_status": "provisional, adjustable (owner, 15 Nov): similar-looking shakes",
+      "match_text": [
+        "profeel"
+      ],
+      "variant_text": [
+        "mint chocolate",
+        "mint cocoa",
+        "mint",
+        "minttu",
+        "minttukaakao",
+        "mintchoklad"
+      ],
+      "catalogue": {
+        "status": "found",
+        "product_id": "464147",
+        "selected_ean": "6408430011629",
+        "selected_ean_is_unit": "ST",
+        "name_en": "Valio PROfeel® protein drink mint cocoa 250 ml UHT lactose free",
+        "name_fi": "Valio PROfeel® proteiinijuoma minttukaakao 250 ml UHT laktoositon",
+        "brand": "Valio",
+        "vendor": "VALIO OY TUORE",
+        "category": "22540",
+        "sales_unit": "KI",
+        "sales_unit_name": "case",
+        "base_unit": "ST",
+        "units": {
+          "KRS": 360.0,
+          "PAL": 2520.0,
+          "KI": 15.0,
+          "ST": 1.0
+        },
+        "unit_gtins": {
+          "PAL": "6408431418632",
+          "KI": "6408430100774",
+          "ST": "6408430011629"
+        },
+        "count_unit_code": "ST",
+        "count_unit_gtin": "6408430011629",
+        "count_units_per_sales_unit": 15,
+        "consumer_unit_size": {
+          "text": "250 ml",
+          "source": "catalogue name (no unit conversion with a volume)"
+        },
+        "lot_size_sales_units": 1,
+        "lot_size_raw": 0.01,
+        "deleted": false,
+        "source": {
+          "file": "valio_aimo_junction26_product_data.json",
+          "sha256": "50651aae31ca842112afdc16fcce92f9858d7f5d05e9928a3748aef16b22ea02",
+          "records": 17546,
+          "read_at": "2026-11-15T02:26:28+02:00",
+          "note": "challenge product file (sponsor data, read locally, not in git)",
+          "downloaded": "Valio Aimo Junction 2026 challenge files, downloaded once on 2026-11-14 05:45 EET by worker 3"
+        }
+      }
+    },
+    {
+      "identity": "aimo:bonne-orange-juice",
+      "label": "Bonne orange juice (18-pack)",
+      "short_label": "Bonne orange",
+      "family": null,
+      "ean": "4740098003823",
+      "count_unit": "carton",
+      "kimi_at_or_below": 0.85,
+      "threshold_status": "owner's general threshold (15 Nov)",
+      "match_text": [
+        "bonne"
+      ],
+      "variant_text": [
+        "orange",
+        "appelsiini",
+        "appelsiinitäysmehu",
+        "apelsin",
+        "apelsinjuice"
+      ],
+      "catalogue": {
+        "status": "found",
+        "product_id": "475502",
+        "selected_ean": "4740098003823",
+        "selected_ean_is_unit": "KI",
+        "name_en": "18x Bonne  Orange juice 300ml",
+        "name_fi": "18x Bonne  Appelsiinitäysmehu 300ml",
+        "brand": "Bonne",
+        "vendor": "BONNE JUOMAT OY",
+        "category": "21403",
+        "sales_unit": "KI",
+        "sales_unit_name": "case",
+        "base_unit": "ST",
+        "units": {
+          "KRS": 270.0,
+          "PAL": 1350.0,
+          "KI": 18.0,
+          "ST": 1.0
+        },
+        "unit_gtins": {
+          "PAL": "16420610112510",
+          "KI": "4740098003823",
+          "ST": "4740098003793"
+        },
+        "count_unit_code": "ST",
+        "count_unit_gtin": "4740098003793",
+        "count_units_per_sales_unit": 18,
+        "consumer_unit_size": {
+          "text": "300ml",
+          "source": "catalogue name (no unit conversion with a volume)"
+        },
+        "lot_size_sales_units": 1,
+        "lot_size_raw": 0.01,
+        "deleted": false,
+        "source": {
+          "file": "valio_aimo_junction26_product_data.json",
+          "sha256": "50651aae31ca842112afdc16fcce92f9858d7f5d05e9928a3748aef16b22ea02",
+          "records": 17546,
+          "read_at": "2026-11-15T02:26:28+02:00",
+          "note": "challenge product file (sponsor data, read locally, not in git)",
+          "downloaded": "Valio Aimo Junction 2026 challenge files, downloaded once on 2026-11-14 05:45 EET by worker 3"
+        }
+      }
+    },
+    {
+      "identity": "aimo:aito-barista-oat",
+      "label": "Aito Barista oat drink",
+      "short_label": "Aito Barista",
+      "family": null,
+      "ean": "6410222014305",
+      "count_unit": "carton",
+      "kimi_at_or_below": 0.85,
+      "threshold_status": "owner's general threshold (15 Nov)",
+      "match_text": [
+        "aito"
+      ],
+      "variant_text": [
+        "barista"
+      ],
+      "catalogue": {
+        "status": "found",
+        "product_id": "475224",
+        "selected_ean": "6410222014305",
+        "selected_ean_is_unit": "ST",
+        "name_en": "Fazer Aito Professional Barista Oat drink, gluten-free 1L UHT",
+        "name_fi": "Fazer Aito Professional Barista Kaurajuoma, gluteeniton 1L UHT",
+        "brand": "Fazer Aito",
+        "vendor": "FAZER FINLAND OY / LIFESTYLE",
+        "category": "10402",
+        "sales_unit": "ST",
+        "sales_unit_name": "single unit",
+        "base_unit": "ST",
+        "units": {
+          "KRS": 144.0,
+          "PAL": 576.0,
+          "KI": 6.0,
+          "ST": 1.0
+        },
+        "unit_gtins": {
+          "PAL": "16410222014302",
+          "KI": "6410222014398",
+          "ST": "6410222014305"
+        },
+        "count_unit_code": "ST",
+        "count_unit_gtin": "6410222014305",
+        "count_units_per_sales_unit": 1,
+        "consumer_unit_size": {
+          "value": 1.0,
+          "unit": "LTR",
+          "source": "unit conversion BASE_UNIT_OR_EACH"
+        },
+        "lot_size_sales_units": 1,
+        "lot_size_raw": 0.01,
+        "deleted": false,
+        "source": {
+          "file": "valio_aimo_junction26_product_data.json",
+          "sha256": "50651aae31ca842112afdc16fcce92f9858d7f5d05e9928a3748aef16b22ea02",
+          "records": 17546,
+          "read_at": "2026-11-15T02:26:28+02:00",
+          "note": "challenge product file (sponsor data, read locally, not in git)",
+          "downloaded": "Valio Aimo Junction 2026 challenge files, downloaded once on 2026-11-14 05:45 EET by worker 3"
+        }
+      }
+    }
+  ],
+  "archived_sets": [
+    {
+      "set_id": "kitchen-20261114-b",
+      "file": "products/archive/kitchen-20261114-b.json",
+      "sha256": "4aa773c0877c9e733bfe804e6a23529fd3aa23a9112e6e3c5baf8650135d45a4",
+      "archived_at": "2026-11-15T03:00:00+02:00",
+      "note": "The three shelf props of 14 Nov (and the unfamiliar fitness bar), archived unchanged with their original identities. Historical recordings, regression cases, enrolment photos, stock and audit entries keep these identities. The installed local model kitchen-restock-yolox-nano-v1 was trained for this set; it is kept for diagnostics only.",
+      "labels": {
+        "exp:chips": "chips",
+        "exp:energy-drink": "energy drink",
+        "exp:milk": "milk",
+        "exp:fitness-bar": "fitness bar (unfamiliar item)",
+        "exp:valio-protein-drink-64084430101290": "Valio Protein drink · 64084430101290"
+      },
+      "labels_note": "exp:valio-protein-drink-64084430101290 was an enrolment option on the board page (added 14 Nov 20:09, outside the set file); its number is kept as written there and is not linked to any product of the active set."
+    }
+  ]
+}

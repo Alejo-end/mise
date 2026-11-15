@@ -22,7 +22,7 @@ def make_clip(root: Path, name: str, validated=True, role=None) -> Path:
         shutil.copy(f, d / "frames" / f.name)
         meta.append({"kind": "frame", "t": float(i), "file": f.name})
     (d / "meta.jsonl").write_text("\n".join(json.dumps(m) for m in meta))
-    start = rp.start_content(plan, {"1": 2, "2": 1, "3": 2})
+    start = rp.start_content(plan, {s: 2 for s in rp.SLOTS})
     windows, _ = rp.label_windows(start, plan["steps"], [5.0 * (i + 1) for i in range(len(plan["steps"]))], plan["seconds"])
     doc = {"role": plan["role"], "session_id": "test", "labels": windows, "assigned": rp.IDENTITY,
            "validated": validated, "validated_by": "person" if validated else "", "validation_source": "human" if validated else "",
@@ -35,10 +35,10 @@ def make_clip(root: Path, name: str, validated=True, role=None) -> Path:
 
 def test_valid_clips_pass_and_invalid_ones_say_why(tmp_path):
     assert cr.problems_of(make_clip(tmp_path, "ref-full-day")) == []
-    assert cr.problems_of(make_clip(tmp_path, "eval-unfamiliar-s3-day-a")) == []
+    assert cr.problems_of(make_clip(tmp_path, "eval-unfamiliar-day-a")) == []
     bad = make_clip(tmp_path, "eval-hand-day-a", validated=False)
     assert any("not validated" in p for p in cr.problems_of(bad))
     wrong = make_clip(tmp_path, "ref-empty-day", role="evaluation")
     assert any("role" in p for p in cr.problems_of(wrong))
-    (make_clip(tmp_path, "ref-s1-poses-day") / "frames" / "000001.jpg").unlink()
-    assert any("missing" in p for p in cr.problems_of(tmp_path / "reference" / "ref-s1-poses-day"))
+    (make_clip(tmp_path, "ref-profeel-strawberry-poses-day") / "frames" / "000001.jpg").unlink()
+    assert any("missing" in p for p in cr.problems_of(tmp_path / "reference" / "ref-profeel-strawberry-poses-day"))

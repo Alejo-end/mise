@@ -46,6 +46,10 @@ Run every command from `valio-challenge/`. You need `uv`.
 
 `HANDBOOK.md` says how to run on the real Valio catalog and how to set up the shelf box.
 
+The hosted link runs on Modal (`deploy/modal_app.py`). It serves the page and, at a second link, the shelf recognition service (Kimi on Verda with the labelled reference photos). The shelf box only needs the page link: it sends its recognition calls to `<link>/recognition/...`, and the backend passes them on. `docs/SHELF_RECOGNITION.md` says what runs where.
+
+To deploy, create the Modal secret `mise-verda` once with `VERDA_INFERENCE_API_KEY` and `VERDA_INFERENCE_BASE_URL`, then run `uvx modal deploy deploy/modal_app.py`. To test a deployment without the box, run `MISE_URL=<link> uv run pytest tests/test_hosted.py`. It sends one recorded shelf frame through the backend to the recognition service.
+
 ## What is true today
 
 1. The gateway ran on the live Valio API on 14 November: a signed quote, an order and an approval.

@@ -67,6 +67,10 @@
   button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline:2px solid var(--focus); outline-offset:2px }
   button.primary { background:var(--blue); border-color:var(--blue); color:var(--blue-ink) } button.primary:hover { filter:brightness(1.06) }
   button.small { min-height:1.875rem; padding:0.1875rem 0.625rem; font-size:0.8125rem }
+  .visible li { padding:0.25rem 0 } .visible li.flavour-uncertain, .visible li.not-inventory, .visible li.unidentified { color:var(--soft) }
+  #visMeta.warn, #contStatus.warn { color:var(--pink) }
+  .visctl { display:flex; flex-wrap:wrap; gap:8px; align-items:center } .visctl label { display:flex; gap:6px; align-items:center }
+  .visctl input { width:4.5em }
   button:disabled { opacity:0.5 }
   .row { display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem } .row > button { flex:1 1 auto }
   input, select { font:inherit; padding:0.375rem 0.625rem; border-radius:0.4375rem; border:1px solid var(--line); background:var(--panel); color:var(--ink); width:100%; min-height:2.25rem }
@@ -384,6 +388,21 @@
     <ul class="slots" id="slots"><li class="empty">No shelf data yet.</li></ul>
   </section>
 
+  <section data-role="chef kitchen" id="visibleBox">
+    <h2>Visible items <small class="meta">what the shelf camera sees · not stock, never an order</small></h2>
+    <div id="visPic" hidden></div>
+    <ul class="plain visible" id="visList"><li class="empty">No camera observation yet.</li></ul>
+    <p class="meta" id="visMeta"></p>
+    <div class="visctl">
+      <button class="small" id="visBtn">Recognize now</button>
+      <button class="small" id="contStart">Start continuous recognition</button>
+      <button class="small" id="contStop" disabled>Stop</button>
+      <label class="meta" for="contPause">Pause between completed scans
+        <input id="contPause" type="number" min="1" max="600" step="1" value="5" inputmode="numeric"> s</label>
+    </div>
+    <p class="meta" id="contStatus" role="status" aria-live="polite"></p>
+  </section>
+
   <section data-role="chef kitchen">
     <details class="fold" id="coldBox">
       <summary><span><b>Cold room</b> <span id="coldLine" class="meta">no reading yet</span></span></summary>
@@ -443,6 +462,7 @@
 </div>
 </div>
 
+<script src="/visible-view.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -673,6 +693,84 @@ $("slots").addEventListener("click", async (e) => {
 
 const STATE = {ok: "Cold enough", warm: "Too warm", breach: "Check before use", unknown: "No limit known"};
 const STEP = {asked: "Asked", checked: "Checked", ordered: "Ordered", delivered: "Delivered", stored: "Stored"};
+// What the shelf camera sees: the box's shared recognition result (the same one as on the box's camera setup page).
+// An observation, kept apart from stock and orders. "Recognize now" asks the box through the backend.
+function visAgo(iso) { const s = Math.round((Date.now() - new Date(iso)) / 1000); return isNaN(s) ? "" : s < 90 ? `${Math.max(0, s)} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`; }
+const visTime = (iso) => { const d = new Date(iso); return isNaN(d) ? "?" : d.toTimeString().slice(0, 8); };
+function drawVisible(o) {
+  window.__lastVis = o;
+  const v = o.snapshot, cur = v && v.current, vi = (cur && cur.visible_items) || {};
+  // one result: its picture (the backend serves it by that result's request id), its numbered boxes and list
+  VisibleView.drawImage($("visPic"), cur && o.frame_request_id === cur.request_id && o.frame_id === cur.frame_id
+    ? `/observations/frame/${encodeURIComponent(cur.request_id)}?f=${encodeURIComponent(cur.frame_id)}` : null, vi);
+  VisibleView.drawList($("visList"), vi, !cur ? 'No camera observation yet. Press "Recognize now".' : vi.nothing_seen ? "The camera saw no packages." : "Nothing to list.");
+  const parts = [], age = cur ? (Date.now() - new Date(cur.captured_at)) / 1000 : null;
+  const stale = age != null && age > ((v && v.stale_after_s) || 300);
+  if (cur) parts.push(`Picture of ${visTime(cur.captured_at)} (${visAgo(cur.captured_at)}), asked by the ${esc(cur.requested_by)}.`);
+  if (cur && cur.summary) parts.push(esc(cur.summary));
+  if (stale) parts.push("Stale: press Recognize now.");
+  if (cur && vi.uncertain) parts.push(`Uncertain: ${esc((vi.reasons || []).join("; "))}.`);
+  if (o.requested && !o.requested.lapsed) parts.push("Asked the shelf box…");
+  if (o.requested && o.requested.lapsed) parts.push("The shelf box did not take the request up (is it online?).");
+  if (v && v.status === "pending" && v.pending) parts.push(`${esc(cap(v.pending.stage || "recognizing"))}${v.pending.stage_s != null ? ` (${Math.round(v.pending.stage_s)} s)` : ""}${v.pending.captured_at ? `, picture of ${visTime(v.pending.captured_at)}` : ""}…`);
+  if (v && v.last_error) parts.push(`The last scan failed: ${esc(v.last_error.error)}.${cur ? " The previous result stays." : ""}`);
+  if (!o.box_online) parts.push("The shelf box is offline.");
+  $("visMeta").innerHTML = parts.join(" ");
+  $("visMeta").classList.toggle("warn", stale || !!(v && v.last_error) || !o.box_online);
+  $("visBtn").disabled = !!((v && v.status === "pending") || (o.requested && !o.requested.lapsed));
+  drawContinuous(o);
+}
+// Continuous recognition: one loop on the shelf box (never a timer in this page). The pause starts after each
+// complete scan; Start while it runs only changes the pause; "Recognize now" during the pause starts the next scan.
+const CONT_PHASE = {"analysing locally": "Analysing locally", "checking with Kimi": "Checking with Kimi",
+                    "waiting for the next scan": "Waiting for the next scan", "stopped": "Stopped", "error": "Error"};
+function drawContinuous(o) {
+  const c = (o.snapshot && o.snapshot.continuous) || {running: false, phase: "stopped"}, ctl = o.control;
+  const asked = ctl && !ctl.lapsed;
+  $("contStart").disabled = !!(c.running || (asked && ctl.action === "start"));
+  $("contStop").disabled = !(c.running || (asked && ctl.action === "start"));
+  if (document.activeElement !== $("contPause") && c.running && c.pause_s) $("contPause").value = c.pause_s;
+  const bits = [`Continuous recognition: ${CONT_PHASE[c.phase] || c.phase}`];
+  if (c.detail && c.phase !== "waiting for the next scan") bits.push(`(${esc(c.detail)})`);
+  const since = o.received_at ? Math.max(0, (Date.now() - new Date(o.received_at)) / 1000) : 0;  // the box sent it then
+  if (c.running && c.next_scan_in_s != null) bits.push(`— next scan in ${Math.max(0, Math.ceil(c.next_scan_in_s - since))} s`);
+  if (c.running) bits.push(`· pause ${c.pause_s} s after each completed scan · ${c.cycles} scan${c.cycles === 1 ? "" : "s"} since ${visTime(c.started_at)}`);
+  const last = ((o.snapshot || {}).cycles_log || []).slice(-1)[0];
+  if (last && last.total_ms != null) bits.push(`· last scan: local ${last.local_ms ?? "–"} ms, ${last.cloud_mode === "reuse" ? "Kimi reused" : "Kimi"} ${last.cloud_ms != null ? (last.cloud_ms / 1000).toFixed(1) + " s" : "–"}, total ${(last.total_ms / 1000).toFixed(1)} s${last.pause_before_ms != null && c.running ? `, after a ${(last.pause_before_ms / 1000).toFixed(1)} s pause` : ""}${last.discarded ? " (discarded after Stop)" : ""}`);
+  if (asked) bits.push(`· ${ctl.action === "start" ? "Starting" : "Stopping"}: waiting for the shelf box…`);
+  if (ctl && ctl.lapsed) bits.push("· the shelf box did not take the command up (is it online?)");
+  $("contStatus").innerHTML = bits.join(" ");
+  $("contStatus").classList.toggle("warn", c.phase === "error" || !!(ctl && ctl.lapsed));
+  if (c.running && c.phase === "waiting for the next scan") $("visBtn").disabled = !!(o.requested && !o.requested.lapsed);  // starts the next scan early
+  if (c.running || (o.snapshot && o.snapshot.status === "pending")) visFollow();
+}
+async function contSend(action) {
+  const pause = Number($("contPause").value);
+  if (action === "start" && !(pause >= 1 && pause <= 600)) { $("contStatus").textContent = "Pause between completed scans: 1 to 600 seconds."; return; }
+  $("contStart").disabled = $("contStop").disabled = true;
+  try { await post("/observations/continuous", action === "start" ? {action, pause_s: pause} : {action}); }
+  catch (e) { $("contStatus").textContent = e.message; }
+  drawVisible(await api("/observations/visible"));
+}
+$("contStart").onclick = () => contSend("start");
+$("contStop").onclick = () => contSend("stop");
+$("contPause").onchange = () => { const c = ((window.__lastVis || {}).snapshot || {}).continuous; if (c && c.running) contSend("start"); };
+let visFast = null, visUntil = 0;  // while a scan or continuous mode runs, read the shared observation more often
+function visFollow() {
+  visUntil = Date.now() + 120000;
+  if (visFast) return;  // one reader per page; it only reads, the box decides when to scan
+  visFast = setInterval(async () => {
+    try { const o = await api("/observations/visible"); window.__lastVis = o; drawVisible(o);
+          const s = o.snapshot || {}, busy = s.status === "pending" || (s.continuous || {}).running || (o.requested && !o.requested.lapsed) || (o.control && !o.control.lapsed);
+          if (!busy || Date.now() > visUntil) { clearInterval(visFast); visFast = null; } } catch (e) { clearInterval(visFast); visFast = null; }
+  }, 700);
+}
+$("visBtn").onclick = async () => {
+  $("visBtn").disabled = true;
+  try { await api("/observations/recognize", {method: "POST"}); } catch (e) { $("visMeta").textContent = e.message; }
+  drawVisible(await api("/observations/visible"));
+  visFollow();
+};
 function drawCold(c) {
   $("coldNow").textContent = c.temperature_c == null ? "–" : `${c.temperature_c.toFixed(1)} °C`;
   $("coldWhen").textContent = c.measured_at ? `${c.source === "person" ? "Measured by a person" : "Sensor"} at ${c.measured_at.slice(11, 16)}` : "No reading yet.";
@@ -879,6 +977,7 @@ async function tick() {
       api("/approvals/open"), api("/device"), api("/log?format=story&limit=60"),
       api("/deliveries"), api("/suppliers/reliability")]);
     drawStock(await api("/stock"));
+    drawVisible(await api("/observations/visible"));
     drawCold(await api("/cold"));
     drawChains(await api("/orders"));
     drawUseFirst(await api("/insights"));

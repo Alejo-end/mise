@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Safe Kitchen Shelf</title>
+<title>Camera setup · Safe Kitchen box</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..100,400..800&display=swap">
 <style>
@@ -127,10 +127,6 @@
   @media (prefers-contrast: more) { :root { --dim:#000; --led-off:#555 } }
   .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap }
   /* Recognize shelf (experimental): boxes coloured by outcome; similarity is a model score, not accuracy */
-  .rbox { position:absolute; border:3px solid #fff; pointer-events:none }
-  .rbox.known { border-color:#33d17a } .rbox.unknown { border-color:#c0bfbc; border-style:dashed }
-  .rbox.ambiguous { border-color:#ffa348 } .rbox.not-inventory { border-color:#8a8a8a; border-width:2px } .rbox.obstructed { border-color:#ff5f5f; border-style:dotted }
-  .rbox b { position:absolute; left:-3px; top:-25px; background:#000; color:#fff; font-size:.9rem; font-weight:700; padding:1px 6px; white-space:nowrap }
   .rsurf { position:absolute; border:2px dashed rgba(255,255,255,.55); pointer-events:none }
   #recogList { margin:10px 0 0; padding-left:1.2em } #recogList li { margin:2px 0 }
   /* Local model (board, experimental): classes are numbers because the model file has no names; dashed = score below 0.5 */
@@ -141,17 +137,20 @@
   .lbox.inside b { top:0; left:0 } .kbox b { top:auto; bottom:0; left:0; font-size:.8rem; opacity:.9 }
   #localList, #regionList { margin:10px 0 0; padding-left:1.2em } #localList li, #regionList li { margin:4px 0 }
   #localList button { margin-left:8px }
+  /* Camera setup page (15 Nov): visible items and folded diagnostics */
+  .vis { list-style:none; margin:0 0 8px; padding:0 } .vis li { padding:7px 0; border-bottom:1px solid var(--line); font-size:1.15rem }
+  .vis li.flavour-uncertain, .vis li.not-inventory, .vis li.unidentified { color:var(--dim) } .vis li.none { color:var(--dim); font-style:italic }
+  .hint.warn { color:var(--orange-text); font-weight:600 }
+  details > summary { cursor:pointer; font-weight:700; margin:10px 0 4px }
+  #recogList, #autoList { margin:10px 0 0; padding-left:1.2em; font-size:.95rem } #recogList li, #autoList li { margin:4px 0 }
 </style>
 </head>
 <body>
 <div class="unit">
  <div class="face">
   <header class="strip">
-    <div class="plate"><h1>safe kitchen</h1><span>shelf unit · watches the shelf and tells the agent when something runs low</span><span id="buildTag" style="display:block;font-size:.85rem;opacity:.75">page build __PAGE_BUILD__</span></div>
+    <div class="plate"><h1>camera setup</h1><span>Safe Kitchen box · the shelf camera and what it sees. The demo itself runs on the kitchen agent's page.</span><span id="buildTag" style="display:block;font-size:.85rem;opacity:.75">page build __PAGE_BUILD__</span></div>
     <div class="leds" id="pills" role="list" aria-label="Status of the parts"></div>
-    <a class="size" href="#recog" style="text-decoration:none;color:inherit">Recognize shelf ↓</a>
-    <a class="size" href="#local" style="text-decoration:none;color:inherit">Local model ↓</a>
-    <button class="size" id="size" aria-pressed="false">Larger text</button>
   </header>
   <div id="staleBanner" hidden style="background:#ff5f5f;color:#000;font-weight:800;padding:10px 14px;margin:8px 0;border:3px solid #000">This page is older than the app running on the board. Reload the page (Cmd+R, or pull down on a phone).</div>
 
@@ -159,116 +158,70 @@
     <div class="col">
       <section class="mod">
         <h2>camera</h2>
-        <p class="hint" style="margin:0 0 10px">Drag a box to move it. Drag its round corner to make it bigger or smaller.</p>
         <div class="cam" id="cam">
           <img id="frame" alt="Camera view of the shelf" hidden>
           <div class="none" id="nocam"><strong>No camera picture</strong><span id="nocamWhy">Plug the camera into the dongle before the board powers on.</span></div>
         </div>
       </section>
-      <section class="mod" id="recog">
-        <h2>recognize shelf <small>experimental · observes only, never orders</small></h2>
-        <p class="hint" style="margin-top:0">"Recognize shelf" sends the current picture to a vision model (Kimi K3.1 Pro on Verda, via the laptop): it describes every visible package and proposes chips, energy drink or milk only when the description supports it; anything else stays "unknown". No empty photo or enrolment is needed. The two buttons below the picker feed the separate photo-enrolment pipeline.</p>
+
+      <section class="mod" id="visible">
+        <h2>visible items <small>an observation · not stock · never orders</small></h2>
+        <div id="visPic" hidden></div>
+        <ul class="vis" id="visList"><li class="vv-none">Waiting for the box…</li></ul>
+        <p class="hint" id="visMeta"></p>
+        <div class="keys"><button class="primary" id="recogBtn">Recognize shelf</button>
+          <button id="contStart">Start continuous recognition</button><button id="contStop" disabled>Stop</button>
+          <label class="hint" style="margin:0" for="contPause">Pause between completed scans
+            <input id="contPause" type="number" min="1" max="600" step="1" value="5" inputmode="numeric" style="width:4.5em"> s</label></div>
+        <p class="hint" id="contStatus" role="status" aria-live="polite"></p>
+        <p class="hint" style="margin:8px 0 0">The box runs its local model on the newest camera picture, then the automatic whole-picture check with Kimi on the laptop (reused while the scene is unchanged), one scan at a time. Continuous recognition is one loop on the box: the pause starts after each complete scan. The kitchen agent's page shows the same result and the same controls; neither page needs the other to be open.</p>
+        <details id="visDiag">
+          <summary>Diagnostics</summary>
+          <ul id="recogList"></ul>
+          <p class="hint" id="recogMeta"></p>
+        </details>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="mod" id="enrol">
+        <h2>reference photos</h2>
+        <p class="hint" style="margin-top:0" id="productSet">Products: loading…</p>
         <div class="keys">
-          <button class="primary" id="recogBtn">Recognize shelf</button>
+          <select id="enrolId" aria-label="Product"></select>
+          <select id="enrolRole" aria-label="Kind of photo"><option value="reference">reference photo</option><option value="heldout">held-out test photo</option></select>
+          <button id="enrolBtn">Save reference photo</button>
           <button id="bgBtn">Save empty surface</button>
-          <label class="hint" style="margin:0"><input type="checkbox" id="wholeFrame"> whole picture</label>
-        </div>
-        <div class="keys" style="margin-top:8px">
-          <select id="enrolId"><option value="exp:chips">chips</option><option value="exp:energy-drink">energy drink</option><option value="exp:milk">milk</option><option value="exp:valio-protein-drink-64084430101290">Valio Protein drink · 64084430101290</option></select>
-          <select id="enrolRole"><option value="reference">reference photo</option><option value="heldout">held-out test photo</option></select>
-          <button id="enrolBtn">Save enrolment photo</button>
         </div>
         <p class="hint" id="enrolStatus"></p>
-        <div class="cam" id="recogCam" hidden><img id="recogFrame" alt="The picture that was recognised"></div>
-        <ul id="recogList"></ul>
-        <p class="hint" id="recogMeta"></p>
       </section>
+
       <section class="mod" id="local">
-        <h2>local model <small>on the board · experimental · observes only, never orders</small></h2>
-        <p class="hint" style="margin-top:0">"Run local model" runs kitchen-restock-yolox-nano-v1 on the board itself (ONNX Runtime, CPU) on the newest camera preview. The model file has no class names, so classes are shown as numbers (class 0, 1, 2), not as products, and the boxes are not stock counts. Scores are model scores, not measured accuracy. No box does not mean an empty shelf: use "Recognize shelf" above to check the whole picture. "Ask Kimi" sends one box, with the whole picture as context, to the vision model through the laptop; its answer is shown separately and added to no count.</p>
+        <h2>local model test <small>on the board · experimental</small></h2>
         <div class="keys">
           <button class="primary" id="localBtn">Run local model</button>
           <label class="hint" style="margin:0">min score <select id="localThr"><option>0.3</option><option>0.5</option><option>0.7</option></select></label>
           <label class="hint" style="margin:0"><input type="checkbox" id="localRepeat"> repeat every 2 s (stops after 2 min)</label>
         </div>
-        <div class="cam" id="localCam" hidden><img id="localFrame" alt="The picture the local model looked at"></div>
-        <ul id="localList"></ul>
-        <p class="hint" id="localMeta"></p>
-        <div id="regionOut" hidden>
-          <h2 style="margin-top:12px">Kimi on one region <small>separate result · added to no count</small></h2>
-          <ul id="regionList"></ul>
-          <p class="hint" id="regionMeta"></p>
-        </div>
-      </section>
-      <section class="mod">
-        <h2>shelf now</h2>
-        <div class="channels" id="shelf"></div>
-      </section>
-    </div>
-
-    <div class="col">
-      <section class="mod">
-        <h2>knob</h2>
-        <p class="hint" id="knobHint" style="margin:0 0 10px">Turn it to set the spend limit. Hold it until the bar under the number is full to check a delivery for 60 s; let go early and nothing happens. A tap does nothing.</p>
-        <ul class="menu" aria-label="What the LED face shows">
-          <li class="on"><b>The limit</b><span>"40€" and a level bar, after every turn.</span></li>
-          <li><b>Cold alarm</b><span>a blinking thermometer and the °C.</span></li>
-          <li><b>Delivery at the door</b><span>a parcel. Accept or reject it on the touch screen.</span></li>
-          <li><b>Order to approve</b><span>a ring with "!". The head chef approves on the phone.</span></li>
-        </ul>
-        <div class="dialrow">
-          <svg class="dial" id="dial" viewBox="0 0 150 150" role="img" aria-label="Spend limit"></svg>
-          <div class="readouts" id="facts"></div>
-        </div>
-      </section>
-
-      <section class="mod" id="setup">
-        <h2>set up the shelf <small>once, in order</small></h2>
-        <ol class="steps" id="steps">
-          <li id="s1"><div><b>Connect the camera</b><p>Camera and power supply into the dongle first, then the dongle into the board.</p></div></li>
-          <li id="s2"><div><b>Place the boxes</b><p>Press <b>Edit boxes</b>, drag every box by its number tag over its product spot (drag the round corner to resize), then press <b>Save boxes</b>. Nothing is saved until then, and purchasing is paused while you edit.</p>
-            <div class="keys"><button id="editBoxes">Edit boxes</button><button class="primary" id="saveBoxes" hidden>Save boxes</button><button id="cancelBoxes" hidden>Cancel</button><button id="boxesOk">The boxes are in place</button></div>
-            <p class="layoutmsg" id="layoutMsg" aria-live="polite"></p></div></li>
-          <li id="s3"><div><b>Take the empty photo</b><p>Take every product off the shelf.</p>
-            <div class="keys"><button class="primary" data-cal="empty">Shelf is empty: save photo</button></div></div></li>
-          <li id="s4"><div><b>Take the full photo</b><p>Put every product back.</p>
-            <div class="keys"><button class="primary" data-cal="full">Shelf is full: save photo</button></div></div></li>
-        </ol>
-        <p class="hint" id="setupDone" hidden>Setup is done. Take a product away to try it. <button id="redo" style="min-height:0;padding:4px 10px;margin-left:6px">Set up again</button></p>
-      </section>
-
-      <section class="mod">
-        <h2>delivery check <small>60 seconds</small></h2>
-        <p class="hint" style="margin-top:0">Put the cartons on the shelf and the thermo in the crate, then hold the knob or press the key.</p>
-        <div class="keys"><button class="primary" id="deliveryBtn">Start delivery check</button><span id="deliveryState" class="hint" style="margin:0"></span></div>
-        <p id="deliveryResult" style="margin:10px 0 0"></p>
+        <p class="hint" id="localModel">Press "Run local model" to see which model the board runs.</p>
+        <p class="hint" id="localSummary"></p>
+        <details id="localDiag">
+          <summary>Diagnostics</summary>
+          <p class="hint" id="localRouting"></p>
+          <div class="cam" id="localCam" hidden><img id="localFrame" alt="The picture the local model looked at"></div>
+          <ul id="localList"></ul>
+          <p class="hint" id="localMeta"></p>
+        </details>
       </section>
 
       <section class="mod">
         <details>
-          <summary>Settings</summary>
+          <summary>Connection</summary>
           <label for="url">Kitchen agent address (the laptop)</label>
-          <input id="url" placeholder="http://172.20.10.2:8000">
-          <div class="two">
-            <div><label for="tlimit">Cold room alarm above (°C)</label><input id="tlimit" type="number" step="0.5"></div>
-            <div><label for="kslot">Knob press reports</label><select id="kslot"></select></div>
-          </div>
-          <label for="orderDelay">Wait before a camera order (minutes)</label>
-          <input id="orderDelay" type="number" min="0" step="1" inputmode="numeric">
-          <p class="hint" style="margin:4px 0 0">A camera shortage must persist for this time. A deliberate knob press remains immediate.</p>
-          <div id="names"></div>
-          <div class="keys"><button class="primary" id="save">Save settings</button></div>
+          <input id="url" placeholder="http://172.20.10.4:8000">
+          <div class="keys"><button class="primary" id="save">Save address</button></div>
           <label>Box software</label>
           <div class="keys" style="margin-top:0"><button id="update">Update from the laptop</button><span class="hint" id="updateMsg" style="margin:0"></span></div>
-        </details>
-        <details>
-          <summary>Test without the camera</summary>
-          <p class="hint">Send a shelf change to the agent by hand.</p>
-          <div id="tests"></div>
-        </details>
-        <details>
-          <summary>Event log</summary>
-          <div id="log"></div>
         </details>
       </section>
     </div>
@@ -276,370 +229,254 @@
  </div>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
-<div class="sr" id="announce" aria-live="assertive"></div>
 <script src="libs/socket.io.min.js"></script>
+<script src="visible-view.js"></script>
 <script>
+// Camera setup page of the Safe Kitchen box. The box owns the camera; this page shows it, the shared "visible
+// items" observation (device/python/visible.py), reference-photo enrolment and the local model test. Nothing here
+// changes stock, purchasing, the cold room or the knob: those belong to the kitchen agent's page and the box itself.
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const socket = io(`http://${window.location.host}`);
-let S = null, slots = [], dragging = null, settingsOpen = false;
-let editing = false, conflicts = new Set(), pendingLayoutSave = false;  // box layout draft (Edit boxes)
-
-// The board's overlap rule (shelf_detect.overlapping_slots): more than 5% of the smaller box.
-function overlapPairs(list) {
-  const out = [];
-  for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
-    const [ax, ay, aw, ah] = list[i].rect, [bx, by, bw, bh] = list[j].rect;
-    const w = Math.min(ax + aw, bx + bw) - Math.max(ax, bx), h = Math.min(ay + ah, by + bh) - Math.max(ay, by);
-    if (Math.max(0, w) * Math.max(0, h) > 0.05 * Math.min(aw * ah, bw * bh)) out.push([list[i].slot, list[j].slot]);
-  }
-  return out;
-}
-let boxesOk = false;
-try { boxesOk = localStorage.getItem("boxesOk") === "1"; } catch (e) {}
-const KNOB_MAX = 300, SIGNED_LIMIT = 150;  // the knob's range on the box, and the limit the chef signed
-
+let S = null, connected = false, recogOk = null;
 function toast(msg) { const t = $("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 2600); }
-function log(line) { $("log").textContent = `${new Date().toLocaleTimeString()} ${line}\n` + $("log").textContent; }
-
-socket.on("connect", () => socket.emit("get_state", {}));
-socket.on("disconnect", () => { S && (S._offline = true); renderPills(); });
-socket.on("frame", (m) => { const f = $("frame"); f.src = `data:image/jpeg;base64,${m.image}`; f.hidden = false; $("nocam").hidden = true; });
-// While editing, box moves live only in the local draft: the board's updates never overwrite them.
-socket.on("sensors", (s) => { S = s; if (!dragging && !editing) slots = JSON.parse(JSON.stringify(s.config.slots)); render(); });
-socket.on("event", (m) => {
-  const e = m.event, r = m.reply || {};
-  log(`${e.type}${e.slot ? " slot " + e.slot : ""}${e.state ? " " + e.state : ""} → ${r.status || "?"}`);
-  if (e.type === "slot_state" || e.type === "manual_low") {
-    const what = {needs_approval: "The chef must approve an order. Look at the phone.", ordered: `Ordered automatically (${r.order_id || ""}).`,
-                  forbidden: "Blocked by the kitchen rules.", ignored: r.reason || "Nothing to do.", ok: "Stock is fine."}[r.status];
-    if (what) toast(what);
-  }
-});
-socket.on("calibrate_response", (r) => { r.ok ? toast(`Saved the ${r.kind} photo.`) : toast(r.error); });
-socket.on("save_config_response", (r) => {
-  const layoutSave = pendingLayoutSave; pendingLayoutSave = false;
-  if (!r.ok) {  // refused: keep the draft and mark the boxes that still overlap
-    if (layoutSave) conflicts = new Set((r.conflicts || []).flat());
-    toast(r.error); render(); return;
-  }
-  if (layoutSave) {
-    editing = false; conflicts = new Set(); boxesOk = true;
-    try { localStorage.setItem("boxesOk", "1"); } catch (e) {}
-    const moved = r.moved || [];
-    toast(moved.length ? `Boxes saved. Spot${moved.length > 1 ? "s" : ""} ${moved.join(", ")} moved: save the empty photo and the full photo again.`
-                       : "Boxes saved.");
-  } else toast("Settings saved.");
-  render();
-});
-socket.on("simulate_response", () => {});
-socket.on("update_response", (r) => { const m = r.ok ? r.message : `Update failed: ${r.error}`; $("updateMsg").textContent = m; toast(m); });
-
-function renderPills() {
-  if (!S) return;
-  const m = S.modulinos || {};
-  const leds = [["board", !S._offline], ["agent", S.backend_ok === true], ["camera", S.camera_ok],
-                ["knob", m.knob], ["thermo", m.thermo], ["buzzer", m.buzzer]];
-  // Shape and word as well as colour: a round LED and "ok", or a square one and "check".
-  $("pills").innerHTML = leds.map(([k, ok]) =>
-    `<span class="led ${ok ? "on" : "bad"}" role="listitem"><i aria-hidden="true"></i>${k}<b>${ok ? "ok" : "check"}</b></span>`).join("");
+const clock = (iso) => { const d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleTimeString([], {hour12: false}) + "." + String(d.getMilliseconds()).padStart(3, "0"); };
+const hms = (iso) => { const d = new Date(iso); return isNaN(d) ? String(iso ?? "?") : d.toLocaleTimeString([], {hour12: false}); };
+function ago(iso) {
+  const s = Math.round((Date.now() - new Date(iso)) / 1000);
+  return isNaN(s) ? "" : s < 90 ? `${Math.max(0, s)} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
 }
-
-function renderDial(eur) {
-  // 270° sweep from bottom left to bottom right, like the knob.
-  const cx = 75, cy = 75, r = 58, a0 = 135, sweep = 270;
-  const pt = (deg, rad) => [cx + rad * Math.cos(deg * Math.PI / 180), cy + rad * Math.sin(deg * Math.PI / 180)];
-  const arc = (from, to, rad) => { const [x1, y1] = pt(from, rad), [x2, y2] = pt(to, rad);
-    return `M${x1.toFixed(1)} ${y1.toFixed(1)} A${rad} ${rad} 0 ${to - from > 180 ? 1 : 0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`; };
-  const v = Math.max(0, Math.min(KNOB_MAX, eur || 0)), at = a0 + sweep * v / KNOB_MAX, cap = a0 + sweep * SIGNED_LIMIT / KNOB_MAX;
-  let ticks = "";
-  for (let i = 0; i <= 30; i++) { const d = a0 + sweep * i / 30, [x1, y1] = pt(d, r + 8), [x2, y2] = pt(d, r + (i % 5 ? 12 : 16));
-    ticks += `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="currentColor" stroke-width="${i % 5 ? 1 : 2}"/>`; }
-  const [cx1, cy1] = pt(cap, r - 7), [cx2, cy2] = pt(cap, r + 17), [px, py] = pt(at, r - 18);
-  $("dial").innerHTML = `<g style="color:var(--ink)">${ticks}</g>
-    <path d="${arc(a0, a0 + sweep, r)}" fill="none" stroke="var(--led-off)" stroke-width="8"/>
-    ${v > 0 ? `<path d="${arc(a0, at, r)}" fill="none" stroke="var(--orange)" stroke-width="8"/>` : ""}
-    <line x1="${cx1.toFixed(1)}" y1="${cy1.toFixed(1)}" x2="${cx2.toFixed(1)}" y2="${cy2.toFixed(1)}" stroke="var(--ink)" stroke-width="3"><title>Signed limit €${SIGNED_LIMIT}</title></line>
-    <circle cx="${cx}" cy="${cy}" r="38" fill="var(--key)" stroke="var(--ink)" stroke-width="1.5"/>
-    <line x1="${cx}" y1="${cy}" x2="${px.toFixed(1)}" y2="${py.toFixed(1)}" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/>`;
-  $("dial").setAttribute("aria-label", `Spend limit €${v}, the signed limit is €${SIGNED_LIMIT}`);
-}
-
-let lastStates = {};
-function announceChanges() {
-  // Tell screen reader users when a spot changes, the way the buzzer tells everyone else.
-  const said = [];
-  S.config.slots.forEach(c => {
-    const st = (S.slots[c.slot] || {}).state;
-    if (st && lastStates[c.slot] && lastStates[c.slot] !== st) said.push(`${c.product_hint} is now ${st}.`);
-    if (st) lastStates[c.slot] = st;
-  });
-  if (said.length) $("announce").textContent = said.join(" ");
-}
-
-function render() {
-  renderPills();
-  announceChanges();
-  if (!S.camera_ok) { $("frame").hidden = true; $("nocam").hidden = false;
-    $("nocamWhy").textContent = "Plug the camera and power into the dongle, then the dongle into the board. The board finds the camera when it powers on."; }
-  renderBoxes();
-
-  // Shelf channels
-  $("shelf").innerHTML = S.config.slots.map(c => {
-    const st = S.slots[c.slot] || {}, cal = S.calibrated[c.slot] || [];
-    // "unsure" never changes stock: covered lens, a view that does not match the photos, no camera, calibrating.
-    const state = st.uncertain ? `unsure: ${esc(st.uncertain)}` : (st.state || (cal.includes("empty") ? "checking" : "not set up"));
-    const lit = st.fill == null || st.state === "empty" ? 0 : Math.max(1, Math.round(Math.min(1, st.fill) * 10));
-    return `<div class="ch ${st.state || ""}" role="group" aria-label="Spot ${c.slot}, ${esc(c.product_hint)}, ${state}${st.units != null ? `, about ${st.units} of ${c.target_units}` : ""}"><span class="num" aria-hidden="true">${c.slot}</span>
-      <span class="name">${esc(c.product_hint)}</span><span class="state">${state}</span>
-      <span class="count">${st.units != null ? `about ${st.units} of ${c.target_units}` : `holds ${c.target_units}`}</span>
-      <div class="meter" aria-hidden="true">${Array.from({length: 10}, (_, i) => `<i class="${i < lit ? "lit" : ""}"></i>`).join("")}</div></div>`;
-  }).join("");
-
-  // Setup steps. A moved box needs both new photos: S.recalibrate = {slot: kinds saved since the move}.
-  const recal = S.recalibrate || {}, recalSlots = Object.keys(recal);
-  const allEmpty = S.config.slots.every(c => (S.calibrated[c.slot] || []).includes("empty"))
-                   && recalSlots.every(k => recal[k].includes("empty"));
-  const allFull = S.config.slots.every(c => (S.calibrated[c.slot] || []).includes("full")) && recalSlots.length === 0;
-  const layoutBad = (S.layout_errors || []).length > 0;
-  const done = [S.camera_ok || allEmpty, boxesOk && !layoutBad && !editing, allEmpty, allFull];
-  $("editBoxes").hidden = editing; $("saveBoxes").hidden = !editing; $("cancelBoxes").hidden = !editing;
-  $("boxesOk").hidden = editing || layoutBad;
-  $("cam").classList.toggle("editing", editing);
-  const msg = $("layoutMsg");
-  if (editing) {
-    const left = overlapPairs(slots);
-    msg.className = "layoutmsg" + (left.length ? " warn" : "");
-    msg.textContent = left.length ? `Still overlapping: ${left.map(p => p.join(" and ")).join(", ")}. Purchasing is paused while you edit.`
-                                  : "No overlaps. Press Save boxes. Purchasing is paused while you edit.";
-  } else if (layoutBad) {
-    msg.className = "layoutmsg warn";
-    msg.textContent = "The saved boxes are not valid, so stock events are paused: " + S.layout_errors.join("; ") + ". Press Edit boxes.";
-  } else if (recalSlots.length) {
-    msg.className = "layoutmsg warn";
-    msg.textContent = `Spot${recalSlots.length > 1 ? "s" : ""} ${recalSlots.join(", ")} moved: save the empty photo and the full photo again. Until then ${recalSlots.length > 1 ? "they do" : "it does"} not order.`;
-  } else { msg.className = "layoutmsg"; msg.textContent = ""; }
-  const now = done.indexOf(false);
-  ["s1","s2","s3","s4"].forEach((id, i) => {
-    const li = $(id); li.className = done[i] ? "done" : i === now ? "now" : "later";
-    li.querySelectorAll("button").forEach(b => b.disabled = !(i === now || done[i]) || (b.dataset.cal && !S.camera_ok));
-  });
-  $("steps").hidden = now === -1; $("setupDone").hidden = now !== -1;
-
-  // Knob, temperature, buzzer
-  renderDial(S.auto_limit_eur);
-  const buzz = {off: "quiet", approval: "beeping: approve on the phone", alarm: "alarm", confirm: "beep"}[S.buzzer] || S.buzzer;
-  const waits = S.shortage_wait || [];
-  const orderWait = waits.length ? waits.map(w => w.held ? `spot ${w.slot}: waiting for a clear camera reading` : `spot ${w.slot}: ${w.seconds_left} s before order`).join(" · ") : `wait ${(S.config.shortage_confirm_s || 0) / 60} min after a camera shortage`;
-  $("facts").innerHTML = `
-    <div class="readout"><span>agent may spend alone</span><strong>€${Math.min(S.auto_limit_eur ?? 0, SIGNED_LIMIT)}</strong></div>
-    <div class="readout"><span>camera order timing</span><em>${esc(orderWait)}</em></div>
-    <div class="readout ${S.alarm ? "alarm" : ""}"><span>cold room, alarm above ${S.config.temperature_limit_c}&nbsp;°C</span>
-      <strong>${S.temperature_c == null ? "--.-" : S.temperature_c.toFixed(1)}°</strong></div>
-    <div class="readout"><span>buzzer</span><em>${esc(buzz)}</em></div>`;
-  const ks = S.config.slots.find(c => c.slot == S.config.manual_slot);
-  if ($("knobSlot")) $("knobSlot").textContent = ks ? ks.product_hint.replace(/\s+\d.*$/, "") : `spot ${S.config.manual_slot}`;
-
-  // Delivery check
-  const left = S.delivery_left_s;
-  $("deliveryBtn").disabled = left != null;
-  $("deliveryState").textContent = left != null ? `measuring, ${left} s left` : "";
-  const ld = S.last_delivery;
-  $("deliveryResult").innerHTML = ld ? `<span class="${ld.status === "ok" ? "ok-t" : "bad-t"}">${esc(ld.summary || ld.status)}</span>` : "";
-
-  // Settings (do not overwrite while the person edits them)
-  // Redraw the form parts only when the setup changed, so focus and typing are never lost.
-  const formKey = JSON.stringify([S.backend_url, S.config.slots.map(c => [c.product_hint, c.target_units]), S.config.manual_slot, S.config.temperature_limit_c, S.config.shortage_confirm_s]);
-  if (!settingsOpen && formKey !== render.formKey) {
-    render.formKey = formKey;
-    $("url").value = S.backend_url; $("tlimit").value = S.config.temperature_limit_c; $("orderDelay").value = (S.config.shortage_confirm_s || 0) / 60;
-    $("kslot").innerHTML = S.config.slots.map(c => `<option value="${c.slot}" ${c.slot == S.config.manual_slot ? "selected" : ""}>Spot ${c.slot}: ${esc(c.product_hint)}</option>`).join("");
-    $("names").innerHTML = S.config.slots.map(c => `<div class="two"><div><label>Spot ${c.slot} product</label><input data-name="${c.slot}" value="${esc(c.product_hint)}"></div>
-      <div><label>Full shelf holds</label><input data-target="${c.slot}" type="number" min="1" value="${c.target_units}"></div></div>`).join("");
-    $("tests").innerHTML = S.config.slots.map(c => `<div class="testrow"><span>${esc(c.product_hint)}</span>
-      <button data-sim="${c.slot}" data-st="empty">Mark empty</button><button data-sim="${c.slot}" data-st="full">Mark full</button></div>`).join("");
-  }
-}
-
-function renderBoxes() {
-  const cam = $("cam");
-  cam.querySelectorAll(".box").forEach(b => b.remove());
-  if (!S || !S.camera_ok) return;  // boxes only make sense on top of a picture
-  slots.forEach((s, i) => {
-    const st = S && S.slots[s.slot] ? S.slots[s.slot].state || "" : "";
-    const [x, y, w, h] = s.rect, b = document.createElement("div");
-    b.className = `box ${st}${conflicts.has(s.slot) ? " conflict" : ""}`; b.dataset.i = i;
-    Object.assign(b.style, {left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${h * 100}%`});
-    b.innerHTML = `<b>${s.slot}</b><span class="h"></span>`; b.title = s.product_hint;
-    cam.appendChild(b);
-  });
-}
-
-// Drag to move, drag the corner to resize, only after "Edit boxes". Moves stay in the draft until "Save boxes".
-$("cam").addEventListener("pointerdown", (e) => {
-  const box = e.target.closest(".box"); if (!box) return;
-  if (!editing) { toast("Press Edit boxes first."); return; }
-  const r = $("cam").getBoundingClientRect(), i = Number(box.dataset.i);
-  dragging = {i, resize: e.target.classList.contains("h"), x0: e.clientX, y0: e.clientY, rect: slots[i].rect.slice(), r};
-  $("cam").setPointerCapture(e.pointerId); e.preventDefault();
-});
-$("cam").addEventListener("pointermove", (e) => {
-  if (!dragging) return;
-  const d = dragging, dx = (e.clientX - d.x0) / d.r.width, dy = (e.clientY - d.y0) / d.r.height;
-  let [x, y, w, h] = d.rect;
-  if (d.resize) { w = Math.max(0.05, Math.min(1 - x, w + dx)); h = Math.max(0.05, Math.min(1 - y, h + dy)); }
-  else { x = Math.max(0, Math.min(1 - w, x + dx)); y = Math.max(0, Math.min(1 - h, y + dy)); }
-  slots[d.i].rect = [x, y, w, h].map(v => Math.round(v * 1000) / 1000);
-  renderBoxes();
-});
-$("cam").addEventListener("pointerup", () => {
-  if (!dragging) return;
-  dragging = null;
-  conflicts = new Set(overlapPairs(slots).flat());  // live feedback only; nothing is saved yet
-  render();
-});
-$("editBoxes").onclick = () => {
-  editing = true; conflicts = new Set(overlapPairs(slots).flat());
-  socket.emit("setup", {on: true}); render();
-};
-$("saveBoxes").onclick = () => { pendingLayoutSave = true; socket.emit("save_config", {slots}); };
-$("cancelBoxes").onclick = () => {
-  editing = false; conflicts = new Set();
-  if (S) slots = JSON.parse(JSON.stringify(S.config.slots));  // throw the draft away
-  socket.emit("setup", {on: false}); render();
-};
-
-document.addEventListener("click", (e) => {
-  const b = e.target.closest("button"); if (!b) return;
-  if (b.dataset.cal) socket.emit("calibrate", {slot: "all", kind: b.dataset.cal});
-  if (b.dataset.sim) { socket.emit("simulate", {slot: Number(b.dataset.sim), state: b.dataset.st}); toast("Sent to the agent."); }
-});
-function setSize(large) {
-  document.documentElement.classList.toggle("large", large);
-  $("size").setAttribute("aria-pressed", String(large));
-  $("size").textContent = large ? "Normal text" : "Larger text";
-  try { localStorage.setItem("large", large ? "1" : "0"); } catch (e) {}
-}
-try { setSize(localStorage.getItem("large") === "1"); } catch (e) {}
-$("size").onclick = () => setSize(!document.documentElement.classList.contains("large"));
-$("update").onclick = () => { $("updateMsg").textContent = "Updating…"; socket.emit("update", {}); };
-$("deliveryBtn").onclick = () => { socket.emit("delivery_check", {}); toast("Delivery check started. Keep the cartons on the shelf for 60 seconds."); };
-$("boxesOk").onclick = () => { boxesOk = true; try { localStorage.setItem("boxesOk", "1"); } catch (e) {} render(); };
-$("redo").onclick = () => { boxesOk = false; try { localStorage.removeItem("boxesOk"); } catch (e) {} render(); };
-document.querySelectorAll("details")[0].addEventListener("toggle", (e) => { settingsOpen = e.target.open; if (!settingsOpen && S) render(); });
-$("save").onclick = () => {
-  const s = JSON.parse(JSON.stringify(S.config.slots));
-  s.forEach(c => {
-    const n = document.querySelector(`[data-name="${c.slot}"]`), t = document.querySelector(`[data-target="${c.slot}"]`);
-    if (n && n.value.trim()) c.product_hint = n.value.trim();
-    if (t && Number(t.value) > 0) c.target_units = Number(t.value);
-  });
-  const limit = Number($("tlimit").value), delay = Number($("orderDelay").value);
-  socket.emit("save_config", {backend_url: $("url").value.trim(), temperature_limit_c: isFinite(limit) ? limit : 6,
-                              shortage_confirm_s: isFinite(delay) ? Math.max(0, delay * 60) : 300,
-                              manual_slot: Number($("kslot").value), slots: s});
-};
-
-// Recognize shelf (experimental, observational) ---------------------------------------------------------------
-const RNAMES = {"exp:chips": "chips", "exp:energy-drink": "energy drink", "exp:milk": "milk",
-                "exp:valio-protein-drink-64084430101290": "Valio Protein drink · 64084430101290"};
-const rname = (id) => RNAMES[id] || id || "unknown";
-const surfaceArg = () => ($("wholeFrame").checked ? [0, 0, 1, 1] : null);
 const pct = (v) => `${(v * 100).toFixed(2)}%`;
 function placeBox(el, b) { el.style.left = pct(b[0]); el.style.top = pct(b[1]); el.style.width = pct(b[2]); el.style.height = pct(b[3]); }
-$("recogBtn").onclick = () => { $("recogMeta").textContent = "Recognizing…"; socket.emit("recognize", {surface: surfaceArg()}); };
-$("bgBtn").onclick = () => { toast("Saving the empty surface…"); socket.emit("recognition_background", {surface: surfaceArg()}); };
-$("enrolBtn").onclick = () => { toast("Saving the enrolment photo…"); socket.emit("enrol_photo", {identity: $("enrolId").value, role: $("enrolRole").value, surface: surfaceArg()}); };
+
+// Status lights: board link, laptop link, camera, recognition service.
+function renderPills() {
+  const leds = [["board", connected], ["laptop", S ? S.backend_ok === true : null], ["camera", S ? S.camera_ok : null], ["recognition", recogOk]];
+  $("pills").innerHTML = leds.map(([k, ok]) =>
+    `<span class="led ${ok ? "on" : "bad"}" role="listitem"><i aria-hidden="true"></i>${k}<b>${ok ? "ok" : ok == null ? "…" : "check"}</b></span>`).join("");
+}
+socket.on("connect", () => { connected = true; socket.emit("visible_status", {}); socket.emit("recognition_status", {}); renderPills(); });
+socket.on("disconnect", () => { connected = false; renderPills(); });
+socket.on("frame", (m) => { const f = $("frame"); f.src = `data:image/jpeg;base64,${m.image}`; f.hidden = false; $("nocam").hidden = true; });
+socket.on("sensors", (s) => {  // only the camera and link state are used here
+  S = s;
+  if (!s.camera_ok) { $("frame").hidden = true; $("nocam").hidden = false; $("nocamWhy").textContent = s.camera_error || "The board finds the camera when it powers on."; }
+  if (document.activeElement !== $("url") && !$("url").value) $("url").value = s.backend_url || "";
+  renderPills();
+});
+
+// Products: the shared product-set file (products/active.json, deployed as products.json) --------------------------
+let PRODUCTS = null, RNAMES = {};
+const rname = (id) => RNAMES[id] || id || "unknown";
+const plural = (n, unit) => { const u = unit || "unit"; return `${n} ${n === 1 ? u : /(x|s|ch)$/.test(u) ? u + "es" : u + "s"}`; };
+async function loadProducts() {
+  try {
+    PRODUCTS = await (await fetch("products.json", {cache: "no-store"})).json();
+    RNAMES = {};
+    (PRODUCTS.archived_sets || []).forEach((s) => Object.assign(RNAMES, s.labels || {}));
+    (PRODUCTS.excluded_products || []).forEach((x) => (RNAMES[x.identity] = x.display_name || x.label));
+    PRODUCTS.products.forEach((p) => (RNAMES[p.identity] = p.display_name || p.label));
+    $("enrolId").innerHTML = "";
+    PRODUCTS.products.forEach((p) => { const o = document.createElement("option"); o.value = p.identity; o.textContent = p.display_name || p.label; $("enrolId").appendChild(o); });
+    $("productSet").textContent = `Products on this shelf: ${PRODUCTS.products.map((p) => p.display_name || p.label).join(", ")}.` +
+      ((PRODUCTS.excluded_products || []).length ? ` Removed: ${PRODUCTS.excluded_products.map((x) => x.display_name || x.label).join(", ")} (shown as "Not in inventory").` : "");
+    $("localRouting").textContent = `Cloud check of a local box at score ≤ ${PRODUCTS.products.map((p) => `${p.display_name || p.label} ${p.kimi_at_or_below}`).join(", ")} ` +
+      `(product set ${PRODUCTS.set_id}; separate from the minimum score for showing a box).`;
+  } catch (e) { $("productSet").textContent = `Products: products.json could not be read (${e.message}).`; }
+}
+loadProducts();
+
+// Visible items: the box's shared observation ------------------------------------------------------------------
+// The picture belongs to one result: it is kept with that result's request id and shown only with that result.
+let VIEW = null, VIEW_FRAME = null, VIEW_FRAME_ID = null, VIEW_AT = 0;
+socket.on("visible", (m) => {
+  VIEW = m; VIEW_AT = Date.now();
+  if (m.frame && m.current) { VIEW_FRAME = m.frame; VIEW_FRAME_ID = `${m.current.request_id}/${m.current.frame_id}`; }
+  renderView();
+});
+$("recogBtn").onclick = () => { socket.emit("recognize", {}); $("recogBtn").disabled = true; toast("Recognizing the newest picture…"); };
+function renderView() {
+  const v = VIEW; if (!v) return;
+  const cur = v.current, vi = (cur && cur.visible_items) || {};
+  // one result: its picture (only if it is this result's), its numbered boxes and its numbered list
+  VisibleView.drawImage($("visPic"), cur && VIEW_FRAME && VIEW_FRAME_ID === `${cur.request_id}/${cur.frame_id}` ? `data:image/jpeg;base64,${VIEW_FRAME}` : null, vi);
+  VisibleView.drawList($("visList"), vi, !cur ? 'No recognition yet. Press "Recognize shelf".' : vi.nothing_seen ? "The camera saw no packages." : "Nothing to list.");
+  const age = cur ? (Date.now() - new Date(cur.captured_at)) / 1000 : null, stale = age != null && age > (v.stale_after_s || 300);
+  const parts = [];
+  if (cur) parts.push(`Picture of ${hms(cur.captured_at)} (${ago(cur.captured_at)}), asked by the ${cur.requested_by}.`);
+  if (cur && cur.summary) parts.push(cur.summary);
+  if (stale) parts.push(`Stale: older than ${Math.round((v.stale_after_s || 300) / 60)} minutes.`);
+  if (cur && vi.uncertain) parts.push(`Uncertain: ${(vi.reasons || []).join("; ")}.`);
+  if (v.status === "pending" && v.pending) parts.push(`${v.pending.stage || "Recognizing"}${v.pending.stage_s != null ? ` (${Math.round(v.pending.stage_s)} s)` : ""}${v.pending.captured_at ? `: picture of ${hms(v.pending.captured_at)}` : ""}, asked by the ${v.pending.requested_by}…`);
+  if (v.last_error) parts.push(`The last request (${v.last_error.requested_by}, ${hms(v.last_error.at)}) failed: ${v.last_error.error}.${cur ? " The previous result stays." : ""}`);
+  $("visMeta").textContent = parts.join(" ");
+  $("visMeta").className = "hint" + (stale || v.last_error || v.status === "pending" ? " warn" : "");
+  const c = v.continuous || {running: false, phase: "stopped"};
+  $("recogBtn").disabled = v.status === "pending";  // during the pause of continuous mode it starts the next scan early
+  $("contStart").disabled = c.running; $("contStop").disabled = !c.running;
+  if (document.activeElement !== $("contPause") && c.running && c.pause_s) $("contPause").value = c.pause_s;
+  const last = (v.cycles_log || []).slice(-1)[0];
+  $("contStatus").textContent = `Continuous recognition: ${c.phase[0].toUpperCase() + c.phase.slice(1)}` +
+    (c.detail && c.phase !== "waiting for the next scan" ? ` (${c.detail})` : "") +
+    (c.running && c.next_scan_in_s != null ? ` — next scan in ${Math.max(0, Math.ceil(c.next_scan_in_s - (Date.now() - VIEW_AT) / 1000))} s` : "") +
+    (c.running ? ` · pause ${c.pause_s} s after each completed scan · ${c.cycles} scans` : "") +
+    (last && last.total_ms != null ? ` · last scan: local ${last.local_ms ?? "–"} ms, ${last.cloud_mode === "reuse" ? "Kimi reused" : "Kimi"} ${last.cloud_ms != null ? (last.cloud_ms / 1000).toFixed(1) + " s" : "–"}, total ${(last.total_ms / 1000).toFixed(1)} s${last.pause_before_ms != null && c.running ? `, after a ${(last.pause_before_ms / 1000).toFixed(1)} s pause` : ""}` : "");
+  $("contStatus").className = "hint" + (c.phase === "error" ? " warn" : "");
+  renderDiag(cur);
+}
+$("contStart").onclick = () => { const p = Number($("contPause").value); if (!(p >= 1 && p <= 600)) return toast("Pause between completed scans: 1 to 600 seconds.");
+  socket.emit("continuous", {action: "start", pause_s: p}); $("contStart").disabled = true; };
+$("contStop").onclick = () => { socket.emit("continuous", {action: "stop"}); $("contStop").disabled = true; };
+$("contPause").onchange = () => { if (VIEW && (VIEW.continuous || {}).running) socket.emit("continuous", {action: "start", pause_s: Number($("contPause").value)}); };
+setInterval(renderView, 1000);  // the countdown and ages; the data itself comes from the box
+function renderDiag(cur) {  // the same numbers as the picture's badges and the list
+  const list = $("recogList");
+  list.innerHTML = "";
+  if (!cur) { $("recogMeta").textContent = ""; return; }
+  const r = cur.result || {}, hy = r.hybrid || null, BY = {local: "local vision", kimi: "Kimi", "local+kimi": "local vision + Kimi", conflict: "CONFLICT local vs Kimi", pending: "identity pending"};
+  (r.objects || []).forEach((o, i) => {
+    const src = o.source || {}, L = src.local, K = src.kimi;
+    const via = o.source ? ` {${BY[src.identity_by] || src.identity_by}; box from ${src.box_by === "local" ? "local model" : "Kimi"}` +
+      (L ? `; local class ${L.class_id} score ${L.score.toFixed(2)}${L.identity ? " = " + rname(L.identity) : " (unmapped)"}${L.escalation.length ? ", escalated: " + L.escalation.join("; ") : ""}` : "") +
+      (K && K.object ? `; Kimi object ${K.object}${K.reused_from ? " (reused check " + K.reused_from + ")" : ""}` : K && K.crop_check ? "; Kimi crop check" : "") + "}" : "";
+    const match = o.status === "known" ? rname(o.identity) : o.status === "not-inventory" ? (o.removed_identity ? rname(o.removed_identity) + ", not in inventory" : "not inventory")
+      : o.status === "flavour-uncertain" ? o.label : o.status;
+    const read = [o.brand, o.variant, o.size].filter(Boolean).join(" · ");
+    const li = document.createElement("li");
+    li.textContent = `${i + 1}: ${o.description} (${o.visible_count} visible) → ${match}` + (read ? `. Readable: ${read}` : "") +
+      (o.readable_text ? `. Text: "${o.readable_text}"` : "") + (o.evidence ? `. Evidence: ${o.evidence}` : "") +
+      (o.obstruction ? `. Obstruction: ${o.obstruction}` : "") + (o.match_reason ? `. Match: ${o.match_reason}` : "") +
+      (o.match_by ? ` [${o.match_by}${o.match_level ? ", " + o.match_level : ""}]` : "") +
+      ((o.could_be || []).length ? `. Could be: ${o.could_be.map(rname).join(", ")}` : "") + (o.box ? `. Box ${o.box.join(", ")}` : " (no location)") + via;
+    list.appendChild(li);
+  });
+  const t = r.timing_ms || {}, m = r.model || {};
+  $("recogMeta").textContent = `Request ${cur.request_id}, frame ${cur.frame_id}, captured ${clock(cur.captured_at)}, finished ${hms(cur.finished_at)} ` +
+    `(${(cur.duration_ms / 1000).toFixed(1)} s). ${m.name || "model"} on ${m.device || "?"}${t.total != null ? `, ${(t.total / 1000).toFixed(1)} s in the service` : ""}. ` +
+    `Product set ${cur.product_set || "?"}. Image quality: ${r.image_quality || "?"}. ` +
+    `Reference photos sent: ${(r.references_used || []).map((x) => `${x.reference} ${rname(x.identity)} (${String(x.path).split("/").pop()})`).join(", ") || "none (every object was decided by its readable text)"}. ${r.note || ""}` +
+    (hy ? ` Hybrid: local model ${hy.local.model || "?"} ${hy.local.error ? "unavailable (" + hy.local.error + ")" : `${hy.local.boxes} boxes, ${hy.local.objects} objects, ${hy.local.escalated} escalated`}` +
+      `; class map ${hy.coverage.class_map}; cloud ${hy.cloud.mode} → ${hy.cloud.status}${hy.cloud.ms != null ? ` in ${(hy.cloud.ms / 1000).toFixed(1)} s` : ""}${hy.cloud.error ? " (" + hy.cloud.error + ")" : ""}` +
+      `; ${hy.matches.length} local box(es) matched to Kimi objects, ${hy.kimi_only} Kimi-only, ${hy.local_only} local-only, ${hy.conflicts.length} conflict(s)` +
+      `${hy.crop_checks.length ? `, ${hy.crop_checks.length} crop check(s)` : ""}${hy.dismissed_local_boxes.length ? `, ${hy.dismissed_local_boxes.length} local box(es) dismissed` : ""}. ` +
+      `Coverage: ${Object.entries(hy.coverage.products).map(([id, c]) => `${rname(id)} ${c.local ? "local" : "cloud"}`).join(", ")}.` : "") +
+    (cur.stage === "local" ? ` Local stage only (${cur.local_boxes} boxes, ${cur.local_ms} ms)${cur.local_error ? ": " + cur.local_error : ""}.` : "");
+}
+
+// Reference photos (the enrolment pipeline of the recognition service) ----------------------------------------
+$("enrolBtn").onclick = () => { toast("Saving the reference photo…"); socket.emit("enrol_photo", {identity: $("enrolId").value, role: $("enrolRole").value, surface: [0, 0, 1, 1]}); };
+$("bgBtn").onclick = () => { toast("Saving the empty surface…"); socket.emit("recognition_background", {surface: [0, 0, 1, 1]}); };
 socket.on("recognition_background_response", (r) => toast(r.ok ? "Empty surface saved." : `Not saved: ${r.error || r.detail}`));
 socket.on("enrol_photo_response", (r) => { toast(r.ok ? `Saved a ${$("enrolRole").value} photo of ${rname($("enrolId").value)}.` : `Not saved: ${r.error || r.detail}`); socket.emit("recognition_status", {}); });
 socket.on("recognition_status_response", (r) => {
+  recogOk = !!r.ok; renderPills();
   if (!r.ok) { $("enrolStatus").textContent = `Recognition service not reachable (${r.url}).`; return; }
   const e = r.enrolment || {}; const rows = e.identities || e;
-  $("enrolStatus").textContent = "Enrolled photos: " + Object.entries(rows).filter(([k]) => k.startsWith("exp:")).map(([k, v]) =>
+  const active = new Set(((PRODUCTS || {}).products || []).map((p) => p.identity));
+  $("enrolStatus").textContent = "Saved photos: " + Object.entries(rows).filter(([k]) => active.has(k)).map(([k, v]) =>
     `${rname(k)} ${(v.reference ?? v.photos?.reference ?? 0)} reference / ${(v.heldout ?? v.photos?.heldout ?? 0)} held-out`).join(", ");
 });
-socket.on("recognize_response", (r) => {
-  if (!r.ok) { $("recogMeta").textContent = `Not recognized: ${r.error || r.detail || "service error"} (${r.round_trip_ms ?? "?"} ms)`; return; }
-  const cam = $("recogCam"); cam.hidden = false; $("recogFrame").src = `data:image/jpeg;base64,${r.frame}`;
-  cam.querySelectorAll(".rbox,.rsurf").forEach((e) => e.remove());
-  if (r.mode !== "vision-model") { const surf = document.createElement("div"); surf.className = "rsurf"; placeBox(surf, r.surface); cam.appendChild(surf); }
-  const list = $("recogList"); list.innerHTML = "";
-  (r.objects || []).forEach((o, i) => {
-    const top = (o.candidates || [])[0];
-    const match = o.status === "known" ? rname(o.identity) : o.status === "not-inventory" ? "not inventory" : o.status;
-    const what = o.description || (top ? `nearest ${rname(top.identity)}` : "object");
-    if (o.box) {
-      const d = document.createElement("div"); d.className = `rbox ${o.status}`; placeBox(d, o.box);
-      const tag = document.createElement("b"); tag.textContent = `${i + 1} ${match}${o.visible_count > 1 ? " ×" + o.visible_count : ""}${o.visibility === "partial" ? " (partly hidden)" : ""}`; d.appendChild(tag); cam.appendChild(d);
-    }
-    const li = document.createElement("li");
-    const read = [o.brand, o.variant, o.size].filter(Boolean).join(" · ");
-    li.textContent = `${i + 1}: ${what}` + (o.visible_count != null ? ` (${o.visible_count} visible)` : "") + ` → ${match}` +
-      (read ? `. Readable: ${read}` : "") + (o.readable_text ? `. Text: "${o.readable_text}"` : "") +
-      (o.evidence ? `. Evidence: ${o.evidence}` : "") + (o.obstruction ? `. Obstruction: ${o.obstruction}` : "") +
-      (o.match_reason ? `. Match: ${o.match_reason}` : "") + (o.match_by ? ` [${o.match_by}${o.match_level ? ", " + o.match_level : ""}]` : "") +
-      (o.visibility === "partial" ? " (partly hidden, still counted if identified)" : "") + (o.box ? "" : " (no location given)") +
-      (top && !o.description ? ` (score ${Number(top.similarity).toFixed(2)})` : "");
-    list.appendChild(li);
-  });
-  if (!(r.objects || []).length) { const li = document.createElement("li"); li.textContent = "No packages seen on the surface."; list.appendChild(li); }
-  const ic = r.inventory_counts || {};
-  const counts = Object.keys(ic).length ? Object.entries(ic).map(([k, c]) => `${rname(k)} ${c.status === "counted" ? c.visible : c.status === "at least" ? "at least " + c.visible : c.status}`).join(", ")
-    : (Object.entries(r.visible_units || {}).filter(([, n]) => n > 0).map(([k, n]) => `${rname(k)} ${n}`).join(", ") || "none from the inventory");
-  const t = r.timing_ms || {}; const m = r.model || {};
-  const steps = ["describe_api", "match_api"].filter((k) => t[k] != null).map((k) => `${k.replace("_api", "")} ${(t[k] / 1000).toFixed(1)} s`).join(", ");
-  $("recogMeta").textContent = `Visible units: ${counts}. ${r.uncertain ? "Uncertain: " + (r.reasons || []).join("; ") + ". " : (r.reasons || []).length ? (r.reasons || []).join("; ") + ". " : ""}` +
-    `Captured ${String(r.captured_at).slice(11, 23)}. ${r.provider ? r.provider + ", " : ""}${m.name || "model"} (${m.device || "?"}${m.reasoning_effort ? ", reasoning " + m.reasoning_effort : ""}): ` +
-    `${t.total != null ? (t.total / 1000).toFixed(1) + " s" : "?"} in the service${steps ? " (" + steps + ")" : ""}, ${(r.round_trip_ms / 1000).toFixed(1)} s round trip. ` +
-    (r.note || "Scores are model similarities, not measured accuracy. Observes only: no stock events, no orders.");
-});
-socket.on("connect", () => socket.emit("recognition_status", {}));
+
+// Connection ----------------------------------------------------------------------------------------------------
+$("save").onclick = () => socket.emit("save_config", {backend_url: $("url").value.trim()});  // only the address: other settings stay
+socket.on("save_config_response", (r) => toast(r.ok ? "Address saved." : (r.error || "Not saved.")));
+$("update").onclick = () => { $("updateMsg").textContent = "Updating…"; socket.emit("update", {}); };
+socket.on("update_response", (r) => { const m = r.ok ? r.message : `Update failed: ${r.error}`; $("updateMsg").textContent = m; toast(m); });
+renderPills();
 
 // Local model on the board (experimental, observational) ---------------------------------------------------------
-// ~/valio-onnx/serve.py on port 8200 runs beside this app (it reads this app's preview frames; no second camera
-// capture) and never talks to the purchasing backend. "Ask Kimi" posts one box to the laptop recognition service.
+// ~/valio-onnx/serve.py on port 8200 runs beside this app and never talks to the purchasing backend. This test shows
+// its raw boxes only. "Recognize shelf" runs the same model on the recognised frame and identifies its boxes with the
+// automatic whole-frame Kimi check (one cloud request at a time, in the box's coordinator); this test sends nothing
+// to the cloud.
 const LOCAL_URL = `http://${location.hostname}:8200`;
-let localLast = null, localBusy = false, regionBusy = false, repeatTimer = null, repeatUntil = 0, recogUrl = null;
-socket.on("recognition_status_response", (r) => { if (r.url) recogUrl = r.url; });
-const clock = (iso) => { const d = new Date(iso); return isNaN(d) ? String(iso) : d.toLocaleTimeString([], {hour12: false}) + "." + String(d.getMilliseconds()).padStart(3, "0"); };
-async function runLocal() {
-  if (localBusy) return;
-  localBusy = true; const t0 = performance.now();
+let localLast = null, localBusy = false, repeatTimer = null, repeatUntil = 0;
+const LOCAL_TIMEOUT_MS = 12000;  // the service answers within ~10 s (frame wait 4 s, queue wait 5 s, inference ~0.3 s)
+let localSeq = 0, localFails = 0, localSkipped = 0, localLastOk = null;
+function modelState(r) {
+  const m = r.model_info || {}, pre = m.preprocessing || {};
+  if (m.error) return `Model manifest problem: ${m.error}. Its boxes stay numbered; "Recognize shelf" identifies them with Kimi.`;
+  const classes = Array.isArray(m.classes) ? m.classes : null;
+  const cov = ((PRODUCTS || {}).local_model_coverage || {}).products || {};
+  const cloudOnly = ((PRODUCTS || {}).products || []).filter((p) => (cov[p.identity] || {}).coverage === "cloud").map((p) => p.display_name || p.label);
+  return `${m.name || "unnamed model"}: ${m.num_classes} classes, ` +
+    (classes ? `class order verified (${classes.map((c, k) => `${k} ${rname(c)}`).join(", ")}). `
+             : `class order ${m.class_map || "unknown"}: classes stay numbers and Kimi identifies their boxes. `) +
+    `Preprocessing ${pre.variant} (${pre.status}). ${cloudOnly.length ? `Cloud-covered: ${cloudOnly.join(", ")} (no local class). ` : ""}` +
+    `In "Recognize shelf" its boxes come first and the whole-frame Kimi check runs automatically.`;
+}
+async function getJson(url, ms) {
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), ms);
   try {
-    const res = await fetch(`${LOCAL_URL}/detect?threshold=${$("localThr").value}`, {cache: "no-store"});
-    const r = await res.json();
-    if (!res.ok) throw new Error(r.error || `HTTP ${res.status}`);
-    r.round_trip_ms = Math.round(performance.now() - t0);
-    showLocal(r);
+    const res = await fetch(url, {cache: "no-store", signal: ctl.signal});
+    let body = null; try { body = await res.json(); } catch (e) { body = {error: `answer was not JSON (HTTP ${res.status})`}; }
+    return {res, body};
+  } finally { clearTimeout(timer); }
+}
+async function runLocal() {
+  if (localBusy) { localSkipped++; return; }
+  localBusy = true;
+  const rid = `p${Date.now().toString(36)}-${++localSeq}`, started = new Date(), t0 = performance.now();
+  try {
+    const reqThr = Math.min(Number($("localThr").value), ((PRODUCTS || {}).routing || {}).display_min_score ?? 0.3);
+    const {res, body: r} = await getJson(`${LOCAL_URL}/detect?threshold=${reqThr}&rid=${rid}`, LOCAL_TIMEOUT_MS);
+    if (!res.ok) {
+      const d = r.diagnostics || {};
+      throw Object.assign(new Error(`board service answered HTTP ${res.status}: ${r.error || "error"}`),
+        {diag: `server waited ${d.frame_wait_ms ?? "?"} ms for a frame${d.queue_wait_ms != null ? ", " + d.queue_wait_ms + " ms in the queue" : ""}`});
+    }
+    r.round_trip_ms = Math.round(performance.now() - t0); r.rid = rid;
+    localFails = 0; localLastOk = new Date(); showLocal(r); localSummary(r);
+    $("localModel").textContent = modelState(r);
   } catch (e) {
-    $("localMeta").textContent = `Local model not available: ${e.message}. It runs separately from this app (port 8200 on the board; start: cd ~/valio-onnx && venv/bin/python serve.py model.onnx --port 8200 --threads 2).`;
+    localFails++;
+    const ms = Math.round(performance.now() - t0);
+    const what = e.name === "AbortError" ? `no answer within ${LOCAL_TIMEOUT_MS / 1000} s (request cancelled)`
+      : e.diag ? e.message : `request failed before an answer (${e.message}): network or board not reachable`;
+    let health = "";
+    if (!e.diag) {  // was it the network/board or the detection? one short health check tells them apart
+      try { const h = await getJson(`${LOCAL_URL}/health`, 3000); health = h.res.ok ? ` Health check now: service up (uptime ${h.body.uptime_s} s, ${h.body.requests} requests, ${h.body.errors} errors), so the delay was in this request or the network.` : ` Health check now: HTTP ${h.res.status}.`; }
+      catch (e2) { health = ` Health check now: board not reachable on port 8200 (${e2.name === "AbortError" ? "no answer in 3 s" : e2.message}): network, board or service down.`; }
+    }
+    $("localMeta").textContent = `Local model: ${what}${e.diag ? " (" + e.diag + ")" : ""}. Request ${rid}, sent ${clock(started.toISOString())}, ${ms} ms. ` +
+      `${localFails} failure(s) in a row; last result ${localLastOk ? clock(localLastOk.toISOString()) : "none yet"}${localSkipped ? `; ${localSkipped} repeat tick(s) skipped while a request was pending` : ""}.${health} ` +
+      `The service runs separately from this app (systemd user unit valio-local-detect on the board; logs: journalctl --user -u valio-local-detect).`;
+    $("localSummary").textContent = `Local model: ${what}. Details under Diagnostics.`;
   } finally { localBusy = false; }
 }
 function showLocal(r) {
   localLast = r;
   const cam = $("localCam"); cam.hidden = false; $("localFrame").src = `data:image/jpeg;base64,${r.frame}`;
-  cam.querySelectorAll(".lbox,.kbox,.kcrop").forEach((e) => e.remove());
-  $("regionOut").hidden = true;  // a region answer belongs to the previous picture
+  cam.querySelectorAll(".lbox").forEach((e) => e.remove());
   const list = $("localList"); list.innerHTML = "";
-  r.detections.forEach((d, i) => {
+  const shownMin = Number($("localThr").value);  // display only: the routing thresholds are per product
+  r.shown = r.detections.filter((d) => d.score >= shownMin);
+  r.shown.forEach((d, i) => {
     const low = d.score < 0.5;
     const el = document.createElement("div"); el.className = `lbox c${d.class_id}${low ? " low" : ""}${d.box[1] < 0.08 ? " inside" : ""}`; placeBox(el, d.box);
-    const tag = document.createElement("b"); tag.textContent = `L${i + 1} ${d.label} ${d.score.toFixed(2)}`; el.appendChild(tag); cam.appendChild(el);
+    const name = d.identity ? rname(d.identity) : d.label;
+    const tag = document.createElement("b"); tag.textContent = `L${i + 1} ${name} ${d.score.toFixed(2)}`; el.appendChild(tag); cam.appendChild(el);
     const li = document.createElement("li");
-    li.textContent = `L${i + 1}: ${d.label}, score ${d.score.toFixed(2)} (objectness ${d.objectness.toFixed(2)})${low ? ", low score" : ""}, box ${d.box_px.map(Math.round).join(", ")} px`;
-    const b = document.createElement("button"); b.className = "askRegion"; b.textContent = "Ask Kimi about this region"; b.disabled = regionBusy;
-    b.onclick = () => askRegion(i); li.appendChild(b); list.appendChild(li);
+    li.textContent = `L${i + 1}: ${name}, score ${d.score.toFixed(2)} (objectness ${d.objectness.toFixed(2)})${low ? ", low score" : ""}, box ${d.box_px.map(Math.round).join(", ")} px`;
+    list.appendChild(li);
   });
-  if (!r.detections.length) {
+  if (!r.shown.length) {
     const li = document.createElement("li");
-    li.textContent = `No box at score ≥ ${r.score_threshold} (highest raw score ${r.max_raw_score}). This is not evidence of an empty shelf: use "Recognize shelf" for the whole picture.`;
+    li.textContent = `No box at score ≥ ${shownMin} (highest raw score ${r.max_raw_score}). This is not evidence of an empty shelf: use "Recognize shelf" for the whole picture.`;
     list.appendChild(li);
   }
   const counts = Object.entries(r.counts).map(([k, n]) => `${k} ×${n}`).join(", ") || "none";
   const t = r.timing_ms;
-  $("localMeta").textContent = `Boxes by class (score ≥ ${r.score_threshold}): ${counts}. Class names unknown (not in the model file): class numbers are not products and boxes are not stock counts. ` +
-    `Captured ${clock(r.captured_at)} (camera preview ${r.frame_size.join("×")}). Inference ${t.inference} ms on the board, ${t.total} ms with pre/post-processing, ${r.round_trip_ms} ms round trip. ` +
-    `${r.model}, sha256 ${r.model_sha256_16}…, ${r.runtime}, input ${r.variant}. Observes only: no stock events, no orders.`;
+  const known = (r.model_info || {}).classes_known;
+  $("localMeta").textContent = `Boxes by class (score ≥ ${r.score_threshold}, shown ≥ ${shownMin}): ${counts}. ${known ? "Boxes are local proposals, not stock counts." : "Class order not verified: class numbers are not products and boxes are not stock counts."} ` +
+    `Captured ${clock(r.captured_at)} (camera preview ${r.frame_size.join("×")}). Inference ${t.inference} ms on the board, ${t.total} ms with pre/post-processing, ${r.round_trip_ms} ms round trip` +
+    ` (request ${r.rid}${(r.diagnostics || {}).frame_wait_ms != null ? `, frame wait ${r.diagnostics.frame_wait_ms} ms` : ""}${localSkipped ? `, ${localSkipped} repeat tick(s) skipped so far while busy` : ""}). ` +
+    `${r.model}, sha256 ${r.model_sha256_16}…, ${r.runtime}, input ${r.variant} (${(((r.model_info || {}).preprocessing || {}).status) || "provisional"}: the training preprocessing ${(((r.model_info || {}).preprocessing || {}).status) === "confirmed" ? "is confirmed by the trainer" : "is not confirmed yet"}). Observes only: no stock events, no orders.`;
+}
+function localSummary(r) {
+  const known = (r.model_info || {}).classes_known;
+  $("localSummary").textContent = `${plural(r.shown.length, "box")} at score ≥ ${$("localThr").value} on the picture of ${hms(r.captured_at)}, ` +
+    `${Math.round(r.timing_ms.inference)} ms on the board${known ? "" : "; class numbers only, not products"}. Scores, boxes and the picture are under Diagnostics.`;
 }
 function stopRepeat() { clearInterval(repeatTimer); repeatTimer = null; $("localRepeat").checked = false; }
 $("localBtn").onclick = runLocal;
@@ -648,59 +485,6 @@ $("localRepeat").onchange = () => {
   clearInterval(repeatTimer); repeatUntil = Date.now() + 120000; runLocal();
   repeatTimer = setInterval(() => (Date.now() > repeatUntil ? stopRepeat() : runLocal()), 2000);
 };
-function recognitionBase() {
-  if (recogUrl) return recogUrl.replace(/\/$/, "");
-  try { return `http://${new URL($("url").value).hostname}:8100`; } catch (e) { return null; }
-}
-async function askRegion(i) {
-  const r = localLast, d = r && r.detections[i];
-  if (!d || regionBusy) return;
-  stopRepeat();  // keep this picture: a new local run would replace it
-  const base = recognitionBase();
-  $("regionOut").hidden = false; $("regionList").innerHTML = "";
-  if (!base) { $("regionMeta").textContent = "Recognition service address unknown (no backend URL)."; return; }
-  regionBusy = true; document.querySelectorAll(".askRegion").forEach((b) => (b.disabled = true));
-  $("regionMeta").textContent = `Asking Kimi about L${i + 1}… (whole picture as context; usually 10–40 s)`;
-  const [x, y, w, h] = d.box, region = [x, y, Math.min(w, 1 - x - 1e-4), Math.min(h, 1 - y - 1e-4)];
-  const t0 = performance.now(), ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), 75000);
-  try {
-    const res = await fetch(`${base}/recognize/region`, {method: "POST", headers: {"Content-Type": "application/json"}, signal: ctl.signal,
-      body: JSON.stringify({image_b64: r.frame, surface: [0, 0, 1, 1], region, captured_at: r.captured_at,
-                            prompted_by: {local: `L${i + 1}`, class_id: d.class_id, score: d.score, model_sha256_16: r.model_sha256_16}})});
-    const k = await res.json();
-    if (!res.ok) throw new Error(typeof k.detail === "string" ? k.detail : JSON.stringify(k.detail || k));
-    if (localLast === r) showRegion(k, i, Math.round(performance.now() - t0));
-  } catch (e) {
-    $("regionMeta").textContent = `Kimi region check failed: ${e.name === "AbortError" ? "no answer within 75 s" : e.message} (service ${base}).`;
-  } finally {
-    clearTimeout(timer); regionBusy = false; document.querySelectorAll(".askRegion").forEach((b) => (b.disabled = false));
-  }
-}
-function showRegion(k, i, ms) {
-  const cam = $("localCam"); cam.querySelectorAll(".kbox,.kcrop").forEach((e) => e.remove());
-  const crop = document.createElement("div"); crop.className = "kcrop"; placeBox(crop, k.crop); cam.appendChild(crop);
-  const list = $("regionList"); list.innerHTML = "";
-  (k.objects || []).forEach((o, j) => {
-    const match = o.status === "known" ? rname(o.identity) : o.status === "not-inventory" ? "not inventory" : o.status;
-    if (o.box) {
-      const el = document.createElement("div"); el.className = "kbox"; placeBox(el, o.box);
-      const tag = document.createElement("b"); tag.textContent = `K${j + 1} ${match}`; el.appendChild(tag); cam.appendChild(el);
-    }
-    const read = [o.brand, o.variant, o.size].filter(Boolean).join(" · ");
-    const li = document.createElement("li");
-    li.textContent = `K${j + 1}: ${o.description} (${o.visible_count} visible) → ${match}` + (read ? `. Readable: ${read}` : "") +
-      (o.readable_text ? `. Text: "${o.readable_text}"` : "") + (o.evidence ? `. Evidence: ${o.evidence}` : "") +
-      (o.obstruction ? `. Obstruction: ${o.obstruction}` : "") + (o.match_reason ? `. Match: ${o.match_reason}` : "") +
-      (o.match_by ? ` [${o.match_by}${o.match_level ? ", " + o.match_level : ""}]` : "");
-    list.appendChild(li);
-  });
-  if (!(k.objects || []).length) { const li = document.createElement("li"); li.textContent = "Kimi saw no package in this region (this says nothing about the rest of the shelf)."; list.appendChild(li); }
-  const units = Object.entries(k.visible_units || {}).map(([id, n]) => `${rname(id)} ${n}`).join(", ") || "none identified";
-  const t = k.timing_ms || {};
-  $("regionMeta").textContent = `Region L${i + 1} (the double white frame is what Kimi saw enlarged; dotted boxes K1… are its items). Identified in this region: ${units}. ` +
-    `${k.uncertain ? "Uncertain: " + (k.reasons || []).join("; ") + ". " : ""}${k.counting_note} ` +
-    `Captured ${clock(k.captured_at)}; ${(k.model || {}).name || "model"}: ${t.total != null ? (t.total / 1000).toFixed(1) + " s" : "?"} in the service, ${(ms / 1000).toFixed(1)} s round trip.`;
-}
 
 // Which app and build is this? build.json is written per app at deploy; PAGE_BUILD is stamped into this page at deploy.
 const PAGE_BUILD = "__PAGE_BUILD__";

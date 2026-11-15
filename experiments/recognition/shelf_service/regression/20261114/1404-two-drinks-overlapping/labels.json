@@ -1,0 +1,24 @@
+{
+ "captured_at": "2026-11-14T14:04:02.894000+02:00",
+ "visible_counts": {
+  "exp:milk": 1,
+  "exp:chips": 1,
+  "exp:energy-drink": 2
+ },
+ "note": "the two identical Funky Monkey bottles partially overlap",
+ "labelled_by": "owner (Anatoly), 14 Nov 2026",
+ "validation_source": "human",
+ "identities": {
+  "exp:energy-drink": "Funky Monkey Sunny Peach (owner-confirmed)",
+  "exp:chips": "Estrella Spicy Cheddar (owner-confirmed)",
+  "exp:milk": "milk carton (brand not owner-confirmed)"
+ },
+ "original_outcome": {
+  "visible_units": {
+   "exp:milk": 1,
+   "exp:chips": 1
+  },
+  "service": "vision mode before owner-confirmed matching",
+  "implementation": "exp/recognition 49e392e (vision mode, text-only model matching, before owner-confirmed matching); board page build 140aaeb-1347"
+ }
+}

@@ -1,0 +1,166 @@
+{
+ "captured_at": "2026-11-14T14:12:17.241000+02:00",
+ "surface": [
+  0.019,
+  0.363,
+  0.956,
+  0.531
+ ],
+ "objects": [
+  {
+   "box": [
+    0.259,
+    0.237,
+    0.283,
+    0.65
+   ],
+   "visible_count": 1,
+   "description": "Tall yellow flexible snack bag with red and green labeling and an image of ridged chips.",
+   "brand": "Estrella",
+   "variant": "Spicy Cheddar",
+   "size": null,
+   "readable_text": "Estrella SPICY Cheddar",
+   "evidence": "Yellow crinkled bag standing upright; red Estrella logo, green SPICY band, and large Cheddar lettering are visible.",
+   "obstruction": null,
+   "status": "known",
+   "identity": "exp:chips",
+   "label": "chips",
+   "match_reason": "The upright snack bag has readable Estrella Spicy Cheddar labeling and an image of ridged chips.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.119,
+    0.735,
+    0.242,
+    0.173
+   ],
+   "visible_count": 1,
+   "description": "Small flat blue-and-pink packaged snack lying horizontally, decorated with raspberries.",
+   "brand": null,
+   "variant": null,
+   "size": null,
+   "readable_text": null,
+   "evidence": "Rectangular sealed wrapper with pink fruit artwork, dark blue panels, and white script that is not clearly legible.",
+   "obstruction": null,
+   "status": "unknown",
+   "identity": null,
+   "label": "unknown",
+   "match_reason": "The small raspberry-decorated wrapper is not legible and does not clearly identify any inventory product.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.641,
+    0.438,
+    0.091,
+    0.45
+   ],
+   "visible_count": 1,
+   "description": "Clear plastic bottle containing an orange-colored drink, with a black cap and white illustrated label.",
+   "brand": "FUNKY MONKEY",
+   "variant": null,
+   "size": null,
+   "readable_text": "FUNKY MONKEY",
+   "evidence": "Cylindrical transparent bottle, orange liquid, black screw cap, and a white label with large FUNKY MONKEY text and a monkey face.",
+   "obstruction": null,
+   "status": "known",
+   "identity": "exp:energy-drink",
+   "label": "energy drink",
+   "match_reason": "The bottled orange drink is clearly labeled FUNKY MONKEY, identifying it as the energy drink.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.0,
+    0.571,
+    0.33,
+    0.217
+   ],
+   "visible_count": 1,
+   "description": "Black camera-like object with silver ribbed bellows and a round gray panel bearing a red center.",
+   "brand": null,
+   "variant": null,
+   "size": null,
+   "readable_text": null,
+   "evidence": "Dark body at the left, accordion-like silver ribs, and a circular gray-and-red front component resting behind the small packet.",
+   "obstruction": "Partly obscured by the small blue-and-pink packet and cropped at the left edge.",
+   "status": "obstructed",
+   "identity": null,
+   "label": "unknown",
+   "match_reason": "This is a camera-like object with bellows, not an inventory product.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.523,
+    0.771,
+    0.477,
+    0.094
+   ],
+   "visible_count": 1,
+   "description": "Several black cables lying along the back of the surface.",
+   "brand": null,
+   "variant": null,
+   "size": null,
+   "readable_text": null,
+   "evidence": "Multiple dark parallel and looping lines extend from behind the snack bag and bottle toward the right edge.",
+   "obstruction": null,
+   "status": "unknown",
+   "identity": null,
+   "label": "unknown",
+   "match_reason": "These are cables, not an inventory product.",
+   "candidates": []
+  }
+ ],
+ "visible_units": {
+  "exp:chips": 1,
+  "exp:energy-drink": 1
+ },
+ "uncertain": true,
+ "reasons": [
+  "image quality: glare"
+ ],
+ "provider": "Verda inference API",
+ "mode": "vision-model",
+ "model": {
+  "name": "kimi-k3-1-pro",
+  "device": "Verda API",
+  "reasoning_effort": "low"
+ },
+ "timing_ms": {
+  "describe_api": 15170,
+  "match_api": 4220,
+  "total": 19422
+ },
+ "note": "Proposed by a vision-language model (Kimi K3.1 Pro on Verda). Boxes are approximate; matches are proposals, not measured accuracy. Observes only: no stock events, no orders.",
+ "usage": {
+  "describe": {
+   "prompt_tokens": 786,
+   "total_tokens": 1838,
+   "completion_tokens": 1052,
+   "prompt_tokens_details": {
+    "cached_tokens": 64,
+    "image_tokens": 414
+   },
+   "reasoning_tokens": 525,
+   "completion_tokens_details": {
+    "reasoning_tokens": 525
+   }
+  },
+  "match": {
+   "prompt_tokens": 624,
+   "total_tokens": 917,
+   "completion_tokens": 293,
+   "prompt_tokens_details": {
+    "cached_tokens": 64
+   },
+   "reasoning_tokens": 138,
+   "completion_tokens_details": {
+    "reasoning_tokens": 138
+   }
+  }
+ },
+ "scene_obstruction": null,
+ "image_quality": "glare"
+}

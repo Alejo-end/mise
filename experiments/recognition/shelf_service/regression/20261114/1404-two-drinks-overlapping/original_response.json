@@ -1,0 +1,145 @@
+{
+ "captured_at": "2026-11-14T14:04:02.894000+02:00",
+ "surface": [
+  0.019,
+  0.363,
+  0.956,
+  0.531
+ ],
+ "objects": [
+  {
+   "box": [
+    0.158,
+    0.398,
+    0.111,
+    0.504
+   ],
+   "visible_count": 1,
+   "description": "Tall blue-and-white drink carton with a white screw cap and a white glass graphic on the front.",
+   "brand": "kotimaito",
+   "variant": null,
+   "size": null,
+   "readable_text": "MAITO JUOMA",
+   "evidence": "Rectangular carton shape, blue front panel, white cap, and visible Finnish text.",
+   "obstruction": null,
+   "status": "known",
+   "identity": "exp:milk",
+   "label": "milk",
+   "match_reason": "The carton and readable Finnish text 'MAITO JUOMA' clearly identify a milk drink.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.258,
+    0.237,
+    0.256,
+    0.652
+   ],
+   "visible_count": 1,
+   "description": "Large yellow flexible snack bag with red and green lettering and a picture of ridged chips.",
+   "brand": "Estrella",
+   "variant": "SPICY Cheddar",
+   "size": null,
+   "readable_text": "Limited Estrella SPICY Cheddar",
+   "evidence": "Yellow crimped bag, Estrella logo, flavor wording, and chip illustration are visible.",
+   "obstruction": null,
+   "status": "known",
+   "identity": "exp:chips",
+   "label": "chips",
+   "match_reason": "The snack bag has chip illustrations and readable Estrella SPICY Cheddar flavor wording.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.505,
+    0.429,
+    0.091,
+    0.46
+   ],
+   "visible_count": 1,
+   "description": "Clear plastic bottle containing an orange-colored drink, with a black cap and a white label featuring a monkey face.",
+   "brand": "FUNKY MONKEY",
+   "variant": null,
+   "size": null,
+   "readable_text": "FUNKY MONKEY",
+   "evidence": "Transparent bottle, orange liquid, black cap, large brand lettering, and monkey graphic.",
+   "obstruction": null,
+   "status": "unknown",
+   "identity": null,
+   "label": "unknown",
+   "match_reason": "The orange Funky Monkey drink is not clearly identified as an energy drink.",
+   "candidates": []
+  },
+  {
+   "box": [
+    0.573,
+    0.465,
+    0.066,
+    0.419
+   ],
+   "visible_count": 1,
+   "description": "Second clear bottle of orange-colored drink with a black cap and a pale monkey-face label, standing slightly behind the first bottle.",
+   "brand": "FUNKY MONKEY",
+   "variant": null,
+   "size": null,
+   "readable_text": "FUNKY MONKEY",
+   "evidence": "Matching bottle shape, cap, liquid color, and partially visible label.",
+   "obstruction": "Partly overlapped by the bottle in front.",
+   "status": "obstructed",
+   "identity": null,
+   "label": "unknown",
+   "match_reason": "The matching orange Funky Monkey drink is not clearly identified as an energy drink.",
+   "candidates": []
+  }
+ ],
+ "visible_units": {
+  "exp:milk": 1,
+  "exp:chips": 1
+ },
+ "uncertain": true,
+ "reasons": [
+  "image quality: glare"
+ ],
+ "provider": "Verda inference API",
+ "mode": "vision-model",
+ "model": {
+  "name": "kimi-k3-1-pro",
+  "device": "Verda API",
+  "reasoning_effort": "low"
+ },
+ "timing_ms": {
+  "describe_api": 18443,
+  "match_api": 3622,
+  "total": 22080
+ },
+ "note": "Proposed by a vision-language model (Kimi K3.1 Pro on Verda). Boxes are approximate; matches are proposals, not measured accuracy. Observes only: no stock events, no orders.",
+ "usage": {
+  "describe": {
+   "prompt_tokens": 786,
+   "total_tokens": 1994,
+   "completion_tokens": 1208,
+   "prompt_tokens_details": {
+    "cached_tokens": 64,
+    "image_tokens": 414
+   },
+   "reasoning_tokens": 779,
+   "completion_tokens_details": {
+    "reasoning_tokens": 779
+   }
+  },
+  "match": {
+   "prompt_tokens": 558,
+   "total_tokens": 735,
+   "completion_tokens": 177,
+   "prompt_tokens_details": {
+    "cached_tokens": 64
+   },
+   "reasoning_tokens": 51,
+   "completion_tokens_details": {
+    "reasoning_tokens": 51
+   }
+  }
+ },
+ "scene_obstruction": null,
+ "image_quality": "glare"
+}

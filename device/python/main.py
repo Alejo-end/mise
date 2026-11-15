@@ -68,7 +68,9 @@ except ImportError:
             return Image.fromarray(frame[:, :, :3][:, :, ::-1])
         return Image.fromarray(frame)
 
+import scene
 import shelf_detect
+import visible
 from shelf_detect import crop
 
 logger = Logger("safe-kitchen")
@@ -89,6 +91,16 @@ DEFAULT_CONFIG = {
     # "usb": camera plugged into the board. "websocket": frames sent over Wi-Fi to port 8080,
     # for example by tools/laptop-camera.html. The app.yaml must then list "ports: [8080]".
     "camera_source": "usb",
+    # The three-slot occupancy detector (empty/full photo comparison per box) is replaced by product recognition
+    # (visible.py: what is on the shelf, by product). "off": it reads no frames, sends no slot events and no slot
+    # health. Its saved calibration (data/slot*_*.npy, layout.json) is kept: set "on" to restore it.
+    "slot_detector": "off",
+    # The hybrid recognition action (visible.py): the board's local model (valio-local-detect, port 8200, outside
+    # this app) runs first on the same frame, then the automatic whole-frame cloud check. "off": cloud only.
+    # local_detect_url: "" = this app's own host (127.0.0.1, else the container's gateway, i.e. the board).
+    "local_model": "on",
+    "local_detect_url": "",
+    "local_min_score": 0.3,
     "manual_slot": 3,
     # Slots as fractions of the frame: x, y, width, height.
     "slots": [
@@ -322,7 +334,18 @@ def poll_commands():
             r = requests.get(config["backend_url"].rstrip("/") + "/device/commands", timeout=3)
             r.raise_for_status()
             state["backend_ok"], state["backend_error"] = True, ""
-            set_buzzer(r.json().get("buzzer", "off"))
+            cmd = r.json()
+            set_buzzer(cmd.get("buzzer", "off"))
+            ask = cmd.get("recognize")
+            if isinstance(ask, dict) and ask.get("request_id"):  # the demo page asked through the backend
+                shelf_view.request(str(ask.get("requested_by") or "demo page")[:40], str(ask["request_id"])[:40])
+            ctl = cmd.get("continuous")
+            if isinstance(ctl, dict) and ctl.get("command_id"):  # Start/Stop of continuous recognition (demo page)
+                by, cid = str(ctl.get("requested_by") or "demo page")[:40], str(ctl["command_id"])[:40]
+                if ctl.get("action") == "start":
+                    shelf_view.start_continuous(ctl.get("pause_s"), by, cid)
+                elif ctl.get("action") == "stop":
+                    shelf_view.stop_continuous(by, cid)
             if time.time() - state.get("screen_at", 0) > 10:  # the LED face shows a parcel while a delivery waits
                 state["screen_at"] = time.time()
                 screen = requests.get(config["backend_url"].rstrip("/") + "/box/screen", timeout=3).json()
@@ -330,7 +353,7 @@ def poll_commands():
         except Exception as e:
             state["backend_ok"], state["backend_error"] = False, str(e)[:200]
             set_buzzer("off")
-        time.sleep(2)
+        time.sleep(1)  # the demo page's "Recognize now" reaches the box within about a second
 
 
 # Microcontroller callbacks ------------------------------------------------
@@ -603,8 +626,14 @@ def health():
 
 
 def health_or_none():
-    """health(), or None after logging why: a bug in the health must not stop the page or the status ping."""
+    """health(), or None after logging why: a bug in the health must not stop the page or the status ping.
+    With the three-slot detector off, the health says so and carries no slot readings."""
     try:
+        if config.get("slot_detector", "off") != "on":
+            t = state["frame_time"]
+            return {"camera_ok": bool(state["camera_ok"]), "frame_age_s": None if t is None else round(max(0.0, time.time() - t), 1),
+                    "config_valid": True, "config_errors": [], "assignment_check": state["assignment_check"],
+                    "slots": {}, "slot_detector": "off"}
         return health()
     except Exception as e:
         logger.warning(f"health: {e}")
@@ -727,15 +756,19 @@ def on_simulate(_sid, data):
                        "estimated_units": units})
 
 
-# Shelf recognition (experimental, observational) ---------------------------------------------------------------
-# The page's "Recognize shelf" panel sends the newest fresh camera frame to the recognition service on the laptop
-# (experiments/recognition/shelf_service on branch exp/recognition, port 8100). Results go back to the page only:
-# nothing here calls the purchasing backend, so recognition cannot create stock events, orders or approvals.
+# Shelf recognition (observational) ------------------------------------------------------------------------------
+# "Recognize shelf" from either page goes through one coordinator (visible.py): one recognition at a time on the
+# newest camera frame, sent to the recognition service on the laptop (experiments/recognition/shelf_service, port
+# 8100). The result goes to the setup pages and to the backend's /observations/visible, where the demo page reads
+# it; it never becomes a stock event, an order or an approval. recognition_call() serves the enrolment photos.
 
 def recognition_url() -> str:
     if config.get("recognition_url"):
         return str(config["recognition_url"]).rstrip("/")
-    host = str(config["backend_url"]).split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+    backend = str(config["backend_url"]).rstrip("/")
+    if backend.startswith("https://"):  # a hosted backend (Modal) passes the calls on to its recognition service
+        return backend + "/recognition"
+    host = backend.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0]
     return f"http://{host}:8100"
 
 
@@ -780,11 +813,104 @@ def recognition_call(sid, path: str, extra: dict, reply: str):
         out = dict(out) if isinstance(out, dict) else {"result": out}
         out.update(ok=ok and not out.get("error"), round_trip_ms=round((time.time() - t0) * 1000),
                    captured_at=captured, surface=surface)
-        if path == "/recognize":
-            out["frame"] = b64  # the exact picture that was recognised, so the boxes match it
         ui.send_message(reply, out, sid)
 
     threading.Thread(target=run, daemon=True).start()
+
+
+def grab_frame():
+    """The newest camera frame for recognition: (jpeg_b64, frame_id, captured_at) or None if none is fresh."""
+    with lock:
+        img, t, frame_id = state["last_frame"], state["frame_time"], state["frame_id"]
+    if img is None or t is None or time.time() - t > CAMERA_GRACE_S:
+        return None
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    return (base64.b64encode(buf.getvalue()).decode(), frame_id,
+            datetime.fromtimestamp(t, TZ).isoformat(timespec="milliseconds"))
+
+
+def _gateway() -> str | None:
+    """The default gateway of this app's network: the board itself when the app runs in a bridge container."""
+    try:
+        for line in Path("/proc/net/route").read_text().splitlines()[1:]:
+            f = line.split()
+            if f[1] == "00000000" and f[2] != "00000000":
+                return ".".join(str(int(f[2][i:i + 2], 16)) for i in (6, 4, 2, 0))
+    except Exception:
+        return None
+    return None
+
+
+_local_url = {"url": None}
+
+
+def local_detect(b64: str, rid: str) -> dict:
+    """The board's local model on exactly this frame (POST /detect with the JPEG). Raises on any failure."""
+    tried = []
+    urls = [config["local_detect_url"].rstrip("/")] if config.get("local_detect_url") else \
+        ([_local_url["url"]] if _local_url["url"] else []) + ["http://127.0.0.1:8200"] + \
+        ([f"http://{_gateway()}:8200"] if _gateway() else [])
+    for url in dict.fromkeys(u for u in urls if u):
+        try:
+            r = requests.post(f"{url}/detect", params={"threshold": config.get("local_min_score", 0.3), "rid": rid},
+                              data=base64.b64decode(b64), headers={"Content-Type": "image/jpeg"}, timeout=8)
+        except requests.ConnectionError as e:
+            tried.append(f"{url}: {str(e)[:60]}")
+            continue
+        out = r.json() if r.headers.get("content-type", "").startswith("application/json") else {"error": r.text[:160]}
+        if r.status_code != 200:
+            raise RuntimeError(f"local model at {url} answered HTTP {r.status_code}: {str(out.get('error'))[:120]}")
+        _local_url["url"] = url
+        return out
+    raise RuntimeError("local model not reachable (" + "; ".join(tried)[:200] + ")")
+
+
+def recognize_frame(b64: str, captured: str, **hybrid) -> dict:
+    """The whole picture to the recognition service (the shared product set decides what it looks for). With the
+    hybrid flow: that frame's local detections and the cloud mode (whole-frame or reuse) go along."""
+    try:
+        if hybrid:
+            r = requests.post(recognition_url() + "/recognize/hybrid", json={"image_b64": b64, "captured_at": captured, **hybrid},
+                              timeout=110)
+        else:
+            r = requests.post(recognition_url() + "/recognize", json={"image_b64": b64, "surface": [0, 0, 1, 1],
+                                                                      "captured_at": captured}, timeout=70)
+    except Exception as e:
+        raise RuntimeError(f"recognition service not reachable at {recognition_url()}: {str(e)[:120]}")
+    try:
+        out = r.json()
+    except ValueError:
+        out = {"error": r.text[:200]}
+    if r.status_code != 200:
+        detail = out.get("detail") if isinstance(out, dict) else None
+        raise RuntimeError(f"recognition service answered HTTP {r.status_code}: {str(detail or out)[:160]}")
+    return out
+
+
+def publish_view(snap: dict, frame_b64):
+    """Every change to the open setup pages (with the recognised picture when new) and to the backend, where the
+    demo page reads it. The backend keeps it apart from stock and purchasing."""
+    ui.send_message("visible", {**snap, "frame": frame_b64})
+
+    def post():
+        try:
+            body = visible.for_backend(snap)
+            if frame_b64:  # the recognised picture goes with its own result (same request id), for the demo page
+                body["frame"] = frame_b64
+            requests.post(config["backend_url"].rstrip("/") + "/observations/visible", json=body, timeout=10)
+        except Exception as e:
+            logger.warning(f"observation not delivered to the backend: {str(e)[:120]}")
+    threading.Thread(target=post, daemon=True).start()
+
+
+shelf_view = visible.Coordinator(grab_frame, recognize_frame, publish_view, scene=scene,
+                                 local_detect=local_detect if config.get("local_model", "on") != "off" else None)
+
+
+def send_view(sid):
+    snap = shelf_view.snapshot()
+    ui.send_message("visible", {**snap, "frame": shelf_view.current_frame}, sid)
 
 
 def recognition_status(sid):
@@ -804,8 +930,10 @@ ui.on_message("setup", on_setup)
 ui.on_message("simulate", on_simulate)
 ui.on_message("delivery_check", lambda _sid, _d: start_delivery_check())
 ui.on_message("get_state", lambda sid, _d: ui.send_message("sensors", sensors(), sid))
-ui.on_message("recognize", lambda sid, d: recognition_call(sid, "/recognize", {"surface": (d or {}).get("surface")},
-                                                            "recognize_response"))
+ui.on_message("recognize", lambda sid, _d: shelf_view.request("camera setup page"))
+ui.on_message("continuous", lambda sid, d: shelf_view.start_continuous((d or {}).get("pause_s"), "camera setup page")
+              if (d or {}).get("action") == "start" else shelf_view.stop_continuous("camera setup page"))
+ui.on_message("visible_status", lambda sid, _d: send_view(sid))
 ui.on_message("recognition_background", lambda sid, d: recognition_call(
     sid, "/background", {"surface": (d or {}).get("surface")}, "recognition_background_response"))
 ui.on_message("enrol_photo", lambda sid, d: recognition_call(
@@ -971,7 +1099,9 @@ def loop():
             logger.warning(f"modulino_status failed: {e}")
     with lock:
         img, frame_id, t = state["last_frame"], state["frame_id"], state["frame_time"]
-    if img is not None and state["camera_ok"] and t is not None and time.time() - t <= CAMERA_GRACE_S:
+    if config.get("slot_detector", "off") != "on":
+        pass  # the three-slot detector is off: no slot readings, no slot events (calibration kept in data/)
+    elif img is not None and state["camera_ok"] and t is not None and time.time() - t <= CAMERA_GRACE_S:
         if frame_id != state["last_checked_frame"]:  # a frame is checked at most once
             state["last_checked_frame"] = frame_id
             process_frame(img, frame_id, t)

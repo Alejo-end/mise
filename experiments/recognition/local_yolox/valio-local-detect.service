@@ -1,0 +1,26 @@
+# EXPERIMENTAL local detection (kitchen-restock-yolox-nano-v1, observational) beside the Safe Kitchen app on the
+# UNO Q. systemd user unit of the board user (arduino); install: see README.md "Start on boot".
+# Starts idle (model loaded, no camera preview received until a detection is requested). Never orders anything.
+[Unit]
+Description=Valio shelf: local YOLOX-nano detection, experimental and observational (port 8200)
+# Bounded restarts: at most 5 starts in 10 minutes, then the unit stays failed until it is started by hand.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+WorkingDirectory=%h/valio-onnx
+# models/active links to the installed model's folder (model.onnx + model.json, its manifest).
+ExecStart=%h/valio-onnx/venv/bin/python serve.py models/active/model.onnx --port 8200 --threads 2
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=60
+TimeoutStopSec=10
+# The camera app comes first.
+Nice=5
+MemoryMax=400M
+
+[Install]
+WantedBy=default.target

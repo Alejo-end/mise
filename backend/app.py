@@ -548,6 +548,8 @@ def events(ev: Event):
         device["alarm"] = data["alarm"]
     if data["type"] in ("delivery_decision", "alarm_seen"):
         return _box_decision(data)
+    if data["type"] == "status" and (data.get("health") or {}).get("slot_detector") == "off":
+        device["slots"] = {}  # the three-slot detector is off on the box: no slot readings to show
     if data["type"] == "slot_state":
         data = shelf.observe(data)  # the observation; with fill, units = round(fill x the assignment's target)
         device["slots"][str(data["slot"])] = {"state": data["state"], "units": data.get("estimated_units")}
@@ -685,18 +687,154 @@ def approvals_decide(approval_id: str, d: Decision):
 @app.get("/device/commands")
 def device_commands():
     box_seen()
-    if time.time() < device["problem_until"]:
-        return {"buzzer": "alarm"}
-    return {"buzzer": "approval" if agent.open_approvals() else "off"}
+    out = {"buzzer": "alarm"} if time.time() < device["problem_until"] else {
+        "buzzer": "approval" if agent.open_approvals() else "off"}
+    asked = observation["requested"]
+    if asked and time.time() - asked["at_s"] <= OBSERVATION_REQUEST_S:
+        out["recognize"] = {"request_id": asked["request_id"], "requested_by": asked["requested_by"]}
+    ctl = observation["control"]
+    if ctl and time.time() - ctl["at_s"] <= OBSERVATION_REQUEST_S:
+        out["continuous"] = {k: ctl[k] for k in ("command_id", "action", "pause_s", "requested_by")}
+    return out
+
+
+# What the shelf camera sees (visible items). The box's recognition coordinator posts every change here; the demo
+# page reads it and asks for a fresh recognition through the box's command poll. An observation only: it is never
+# written to stock, the audit log or an order, and no purchasing rule reads it.
+OBSERVATION_REQUEST_S = 30  # a request the box did not take up within this time lapses
+observation = {"snapshot": None, "received_at": None, "requested": None, "frame": None,  # frame: {request_id, frame_id, jpeg}
+               "control": None}  # control: a Start/Stop of continuous recognition the box has not taken up yet
+
+
+class VisibleSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: Literal["none", "pending", "ok", "failed"]
+    pending: dict | None = None
+    current: dict | None = None
+    last_error: dict | None = None
+    frame: str | None = Field(default=None, max_length=4_000_000)  # the recognised picture, sent with a new result
+
+
+@app.post("/observations/visible")
+def observation_from_box(snap: VisibleSnapshot):
+    import base64
+    data = snap.model_dump()
+    frame = data.pop("frame", None)
+    cur = data.get("current") or {}
+    if frame and cur.get("request_id"):  # the picture of exactly this result, kept in memory only (latest one)
+        try:  # a request's local stage and its final result may show different frames (the scene settled later)
+            observation["frame"] = {"request_id": cur["request_id"], "frame_id": cur.get("frame_id"),
+                                    "jpeg": base64.b64decode(frame, validate=True)}
+        except ValueError:
+            pass
+    observation["snapshot"], observation["received_at"] = data, time.time()
+    asked = observation["requested"]
+    taken = {(data.get(k) or {}).get("request_id") for k in ("pending", "current", "last_error")}
+    taken |= set((data.get("pending") or {}).get("joined_ids") or [])  # a request that joined the running scan
+    if asked and asked["request_id"] in taken:
+        observation["requested"] = None  # the box took it up: its own status says pending, done or failed
+    ctl = observation["control"]
+    if ctl and ((data.get("continuous") or {}).get("last_command_id") == ctl["command_id"]):
+        observation["control"] = None  # the box took the Start/Stop up: its continuous state says the rest
+    return {"status": "kept", "note": "observation only: not stock, not an order"}
+
+
+@app.get("/observations/visible")
+def observation_now():
+    asked = observation["requested"]
+    if asked and time.time() - asked["at_s"] > OBSERVATION_REQUEST_S:
+        observation["requested"] = asked = {**asked, "lapsed": True}
+    received = observation["received_at"]
+    return {"snapshot": observation["snapshot"],
+            "received_at": datetime.fromtimestamp(received, TZ).isoformat(timespec="milliseconds") if received else None,
+            "requested": asked, "box_online": device["online"],
+            "control": (dict(observation["control"], lapsed=True) if observation["control"]
+                        and time.time() - observation["control"]["at_s"] > OBSERVATION_REQUEST_S else observation["control"]),
+            "frame_request_id": (observation["frame"] or {}).get("request_id"),
+            "frame_id": (observation["frame"] or {}).get("frame_id"),
+            "note": "What the shelf camera sees. An observation: not stock, not an order."}
+
+
+@app.get("/observations/frame/{request_id}")
+def observation_frame(request_id: str):
+    """The recognised picture of one result, by its request id; 404 for any other id (no picture of another result)."""
+    from fastapi.responses import Response
+    f = observation["frame"]
+    if not f or f["request_id"] != request_id:
+        raise HTTPException(404, "no picture for that result")
+    return Response(f["jpeg"], media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/visible-view.js", include_in_schema=False)
+def visible_view_js():
+    """The same drawing code as the box's camera setup page (device/assets/visible-view.js)."""
+    return FileResponse(DEVICE_DIR / "assets" / "visible-view.js", media_type="text/javascript")
+
+
+@app.post("/observations/recognize")
+def observation_request():
+    """Ask the box for a fresh recognition of the newest camera frame. The box takes it up on its next command poll
+    (about every 2 s); one recognition runs at a time, so a request while one runs joins it."""
+    asked = observation["requested"]
+    if asked and not asked.get("lapsed") and time.time() - asked["at_s"] <= OBSERVATION_REQUEST_S:
+        return {"status": "already requested", "requested": asked}
+    observation["requested"] = {"request_id": f"d{int(time.time() * 1000) % 10**9}", "requested_by": "demo page",
+                                "at": datetime.now(TZ).isoformat(timespec="seconds"), "at_s": time.time()}
+    return {"status": "requested", "requested": observation["requested"],
+            "box_online": device["online"]}
+
+
+class ContinuousControl(BaseModel):
+    action: Literal["start", "stop"]
+    pause_s: float | None = Field(default=None, ge=1, le=600)  # the pause between completed scans (default 5 s)
+
+
+@app.post("/observations/continuous")
+def observation_continuous(ctl: ContinuousControl):
+    """Start or stop continuous recognition on the box. The box runs the one loop (a scan, then the pause, then the
+    next scan); this only passes the command on through the command poll. Start while it runs only changes the
+    pause. An observation mode: it creates no stock events and grants no purchasing authority."""
+    now = time.time()
+    observation["control"] = {"command_id": f"k{int(now * 1000) % 10**9}", "action": ctl.action,
+                              "pause_s": ctl.pause_s, "requested_by": "demo page",
+                              "at": datetime.now(TZ).isoformat(timespec="seconds"), "at_s": now}
+    return {"status": "sent", "control": observation["control"], "box_online": device["online"]}
+
+
+
+# The recognition service runs apart from this backend (it needs a vision model). On Modal the box cannot reach it on
+# port 8100, so the box sends its recognition calls here and this passes them on, unchanged, to RECOGNITION_URL.
+RECOGNITION_URL = os.environ.get("RECOGNITION_URL", "").rstrip("/")
+
+
+@app.api_route("/recognition/{path:path}", methods=["GET", "POST"], include_in_schema=False)
+async def recognition_pass_on(path: str, request: Request):
+    if not RECOGNITION_URL:
+        raise HTTPException(404, "No recognition service is set up for this backend (RECOGNITION_URL).")
+    import httpx
+    async with httpx.AsyncClient(timeout=140) as client:
+        try:
+            r = await client.request(request.method, f"{RECOGNITION_URL}/{path}", content=await request.body(),
+                                     headers={"Content-Type": request.headers.get("content-type", "application/json")})
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"The recognition service did not answer: {str(e)[:120]}")
+    return Response(r.content, r.status_code, media_type=r.headers.get("content-type"))
 
 
 DEVICE_DIR = ROOT / "device"
 # Every file of the box app. main.py imports shelf_detect.py, so an update that leaves it out can break the box.
-DEVICE_FILES = ["python/main.py", "python/shelf_detect.py", "assets/index.html", "sketch/sketch.ino", "sketch/matrix_ui.h",
-                "sketch/sketch.yaml", "app.yaml"]
+DEVICE_FILES = ["python/main.py", "python/shelf_detect.py", "python/visible.py", "python/scene.py", "assets/index.html",
+                "assets/visible-view.js", "assets/products.json", "sketch/sketch.ino", "sketch/matrix_ui.h", "sketch/sketch.yaml",
+                "app.yaml"]
 # Libraries of the sketch live in sketch/src/, the one folder that App Lab compiles besides the sketch itself.
 # The box's update makes missing folders (python/main.py, on_update).
 DEVICE_FILES += sorted(str(p.relative_to(ROOT / "device")) for p in (ROOT / "device" / "sketch" / "src").rglob("*") if p.is_file())
+# Box files that are not kept under device/: the page reads the shared active product set as assets/products.json.
+DEVICE_FILE_SOURCES = {"assets/products.json": ROOT / "products" / "active.json"}
+
+
+def _device_source(path: str) -> Path:
+    return DEVICE_FILE_SOURCES.get(path, DEVICE_DIR / path)
 
 
 @app.get("/device/files")
@@ -704,14 +842,14 @@ def device_files():
     """The box app files on this laptop, with hashes, so the box can update itself over Wi-Fi."""
     import hashlib
 
-    return [{"path": f, "sha256": hashlib.sha256((DEVICE_DIR / f).read_bytes()).hexdigest()} for f in DEVICE_FILES]
+    return [{"path": f, "sha256": hashlib.sha256(_device_source(f).read_bytes()).hexdigest()} for f in DEVICE_FILES]
 
 
 @app.get("/device/files/{path:path}")
 def device_file(path: str):
     if path not in DEVICE_FILES:
         raise HTTPException(404, "not a box app file")
-    return FileResponse(DEVICE_DIR / path)
+    return FileResponse(_device_source(path))
 
 
 @app.get("/device")

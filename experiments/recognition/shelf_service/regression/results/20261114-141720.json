@@ -1,0 +1,304 @@
+[
+ {
+  "case": "1404-two-drinks-overlapping",
+  "repeat": 1,
+  "expected": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 2
+  },
+  "got": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 2
+  },
+  "exact": true,
+  "statuses": [
+   "milk/known/visible/model text match",
+   "chips/known/visible/brand+variant",
+   "energy drink/known/visible/brand",
+   "energy drink/known/partial/brand",
+   "not-inventory/not-inventory/partial/model text match",
+   "not-inventory/not-inventory/partial/model text match",
+   "not-inventory/not-inventory/partial/model text match"
+  ],
+  "count_status": {
+   "exp:chips": "counted",
+   "exp:energy-drink": "counted",
+   "exp:milk": "counted"
+  },
+  "seconds": 25.3,
+  "timing_ms": {
+   "describe_api": 22041,
+   "match_api": 3144,
+   "total": 25216
+  }
+ },
+ {
+  "case": "1404-two-drinks-overlapping",
+  "repeat": 2,
+  "expected": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 2
+  },
+  "got": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 2
+  },
+  "exact": true,
+  "statuses": [
+   "milk/known/visible/model text match",
+   "chips/known/visible/brand+variant",
+   "energy drink/known/visible/brand",
+   "energy drink/known/partial/brand",
+   "not-inventory/not-inventory/partial/model text match",
+   "unknown/unknown/partial/model text match",
+   "not-inventory/not-inventory/partial/model text match"
+  ],
+  "count_status": {
+   "exp:chips": "at least",
+   "exp:energy-drink": "at least",
+   "exp:milk": "at least"
+  },
+  "seconds": 25.7,
+  "timing_ms": {
+   "describe_api": 22081,
+   "match_api": 3599,
+   "total": 25696
+  }
+ },
+ {
+  "case": "1404-two-drinks-overlapping",
+  "repeat": 3,
+  "expected": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 2
+  },
+  "got": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 2
+  },
+  "exact": true,
+  "statuses": [
+   "milk/known/visible/model text match",
+   "chips/known/visible/brand+variant",
+   "energy drink/known/visible/brand",
+   "energy drink/known/partial/brand",
+   "not-inventory/not-inventory/partial/model text match",
+   "not-inventory/not-inventory/partial/model text match",
+   "not-inventory/not-inventory/partial/model text match"
+  ],
+  "count_status": {
+   "exp:chips": "counted",
+   "exp:energy-drink": "counted",
+   "exp:milk": "counted"
+  },
+  "seconds": 24.6,
+  "timing_ms": {
+   "describe_api": 22305,
+   "match_api": 2269,
+   "total": 24587
+  }
+ },
+ {
+  "case": "1405-two-drinks-separated",
+  "repeat": 1,
+  "expected": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 2
+  },
+  "got": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 2
+  },
+  "exact": true,
+  "statuses": [
+   "milk/known/visible/model text match",
+   "chips/known/visible/brand+variant",
+   "energy drink/known/visible/brand",
+   "energy drink/known/visible/brand",
+   "unknown/unknown/partial/model text match",
+   "unknown/unknown/partial/model text match",
+   "not-inventory/not-inventory/partial/model text match"
+  ],
+  "count_status": {
+   "exp:chips": "at least",
+   "exp:energy-drink": "at least",
+   "exp:milk": "at least"
+  },
+  "seconds": 30.2,
+  "timing_ms": {
+   "describe_api": 22107,
+   "match_api": 8104,
+   "total": 30223
+  }
+ },
+ {
+  "case": "1405-two-drinks-separated",
+  "repeat": 2,
+  "expected": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 2
+  },
+  "got": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 2
+  },
+  "exact": true,
+  "statuses": [
+   "milk/known/visible/model text match",
+   "chips/known/visible/brand+variant",
+   "energy drink/known/visible/brand",
+   "energy drink/known/visible/brand",
+   "not-inventory/not-inventory/partial/model text match"
+  ],
+  "count_status": {
+   "exp:chips": "counted",
+   "exp:energy-drink": "counted",
+   "exp:milk": "counted"
+  },
+  "seconds": 16.6,
+  "timing_ms": {
+   "describe_api": 14848,
+   "match_api": 1769,
+   "total": 16628
+  }
+ },
+ {
+  "case": "1405-two-drinks-separated",
+  "repeat": 3,
+  "expected": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 2
+  },
+  "got": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 2
+  },
+  "exact": true,
+  "statuses": [
+   "milk/known/visible/model text match",
+   "chips/known/visible/brand+variant",
+   "energy drink/known/visible/brand",
+   "energy drink/known/visible/brand",
+   "not-inventory/not-inventory/partial/model text match"
+  ],
+  "count_status": {
+   "exp:chips": "counted",
+   "exp:energy-drink": "counted",
+   "exp:milk": "counted"
+  },
+  "seconds": 15.7,
+  "timing_ms": {
+   "describe_api": 13830,
+   "match_api": 1823,
+   "total": 15664
+  }
+ },
+ {
+  "case": "1406-one-drink",
+  "repeat": 1,
+  "expected": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 1
+  },
+  "got": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 1
+  },
+  "exact": true,
+  "statuses": [
+   "milk/known/visible/model text match",
+   "chips/known/visible/brand+variant",
+   "energy drink/known/visible/brand",
+   "not-inventory/not-inventory/partial/model text match",
+   "not-inventory/not-inventory/partial/model text match"
+  ],
+  "count_status": {
+   "exp:chips": "counted",
+   "exp:energy-drink": "counted",
+   "exp:milk": "counted"
+  },
+  "seconds": 14.7,
+  "timing_ms": {
+   "describe_api": 12302,
+   "match_api": 2351,
+   "total": 14664
+  }
+ },
+ {
+  "case": "1406-one-drink",
+  "repeat": 2,
+  "expected": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 1
+  },
+  "got": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 1
+  },
+  "exact": true,
+  "statuses": [
+   "milk/known/visible/model text match",
+   "chips/known/visible/brand+variant",
+   "energy drink/known/visible/brand",
+   "not-inventory/not-inventory/partial/model text match"
+  ],
+  "count_status": {
+   "exp:chips": "counted",
+   "exp:energy-drink": "counted",
+   "exp:milk": "counted"
+  },
+  "seconds": 13.1,
+  "timing_ms": {
+   "describe_api": 11092,
+   "match_api": 2045,
+   "total": 13148
+  }
+ },
+ {
+  "case": "1406-one-drink",
+  "repeat": 3,
+  "expected": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 1
+  },
+  "got": {
+   "exp:milk": 1,
+   "exp:chips": 1,
+   "exp:energy-drink": 1
+  },
+  "exact": true,
+  "statuses": [
+   "milk/known/visible/model text match",
+   "chips/known/visible/brand+variant",
+   "energy drink/known/visible/brand"
+  ],
+  "count_status": {
+   "exp:chips": "counted",
+   "exp:energy-drink": "counted",
+   "exp:milk": "counted"
+  },
+  "seconds": 10.8,
+  "timing_ms": {
+   "describe_api": 9337,
+   "match_api": 1405,
+   "total": 10758
+  }
+ }
+]

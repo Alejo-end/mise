@@ -1,0 +1,9 @@
+{
+  "name": "kitchen-restock-yolox-nano-v1",
+  "sha256": "b16f112b65c079b0df3f768d3fa1587412fc5a871cf3c28583819f83389705ff",
+  "product_set": "kitchen-20261114-b",
+  "role": "diagnostics",
+  "classes": null,
+  "preprocessing": {"variant": "bgr255", "status": "provisional"},
+  "note": "Trained for the three shelf props of 14 Nov (archived product set kitchen-20261114-b), as the owner states. The class order is not in the export and has not been supplied by the trainer, so classes stay numeric. Kept for diagnostics only: it is not used for the shelf's current products, gets no automatic cloud fallback and produces no counts."
+}

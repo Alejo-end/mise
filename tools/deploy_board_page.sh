@@ -12,5 +12,7 @@ for app in safe-kitchen-agent safe-kitchen-test; do
   printf '{"app": "%s", "build": "%s", "deployed_at": "%s"}\n' "$app" "$BUILD" "$WHEN" > "$TMP/build-$app.json"
   scp -q -o ConnectTimeout=15 "$TMP/index.html" "arduino@$BOARD:/home/arduino/ArduinoApps/$app/assets/index.html"
   scp -q -o ConnectTimeout=15 "$TMP/build-$app.json" "arduino@$BOARD:/home/arduino/ArduinoApps/$app/assets/build.json"
+  # the shared product set (products/active.json): names, enrolment choices and ordering units on the page
+  scp -q -o ConnectTimeout=15 products/active.json "arduino@$BOARD:/home/arduino/ArduinoApps/$app/assets/products.json"
 done
 echo "deployed page build $BUILD to both apps on $BOARD"
