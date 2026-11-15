@@ -38,7 +38,7 @@ A product outside the product groups of the licence goes to the chef. A restart 
 
 ## The map
 
-![The kitchen, our gateway and Valio's challenge materials](../docs/handbook/valio-system.svg)
+![The kitchen, our gateway and Valio's challenge materials](docs/handbook/valio-system.svg)
 
 Valio's challenge API has only two live calls: price and availability. It has no search and no order. So search runs in our gateway over the product file, and our gateway records the orders.
 
@@ -61,7 +61,7 @@ When the box is offline or its camera gives no picture, every page says "No auto
 
 ## How it decides
 
-![Allowed, needs approval, forbidden](../docs/handbook/valio-decision.svg)
+![Allowed, needs approval, forbidden](docs/handbook/valio-decision.svg)
 
 The head chef signs a rule set once (`rules/school_kitchen.yaml`). Every decision names the version of that rule set. "Signed" means that the app records a hash of the file and refuses a changed file with the same version. It is not a cryptographic signature.
 
@@ -146,7 +146,7 @@ Each lookup has a timeout of 3 seconds and stays in memory. If the service does 
 
 The Valio product file and the two API calls are synthetic. Valio built them for the challenge, and the brief says so (`CHALLENGE_BRIEFS.md`, lines 107, 108 and 121). So every count below describes the challenge file, not Valio's real suppliers. It shows what our rules do to a catalog with gaps. It does not show how large the gap is in Valio's real data.
 
-![The Valio catalog under the kitchen's allergen rules](../docs/handbook/valio-allergen-data.svg)
+![The Valio catalog under the kitchen's allergen rules](docs/handbook/valio-allergen-data.svg)
 
 | Result under the bans (nuts, peanuts, sesame) | Products | Share of 17,546 |
 |---|---|---|
@@ -303,7 +303,7 @@ What we ran on the live Valio API on 14 November, first with fixed rules and the
 | Solving the problem and user need | 20% | The order must match what the buyer asked for: the right product, pack size and amount |
 | Autonomy and controls | 20% | The three results of the rule check, the approval on the phone and the audit log |
 | Exception situations | 15% | Partial stock, substitutes, late delivery, a price that changes before the order |
-| Openness and a path to production | 15% | Open, documented calls. FastAPI gives the interface as OpenAPI at `/docs`. The assumptions are in `../ASSUMPTIONS.md` |
+| Openness and a path to production | 15% | Open, documented calls. FastAPI gives the interface as OpenAPI at `/docs`. The assumptions are in `ASSUMPTIONS.md` in the team's hackathon monorepo, github.com/Alejo-end/junction2026 |
 
 ## What is true today
 

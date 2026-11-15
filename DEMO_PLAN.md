@@ -270,7 +270,7 @@ A review of the current code (`backend/agent.py`, `backend/valio.py`, `backend/a
 
 ### Faults found and fixed on 14 November
 
-A second review found eight more faults in `backend/agent.py`, `backend/sandbox.py` and `backend/app.py`. All eight are fixed, each with a test. They are listed in `../ASSUMPTIONS.md`, with the two faults that are still open.
+A second review found eight more faults in `backend/agent.py`, `backend/sandbox.py` and `backend/app.py`. All eight are fixed, each with a test. They are listed in `ASSUMPTIONS.md` in the team's hackathon monorepo, github.com/Alejo-end/junction2026, with the two faults that are still open.
 
 ## Backend endpoints
 

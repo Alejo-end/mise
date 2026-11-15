@@ -1,0 +1,27 @@
+.DS_Store
+node_modules/
+.env
+.env.*
+!.env.example
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.sqlite
+*.sqlite-*
+
+# Local data: the Valio challenge files must not leave the challenge, and the audit log is runtime data.
+data/
+fixtures/cache/
+
+# The enclosure pictures and CAD file are in the repository. The parts they are built from are not:
+# enclosure.py --assembly, render_views.py and freecad_assembly.py make them again.
+enclosure/assembly/*.stl
+enclosure/renders/*_raw.png
+enclosure/cad/*.step
+enclosure/cad/*.FCBak
+
+# Board snapshots and device backups hold private device configuration. Kept locally only.
+device/board-snapshot/

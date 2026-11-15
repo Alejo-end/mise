@@ -7,7 +7,7 @@
 | `w2-shelf-config.md` | `junction2026-wt-shelf/` | `wt/shelf-config` | 3 |
 | `w4-recognition.md` | `junction2026-wt-recognition/` | `exp/recognition` | experimental, must not touch the demo |
 
-Rules for every worker (also read `../PARALLEL_WORK.md`, `../../../TEAM_BRIEF.md`,
+Rules for every worker (also read `../PARALLEL_WORK.md`, `TEAM_BRIEF.md` in the team's hackathon monorepo, github.com/Alejo-end/junction2026,
 `../../HANDBOOK.md`, `../../DEMO_PLAN.md`):
 
 1. Work only in your worktree, on your branch, in the files the contract gives you. Read anything.
